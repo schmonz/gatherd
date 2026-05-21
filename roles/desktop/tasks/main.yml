@@ -460,6 +460,28 @@
     path: "{{ target_home }}/.config/sway/config.d/application_defaults"
     line: 'for_window [app_id="captive-browser"] floating enable, resize set width 70 ppt height 70 ppt'
 
+- name: Create JetBrains Toolbox data directory
+  ansible.builtin.file:
+    path: "{{ target_home }}/.local/share/JetBrains/Toolbox"
+    state: directory
+    mode: '0755'
+
+- name: Pre-seed JetBrains Toolbox storage to skip onboarding window
+  # technicalOnboardingFinished suppresses the window that overrides --minimize-to-tray.
+  # force: false means Toolbox can update the file freely after first run.
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.local/share/JetBrains/Toolbox/.storage.json"
+    content: |
+      {
+          "onboarding": {
+              "currentTechnicalStep": 0,
+              "version": 1,
+              "technicalOnboardingFinished": true,
+              "isEnterpriseBlockedScreen": false
+          }
+      }
+    force: false
+
 - name: Write post-setup notes
   # accept-dns and accept-routes require an authenticated tailscale session, so
   # they can't run during setup.
@@ -499,8 +521,7 @@
       - Try sharing a window — confirm screen sharing works under Sway/wlroots
 
       # JetBrains Toolbox
-      - Log in to your JetBrains account (window appears automatically on first Sway login)
-      - After login, close the window — subsequent launches start silently in the tray
+      - Log in to your JetBrains account by clicking the tray icon
 
       # Timeshift
       - Open Timeshift, confirm BTRFS is selected, click Finish
@@ -512,7 +533,7 @@
       - On low-RAM machines: Helium → Settings → Performance — Memory Saver should be Maximum
       - Systray (fast-path): after first login, 1Password, Tailscale, and arch-update tray icons appear without logging out
       - Systray (slow-path): LocalSend and JetBrains Toolbox tray icons appear as soon as slow install finishes, without logging out
-      - Systray (idempotency): run `gatherd-launch-systray` manually — no duplicate tray icons appear
+      - Systray (idempotency): run `gatherd-systray <app> [args...]` again — no duplicate tray icons appear
       - Helium: first launch shows exactly one setup tab
       - iCloud: run `rclone lsd icloud:` — should list top-level folders without error
       - iCloud re-auth: log out of icloud.com in Helium, log back in — `rclone lsd icloud:` should work again without manual steps

@@ -378,8 +378,9 @@
         --user-data-dir="$HOME/.cache/captive-browser" \
         --proxy-server="socks5://$PROXY" \
         --host-resolver-rules="MAP * ~NOTFOUND , EXCLUDE localhost" \
-        --no-first-run --new-window --incognito \
-        http://neverssl.com
+        --no-first-run \
+        --disable-features=HttpsUpgrades \
+        http://whatsmyip.schmonz.com
       """
 
       dhcp-dns = "nmcli -g IP4.DNS dev show $(nmcli -t -f DEVICE,TYPE,STATE dev | awk -F: '/wifi:connected/{print $1; exit}') | cut -d, -f1"

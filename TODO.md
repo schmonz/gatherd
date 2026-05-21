@@ -1,5 +1,14 @@
 # TODO
 
+## Most recent attempted features
+
+needs re-verification on next repave:
+- terminal window for slow-Ansible progress (was anti-verified; fixed sentinel-file + timeout approach)
+- systray apps start up (was anti-verified; replaced five wrapper scripts with one generic gatherd-systray)
+- JetBrains Toolbox starts silently in tray (was almost-verified; now pre-seeds .storage.json to skip onboarding window)
+- captive browser (was semi-verified; dropped unsupported --host-resolver-rules, added DnsOverHttps, switched to whatsmyip.schmonz.com)
+- first-run Helium shows exactly one setup tab (was anti-verified; no fix yet — needs investigation)
+
 ## Hardware
 
 - **clight**: installed on any machine with screen or keyboard backlight, but
@@ -41,7 +50,7 @@ but if they ever look too small, here's how to scale each:
   desktop override at `~/.local/share/applications/claude.desktop`, or a wrapper at
   `~/.local/bin/claude-desktop`.
 
-- **1Password**: already wrapped by `gatherd-systray-1password`; add the flag there.
+- **1Password**: add the flag to its `gatherd-systray` autostart entry in sway config.
 
 Ansible hook: write `~/.config/electron-flags.conf` (covers Slack + Teams) and
 `~/.config/signal-desktop-flags.conf` from the desktop role, using
@@ -68,6 +77,8 @@ Ansible hook: write `~/.config/electron-flags.conf` (covers Slack + Teams) and
   the system one; (b) for Sway specifically, already using `config.d/` — personal
   dotfiles can add more fragments; (c) for files that don't compose, decide whether
   personal or system default wins and manage accordingly.
+- **More systray or waybar indicators**: LLM token usage and
+  notifications. What else?
 
 ## Setup
 

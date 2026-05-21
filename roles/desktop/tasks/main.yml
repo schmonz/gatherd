@@ -266,17 +266,13 @@
     mode: "{{ item.mode | default('0644') }}"
   loop:
     - dest: .config/net.imput.helium/initial_preferences
-      content: '{"browser":{"check_default_browser":false},"session":{"restore_on_startup":1}}'
+      content: '{"browser":{"check_default_browser":false},"extensions":{"theme":{"system_theme":1}},"session":{"restore_on_startup":1}}'
     - dest: .config/chromium/initial_preferences
       content: '{"browser":{"check_default_browser":false},"distribution":{"skip_first_run_ui":true,"suppress_first_run_bubble":true,"show_welcome_page":false},"session":{"restore_on_startup":1}}'
     - dest: .config/helium-browser-flags.conf
       content: "--password-store=basic"
     - dest: .config/chromium-flags.conf
       content: "--password-store=basic"
-    - dest: .config/net.imput.helium/Default/Preferences
-      content: '{"browser":{"check_default_browser":false},"extensions":{"theme":{"system_theme":1}},"session":{"restore_on_startup":1}}'
-      force: false
-      mode: '0600'
 
 - name: Seed Helium Memory Saver to Maximum on low-RAM machines
   # Stored in Local State (not Default/Preferences); aggressiveness 2 = Maximum.

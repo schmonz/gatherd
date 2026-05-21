@@ -373,9 +373,8 @@
         --class=captive-browser \
         --user-data-dir="$HOME/.cache/captive-browser" \
         --proxy-server="socks5://$PROXY" \
-        --host-resolver-rules="MAP * ~NOTFOUND , EXCLUDE localhost" \
         --no-first-run \
-        --disable-features=HttpsUpgrades \
+        --disable-features=DnsOverHttps,HttpsUpgrades \
         http://whatsmyip.schmonz.com
       """
 

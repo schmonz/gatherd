@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+main() {
+    pidfile="$XDG_RUNTIME_DIR/gatherd-systray-${1}.pid"
+    [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null && exit 0
+    until busctl --user status org.kde.StatusNotifierWatcher >/dev/null 2>&1; do
+        sleep 1
+    done
+    "$@" &
+    echo $! > "$pidfile"
+}
+
+main "$@"
+exit $?

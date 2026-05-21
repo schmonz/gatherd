@@ -1,4 +1,0 @@
-#!/bin/sh
-command -v localsend >/dev/null || exit 0
-pgrep -f 'localsend --hidden' >/dev/null && exit 0
-exec localsend --hidden

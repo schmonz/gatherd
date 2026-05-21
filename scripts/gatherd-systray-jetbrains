@@ -1,4 +1,0 @@
-#!/bin/sh
-command -v jetbrains-toolbox >/dev/null || exit 0
-pgrep -f jetbrains-toolbox >/dev/null && exit 0
-exec jetbrains-toolbox --minimize-to-tray

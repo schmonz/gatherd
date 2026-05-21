@@ -1,3 +1,0 @@
-#!/bin/sh
-pgrep -f 'arch-update.*--tray' >/dev/null && exit 0
-exec arch-update --tray

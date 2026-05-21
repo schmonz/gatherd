@@ -383,10 +383,10 @@
 
       socks5-addr = "localhost:1666"
 
-- name: Install gatherd-launch-systray script
+- name: Install gatherd-systray script
   ansible.builtin.copy:
-    src: "{{ setup_dir }}/scripts/gatherd-launch-systray"
-    dest: "{{ target_home }}/.local/bin/gatherd-launch-systray"
+    src: "{{ setup_dir }}/scripts/gatherd-systray"
+    dest: "{{ target_home }}/.local/bin/gatherd-systray"
     mode: '0755'
     remote_src: true
 
@@ -418,45 +418,10 @@
     mode: '0755'
     remote_src: true
 
-- name: Install gatherd-systray-tailscale script
-  ansible.builtin.copy:
-    src: "{{ setup_dir }}/scripts/gatherd-systray-tailscale"
-    dest: "{{ target_home }}/.local/bin/gatherd-systray-tailscale"
-    mode: '0755'
-    remote_src: true
-
-- name: Install gatherd-systray-1password script
-  ansible.builtin.copy:
-    src: "{{ setup_dir }}/scripts/gatherd-systray-1password"
-    dest: "{{ target_home }}/.local/bin/gatherd-systray-1password"
-    mode: '0755'
-    remote_src: true
-
-- name: Install gatherd-systray-localsend script
-  ansible.builtin.copy:
-    src: "{{ setup_dir }}/scripts/gatherd-systray-localsend"
-    dest: "{{ target_home }}/.local/bin/gatherd-systray-localsend"
-    mode: '0755'
-    remote_src: true
-
-- name: Install gatherd-systray-updater script
-  ansible.builtin.copy:
-    src: "{{ setup_dir }}/scripts/gatherd-systray-updater"
-    dest: "{{ target_home }}/.local/bin/gatherd-systray-updater"
-    mode: '0755'
-    remote_src: true
-
 - name: Install gatherd-show-slow-progress script
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-show-slow-progress"
     dest: "{{ target_home }}/.local/bin/gatherd-show-slow-progress"
-    mode: '0755'
-    remote_src: true
-
-- name: Install gatherd-systray-jetbrains script
-  ansible.builtin.copy:
-    src: "{{ setup_dir }}/scripts/gatherd-systray-jetbrains"
-    dest: "{{ target_home }}/.local/bin/gatherd-systray-jetbrains"
     mode: '0755'
     remote_src: true
 
@@ -606,16 +571,18 @@
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
     line: "exec conky"
 
-- name: Remove obsolete individual systray autostart entries
+- name: Remove obsolete systray autostart entries
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
     regexp: "^exec (?:.*/)?{{ item }}$"
     state: absent
   loop:
+    - gatherd-launch-systray
     - gatherd-systray-1password
     - gatherd-systray-localsend
     - gatherd-systray-tailscale
     - gatherd-systray-updater
+    - gatherd-systray-jetbrains
     - gatherd-wait-sni
 
 - name: Add show-slow-progress autostart in foot terminal
@@ -630,10 +597,26 @@
     regexp: "^exec (?:.*/)?{{ item }}$"
     line: "exec {{ target_home }}/.local/bin/{{ item }}"
   loop:
-    - gatherd-launch-systray
     - gatherd-fix-webapps
     - gatherd-prompt-captiveportal
     - gatherd-prompt-1password
     - gatherd-prompt-tailscale
     - gatherd-prompt-icloud
     - gatherd-prompt-postsetup
+
+- name: Add systray app autostart entries
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - regexp: "^exec .*gatherd-systray 1password"
+      line: "exec env XDG_CURRENT_DESKTOP=GNOME {{ target_home }}/.local/bin/gatherd-systray 1password --silent"
+    - regexp: "^exec .*gatherd-systray localsend"
+      line: "exec {{ target_home }}/.local/bin/gatherd-systray localsend --hidden"
+    - regexp: "^exec .*gatherd-systray tailscale"
+      line: "exec {{ target_home }}/.local/bin/gatherd-systray tailscale systray"
+    - regexp: "^exec .*gatherd-systray jetbrains-toolbox"
+      line: "exec {{ target_home }}/.local/bin/gatherd-systray jetbrains-toolbox --minimize-to-tray"
+    - regexp: "^exec .*gatherd-systray arch-update"
+      line: "exec {{ target_home }}/.local/bin/gatherd-systray arch-update --tray"

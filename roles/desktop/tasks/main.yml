@@ -537,6 +537,10 @@
       - Log in
       - Try sharing a window — confirm screen sharing works under Sway/wlroots
 
+      # JetBrains Toolbox
+      - Log in to your JetBrains account (window appears automatically on first Sway login)
+      - After login, close the window — subsequent launches start silently in the tray
+
       # Timeshift
       - Open Timeshift, confirm BTRFS is selected, click Finish
 

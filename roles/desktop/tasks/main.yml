@@ -621,8 +621,8 @@
 - name: Add show-slow-progress autostart in foot terminal
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
-    regexp: "^exec (?:foot -e )?(?:.*/)?gatherd-show-slow-progress$"
-    line: "exec foot -e {{ target_home }}/.local/bin/gatherd-show-slow-progress"
+    regexp: "^exec .*gatherd-show-slow-progress"
+    line: "exec sh -c '[ -f /etc/gatherd-slow-complete ] && exit 0; timeout 15 sh -c \"until systemctl is-active --quiet gatherd-slow.service; do sleep 1; done\" && exec foot -e {{ target_home }}/.local/bin/gatherd-show-slow-progress'"
 
 - name: Add gatherd script autostart entries
   ansible.builtin.lineinfile:

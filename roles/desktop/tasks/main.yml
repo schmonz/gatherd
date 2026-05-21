@@ -617,13 +617,18 @@
     - gatherd-systray-updater
     - gatherd-wait-sni
 
+- name: Add show-slow-progress autostart in foot terminal
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
+    regexp: "^exec (?:foot -e )?(?:.*/)?gatherd-show-slow-progress$"
+    line: "exec foot -e {{ target_home }}/.local/bin/gatherd-show-slow-progress"
+
 - name: Add gatherd script autostart entries
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
     regexp: "^exec (?:.*/)?{{ item }}$"
     line: "exec {{ target_home }}/.local/bin/{{ item }}"
   loop:
-    - gatherd-show-slow-progress
     - gatherd-launch-systray
     - gatherd-fix-webapps
     - gatherd-prompt-captiveportal

@@ -1,4 +1,10 @@
 ---
+- name: Create /etc/autofs
+  ansible.builtin.file:
+    path: /etc/autofs
+    state: directory
+    mode: '0755'
+
 - name: Create /etc/autofs/auto.master.d
   ansible.builtin.file:
     path: /etc/autofs/auto.master.d

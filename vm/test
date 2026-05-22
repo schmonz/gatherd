@@ -45,7 +45,7 @@ until "${SSH[@]}" true 2>/dev/null; do sleep 3; done
 
 # ── Install ansible and deploy repo ──────────────────────────────────────────
 
-"${SSH[@]}" pacman -Syu --noconfirm ansible git >/dev/null
+"${SSH[@]}" pacman -Syu --noconfirm ansible
 
 "${SSH[@]}" mkdir -p /usr/local/lib/gatherd
 tar -C "$REPO" --exclude='.git' --exclude='vm' -c . \
@@ -53,9 +53,7 @@ tar -C "$REPO" --exclude='.git' --exclude='vm' -c . \
 
 "${SSH[@]}" "printf 'changeme\n' > /usr/local/lib/gatherd/.vault_pass"
 "${SSH[@]}" ansible-galaxy collection install \
-    -r /usr/local/lib/gatherd/requirements.yml \
-    -p /usr/local/lib/gatherd/.ansible/collections \
-    --quiet
+    -r /usr/local/lib/gatherd/requirements.yml
 
 # ── Run 1 ─────────────────────────────────────────────────────────────────────
 

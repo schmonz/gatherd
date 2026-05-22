@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# Boot a QEMU VM from the Arch Linux cloud image, run the gatherd playbook,
+# then run it again and assert the second run produces no changes.
+set -euo pipefail
+
+VMDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$VMDIR/.." && pwd)"
+BASE="$VMDIR/arch-base.qcow2"
+DISK="$VMDIR/test.qcow2"
+SEED="$VMDIR/seed.img"
+KEY="$VMDIR/key"
+PORT=2225
+QEMU_PID=""
+
+cleanup() {
+    [[ -n "$QEMU_PID" ]] && kill "$QEMU_PID" 2>/dev/null || true
+    rm -f "$DISK" "$SEED"
+}
+trap cleanup EXIT
+
+# ── Base image (downloaded once, kept) ───────────────────────────────────────
+
+if [[ ! -f "$BASE" ]]; then
+    echo "Downloading Arch Linux cloud image..."
+    curl -fL --progress-bar -o "$BASE" \
+        https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2
+fi
+
+# ── SSH key (generated once, kept) ───────────────────────────────────────────
+
+[[ -f "$KEY" ]] || ssh-keygen -t ed25519 -f "$KEY" -N "" -q
+
+# ── Fresh snapshot disk ───────────────────────────────────────────────────────
+
+qemu-img create -f qcow2 -b "$BASE" -F qcow2 "$DISK" 20G
+
+# ── Cloud-init seed ───────────────────────────────────────────────────────────
+# FAT image readable by cloud-init's NoCloud datasource; no root needed.
+
+dd if=/dev/zero of="$SEED" bs=1k count=64 status=none
+mkdosfs -n CIDATA "$SEED" >/dev/null 2>&1
+
+user_data=$(mktemp)
+meta_data=$(mktemp)
+# shellcheck disable=SC2064
+trap "rm -f '$user_data' '$meta_data'; cleanup" EXIT
+
+cat > "$user_data" <<EOF
+#cloud-config
+disable_root: false
+users:
+  - name: root
+    ssh_authorized_keys:
+      - $(cat "${KEY}.pub")
+EOF
+
+printf 'instance-id: gatherd-test\nlocal-hostname: gatherd-test\n' > "$meta_data"
+
+mcopy -i "$SEED" "$user_data" ::user-data
+mcopy -i "$SEED" "$meta_data" ::meta-data
+
+# ── Boot ──────────────────────────────────────────────────────────────────────
+
+qemu-system-x86_64 \
+    -enable-kvm -m 4096 -smp 2 \
+    -drive "file=$DISK,if=virtio,format=qcow2" \
+    -drive "file=$SEED,if=virtio,format=raw" \
+    -net nic,model=virtio \
+    -net "user,hostfwd=tcp::${PORT}-:22" \
+    -display none &
+QEMU_PID=$!
+
+SSH=(ssh -p "$PORT" -i "$KEY"
+    -o StrictHostKeyChecking=no
+    -o ConnectTimeout=3
+    -o BatchMode=yes
+    root@localhost)
+
+echo "Waiting for SSH..."
+until "${SSH[@]}" true 2>/dev/null; do sleep 3; done
+
+echo "Waiting for cloud-init..."
+until "${SSH[@]}" test -f /var/lib/cloud/instance/boot-finished 2>/dev/null; do sleep 5; done
+
+# ── Install ansible and deploy repo ──────────────────────────────────────────
+
+"${SSH[@]}" pacman -Sy --noconfirm ansible git >/dev/null
+"${SSH[@]}" mkdir -p /usr/local/lib/gatherd
+tar -C "$REPO" --exclude='.git' --exclude='vm' -c . \
+    | "${SSH[@]}" tar -xC /usr/local/lib/gatherd
+
+"${SSH[@]}" "printf 'changeme\n' > /usr/local/lib/gatherd/.vault_pass"
+"${SSH[@]}" ansible-galaxy collection install \
+    -r /usr/local/lib/gatherd/requirements.yml \
+    -p /usr/local/lib/gatherd/.ansible/collections \
+    --quiet
+
+# ── Run 1 ─────────────────────────────────────────────────────────────────────
+
+echo "=== Run 1 ==="
+"${SSH[@]}" "cd /usr/local/lib/gatherd && ansible-playbook site.yml"
+
+# ── Run 2: idempotency check ──────────────────────────────────────────────────
+
+echo "=== Run 2 (idempotency check) ==="
+run2_log=$(mktemp)
+"${SSH[@]}" "cd /usr/local/lib/gatherd && ansible-playbook site.yml" | tee "$run2_log"
+
+if grep -qE 'changed=0[[:space:]].*failed=0' "$run2_log"; then
+    echo "PASS: idempotent"
+else
+    echo "FAIL: second run has unexpected changes or failures"
+    exit 1
+fi

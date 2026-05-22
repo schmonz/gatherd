@@ -16,11 +16,9 @@ The `postinstall` script and the Ansible playbook are conceptually distinct arti
 
 ## Testability
 
-The transformative improvement would be a QEMU/libvirt VM that runs the full postinstall → `gatherd.service` → `gatherd-slow.service` → greetd chain. Given how much time in this session was spent repaving real hardware to test one-line changes, a VM that does this in 10 minutes instead of 60 would pay for itself immediately. EndeavourOS provides ISOs; Calamares can run unattended with a config file.
+`vm/test` boots the Arch Linux cloud image under QEMU, runs `site.yml`, then runs it again and asserts `changed=0`. Run it before repaving. Next step: extend to cover `site-user-async.yml` and `site-vault.yml`, and eventually the full `postinstall` → service chain.
 
-Below that: GitHub Actions running ansible-lint on push would at least catch syntax errors and lint regressions before you get to hardware. You have the lint config already; you just need the workflow file.
-
-`bats` is installed but there are no tests for the shell scripts. The `gatherd-show-slow-progress` logic, `gatherd-launch-systray`, and the prompt scripts have real testable behavior.
+`bats` is installed but there are no tests for the shell scripts. The `gatherd-show-slow-progress` logic, `gatherd-prompt-*`, and the systray scripts have real testable behavior.
 
 ## Deferred
 

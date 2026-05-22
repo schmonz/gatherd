@@ -71,11 +71,15 @@
       - the_silver_searcher
       - xorg-xhost
       # dev tools
+      - ansible-lint
       - glow
       - tig
       - github-cli
       - socat
       - bats
+      # vm testing
+      - qemu-base
+      - mtools
       # power management
       - tlp
       - tlp-rdw

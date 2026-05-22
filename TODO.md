@@ -1,12 +1,18 @@
 # TODO
 
+- NFS client automount:
+  - Installed `autofs` (AUR) on this laptop
+  - Created `/home/schmonz/.autofs-mounts` as the autofs-managed parent
+  - `/etc/autofs/auto.master.d/ap-juicer.autofs`: drop-in pointing that parent at `/etc/autofs/auto.ap-juicer`, 600s idle timeout
+  - `/etc/autofs/auto.ap-juicer`: `code` key → `ap-juicer.local:/export/code`, NFSv4, soft mount, short timeouts
+  - Enabled and started `autofs.service`
+  - Still to do: migrate `/home/schmonz/trees` to a symlink → `.autofs-mounts/code/trees` (has local `dotfiles/` to relocate first)
+  - Still to do: ansibilize (client: autofs package + config files + service; server side is OMV, manual)
+- Slide the conky up by a "row" or two -- so I see all of it even when tmux statusbar
+- Magnify systray icons a little bit to match the waybar items
+
+
 ## Most recent attempted features
-
-Wasn't paying attention to whether the slow-install progress terminal ever came up.
-Still need to verify that.
-
------
-
 
 needs re-verification on next repave:
 - terminal window for slow-Ansible progress (was anti-verified; fixed sentinel-file + timeout approach)

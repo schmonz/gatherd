@@ -1,25 +1,21 @@
 ---
-- name: Ensure ~/trees directory exists
-  ansible.builtin.file:
-    path: "{{ target_home }}/trees"
-    state: directory
-    mode: '0755'
-
 - name: Clone dotfiles
   ansible.builtin.git:
     repo: "{{ dotfiles_repo }}"
-    dest: "{{ target_home }}/trees/dotfiles"
+    dest: "{{ target_home }}/.dotfiles"
     version: HEAD
     update: false
 
 - name: Symlink dotfiles
   ansible.builtin.file:
-    src: "{{ target_home }}/trees/dotfiles/{{ item.src }}"
+    src: "{{ target_home }}/.dotfiles/{{ item.src }}"
     dest: "{{ target_home }}/{{ item.dest }}"
     state: link
   loop:
     - src: gitconfig
       dest: .gitconfig
+    - src: gitignore_global
+      dest: .gitignore_global
     - src: tmux.conf
       dest: .tmux.conf
 

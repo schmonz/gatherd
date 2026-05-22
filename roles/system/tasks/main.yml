@@ -393,6 +393,9 @@
     - Reload NetworkManager connections
     - Etckeeper commit
 
+- name: Configure NFS client automount
+  ansible.builtin.include_tasks: nfs_client.yml
+
 - name: Run firmware updates
   ansible.builtin.shell: |
     fwupdmgr get-updates || true

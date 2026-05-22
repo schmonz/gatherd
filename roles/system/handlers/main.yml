@@ -22,3 +22,9 @@
 - name: Reload NetworkManager connections
   ansible.builtin.command: nmcli connection reload
   changed_when: false
+
+- name: Reload autofs
+  ansible.builtin.systemd:
+    name: autofs
+    state: reloaded
+  failed_when: false

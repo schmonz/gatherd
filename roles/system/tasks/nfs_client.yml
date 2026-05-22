@@ -1,0 +1,32 @@
+---
+- name: Create /etc/autofs/auto.master.d
+  ansible.builtin.file:
+    path: /etc/autofs/auto.master.d
+    state: directory
+    mode: '0755'
+
+- name: Write autofs master drop-in for ap-juicer
+  ansible.builtin.copy:
+    dest: /etc/autofs/auto.master.d/ap-juicer.autofs
+    content: "{{ target_home }}/.autofs-mounts  /etc/autofs/auto.ap-juicer  --timeout=600\n"
+    mode: '0644'
+  notify:
+    - Reload autofs
+    - Etckeeper commit
+
+- name: Write autofs map for ap-juicer
+  ansible.builtin.copy:
+    dest: /etc/autofs/auto.ap-juicer
+    content: "code  -fstype=nfs4,soft,timeo=15,retrans=3  {{ nfs_server }}:/export/code\n"
+    mode: '0644'
+  notify:
+    - Reload autofs
+    - Etckeeper commit
+
+- name: Create ~/.autofs-mounts
+  ansible.builtin.file:
+    path: "{{ target_home }}/.autofs-mounts"
+    state: directory
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+    mode: '0755'

@@ -1,0 +1,57 @@
+---
+- name: Detect target user and hardware
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  become: true
+  any_errors_fatal: true
+
+  pre_tasks:
+    - name: Detect target user
+      ansible.builtin.command: >
+        awk -F: '$3 >= 1000 && $3 < 65534 { print $1; exit }' /etc/passwd
+      register: _target_user
+      changed_when: false
+      failed_when: _target_user.stdout == ''
+
+    - name: Detect target home directory
+      ansible.builtin.command: "getent passwd {{ _target_user.stdout }}"
+      register: _target_passwd
+      changed_when: false
+
+    - name: Set target_user and target_home facts
+      ansible.builtin.set_fact:
+        target_user: "{{ _target_user.stdout }}"
+        target_home: "{{ _target_passwd.stdout.split(':')[5] }}"
+
+  roles:
+    - machine_facts
+
+
+- name: Vault-protected system configuration
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+
+  handlers:
+    - name: Reload NetworkManager connections
+      ansible.builtin.command: nmcli connection reload
+      changed_when: false
+
+    - name: Etckeeper commit
+      ansible.builtin.command: "etckeeper commit -m 'Ansible: converge vault-protected configuration.'"
+      changed_when: false
+      failed_when: false
+
+  tasks:
+    - name: Configure WiFi networks
+      ansible.builtin.include_tasks: roles/system/tasks/wifi.yml
+
+  post_tasks:
+    - name: Mark vault setup complete
+      ansible.builtin.file:
+        path: /etc/gatherd-vault-complete
+        state: touch
+        mode: '0644'

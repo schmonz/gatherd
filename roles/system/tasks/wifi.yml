@@ -1,0 +1,33 @@
+---
+- name: Pre-configure known WiFi networks
+  ansible.builtin.copy:
+    dest: "/etc/NetworkManager/system-connections/{{ item.ssid }}.nmconnection"
+    mode: '0600'
+    content: |
+      [connection]
+      id={{ item.ssid }}
+      uuid={{ item.ssid | to_uuid }}
+      type=wifi
+      autoconnect=true
+
+      [wifi]
+      mode=infrastructure
+      ssid={{ item.ssid }}
+
+      [wifi-security]
+      auth-alg=open
+      key-mgmt=wpa-psk
+      psk={{ item.psk }}
+
+      [ipv4]
+      method=auto
+
+      [ipv6]
+      addr-gen-mode=default
+      method=auto
+
+      [proxy]
+  loop: "{{ wifi_networks }}"
+  notify:
+    - Reload NetworkManager connections
+    - Etckeeper commit

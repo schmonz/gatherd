@@ -151,6 +151,17 @@ section_jetbrains() {
     fi
 }
 
+section_vault() {
+    if [ -f /etc/gatherd-vault-complete ]; then
+        section_present 'Vault' && section_remove 'Vault'
+    else
+        section_present 'Vault' && return
+        h 'Vault'
+        li 'Enter vault password when prompted — WiFi and other secrets will configure in the background'
+        li 'Run `journalctl -u gatherd-vault.service` to check progress'
+    fi
+}
+
 section_timeshift() {
     if timeshift_configured; then
         section_present 'Timeshift' && section_remove 'Timeshift'
@@ -165,6 +176,7 @@ section_verify() {
     # Never auto-done: user manages this section manually
     section_present 'Verify' && return
     h 'Verify'
+    li 'WiFi: join LaPromNyack from the network menu — should connect without entering a password'
     li 'Screen lock: let screen time out, then wiggle/tap — should see lock screen'
     has_resume && li 'Screen lock: close lid, reopen — should see lock screen'
     li 'LocalSend: check alias is system hostname, not a random phrase'
@@ -201,6 +213,7 @@ section_verify() {
 
 [ -f "$OUTPUT" ] || printf 'Manual steps remaining:\n' > "$OUTPUT"
 
+section_vault
 section_1password
 section_helium
 section_tailscale

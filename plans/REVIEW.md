@@ -2,9 +2,6 @@
 
 ## Immediate correctness issues
 
-- ~~`has_plenty_of_ram` is still detected in `machine_facts` but nothing uses it anymore — CLion was its only consumer. Dead fact.~~ Incorrect: it still gates zswap setup in the hardware role.
-- `fwupdmgr` runs with `changed_when: false`, so it always reports "ok" even when it installs firmware. Not wrong, but misleading in run output.
-- The WiFi PSK is plaintext in the repo: `psk: "whats4dinner?"`. Even for personal use that's in git history forever.
 - `site.yml` and `site-slow.yml` have identical pre_tasks blocks. They'll drift apart. Worth extracting into a shared include.
 
 ## What would make it more obviously correct

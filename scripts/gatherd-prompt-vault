@@ -1,0 +1,7 @@
+#!/bin/sh
+test -f /etc/gatherd-vault-complete && exit 0
+test -f /etc/gatherd-complete || exit 0
+
+vault_pass=$("${SUDO_ASKPASS:-/usr/lib/seahorse/ssh-askpass}" "Vault password:") || exit 0
+printf '%s' "$vault_pass" > /usr/local/lib/gatherd/.vault_pass
+chmod 600 /usr/local/lib/gatherd/.vault_pass

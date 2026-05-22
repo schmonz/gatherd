@@ -289,6 +289,22 @@
     - systemd-rfkill.socket
     - power-profiles-daemon.service
 
+- name: Install gatherd-vault systemd units
+  ansible.builtin.file:
+    src: "{{ setup_dir }}/services/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    state: link
+  loop:
+    - gatherd-vault.service
+    - gatherd-vault.path
+
+- name: Enable gatherd-vault.path
+  ansible.builtin.systemd:
+    name: gatherd-vault.path
+    enabled: true
+    state: started
+    daemon_reload: true
+
 - name: Enable system services
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -359,41 +375,6 @@
   when: has_thinkpad_hardware
   notify: Etckeeper commit
 
-- name: Pre-configure known WiFi networks
-  ansible.builtin.copy:
-    dest: "/etc/NetworkManager/system-connections/{{ item.ssid }}.nmconnection"
-    mode: '0600'
-    content: |
-      [connection]
-      id={{ item.ssid }}
-      uuid={{ item.ssid | to_uuid }}
-      type=wifi
-      autoconnect=true
-
-      [wifi]
-      mode=infrastructure
-      ssid={{ item.ssid }}
-
-      [wifi-security]
-      auth-alg=open
-      key-mgmt=wpa-psk
-      psk={{ item.psk }}
-
-      [ipv4]
-      method=auto
-
-      [ipv6]
-      addr-gen-mode=default
-      method=auto
-
-      [proxy]
-  loop:
-    - ssid: LaPromNyack
-      psk: "whats4dinner?"
-  notify:
-    - Reload NetworkManager connections
-    - Etckeeper commit
-
 - name: Configure NFS client automount
   ansible.builtin.include_tasks: nfs_client.yml
 
@@ -401,4 +382,5 @@
   ansible.builtin.shell: |
     fwupdmgr get-updates || true
     fwupdmgr update || true
-  changed_when: false
+  register: _fwupdmgr
+  changed_when: "'No updates available' not in _fwupdmgr.stderr"

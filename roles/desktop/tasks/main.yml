@@ -560,6 +560,13 @@
     mode: '0755'
     remote_src: true
 
+- name: Install gatherd-prompt-vault script
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-prompt-vault"
+    dest: "{{ target_home }}/.local/bin/gatherd-prompt-vault"
+    mode: '0755'
+    remote_src: true
+
 - name: Remove obsolete gnome-keyring --unlock autostart lines
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
@@ -603,6 +610,7 @@
     - gatherd-prompt-tailscale
     - gatherd-prompt-icloud
     - gatherd-prompt-postsetup
+    - gatherd-prompt-vault
 
 - name: Add systray app autostart entries
   ansible.builtin.lineinfile:

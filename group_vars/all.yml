@@ -2,3 +2,6 @@
 dotfiles_repo: "https://github.com/schmonz/dotfiles.git"
 setup_dir: "/usr/local/lib/gatherd"
 nfs_server: ap-juicer.taile54b91.ts.net
+wifi_networks:
+  - ssid: LaPromNyack
+    psk: "{{ vault_wifi_psk_lapromnyack }}"

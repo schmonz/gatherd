@@ -2,15 +2,16 @@
 Description=gatherd background package installation
 After=network-online.target nss-lookup.target gatherd.service
 Wants=network-online.target nss-lookup.target
-ConditionPathExists=/usr/local/lib/gatherd/site-slow.yml
+ConditionPathExists=/usr/local/lib/gatherd/site-user-async.yml
 ConditionPathExists=/etc/gatherd-complete
-ConditionPathExists=!/etc/gatherd-slow-complete
+ConditionPathExists=!/etc/gatherd-user-async-complete
 
 [Service]
 Type=oneshot
+WorkingDirectory=/usr/local/lib/gatherd
 ExecStartPre=ansible-galaxy collection install --requirements-file /usr/local/lib/gatherd/requirements.yml
-ExecStart=systemd-inhibit --what=sleep --who=gatherd-slow --why="Background package installation in progress" --mode=block \
-    ansible-playbook /usr/local/lib/gatherd/site-slow.yml
+ExecStart=systemd-inhibit --what=sleep --who=gatherd-user-async --why="Background package installation in progress" --mode=block \
+    ansible-playbook /usr/local/lib/gatherd/site-user-async.yml
 RemainAfterExit=no
 StandardOutput=journal+console
 StandardError=journal+console

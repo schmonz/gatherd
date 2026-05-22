@@ -8,6 +8,7 @@ ConditionPathExists=!/etc/gatherd-complete
 
 [Service]
 Type=oneshot
+WorkingDirectory=/usr/local/lib/gatherd
 ExecStartPre=ansible-galaxy collection install --requirements-file /usr/local/lib/gatherd/requirements.yml
 ExecStart=systemd-inhibit --what=sleep --who=gatherd --why="First-boot Ansible provisioning in progress" --mode=block \
     ansible-playbook /usr/local/lib/gatherd/site.yml

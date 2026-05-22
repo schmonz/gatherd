@@ -1,33 +1,41 @@
 #!/bin/sh
-# Generates ~/.config/gatherd-post-setup.md with only the steps still needed.
+# Manages ~/.config/gatherd-post-setup.md as a living document:
+#   - removes sections where detection says "done"
+#   - appends sections that are needed but not yet present
+#   - never rewrites or touches sections that already exist
 # Safe to run at any time; gatherd-prompt-postsetup calls it at each login.
 
 OUTPUT="$HOME/.config/gatherd-post-setup.md"
-TMP=$(mktemp)
-trap 'rm -f "$TMP"' EXIT INT TERM
 
 # ---------------------------------------------------------------------------
-# Output helpers
+# Helpers
 # ---------------------------------------------------------------------------
 
-h()  { printf '\n# %s\n'  "$1" >> "$TMP"; }
-li() { printf -- '- %s\n' "$1" >> "$TMP"; }
+h()  { printf '\n# %s\n'  "$1" >> "$OUTPUT"; }
+li() { printf -- '- %s\n' "$1" >> "$OUTPUT"; }
+
+section_present() { grep -q "^# $1\$" "$OUTPUT" 2>/dev/null; }
+
+section_remove() {
+    awk -v hdr="# $1" '
+        $0 == hdr { skip=1; next }
+        skip && /^# /  { skip=0 }
+        !skip { print }
+    ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+}
+
+collapse_blanks() {
+    awk 'prev_blank && /^$/ { next } { prev_blank=(/^$/); print }' \
+        "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+}
 
 # ---------------------------------------------------------------------------
 # Hardware detection
 # ---------------------------------------------------------------------------
 
-is_thinkpad() {
-    grep -qi 'lenovo' /sys/class/dmi/id/board_vendor 2>/dev/null
-}
-
-has_ir_receiver() {
-    ls /dev/lirc* /sys/class/rc/rc* >/dev/null 2>&1
-}
-
-has_resume() {
-    [ "$(systemctl is-enabled suspend.target 2>/dev/null)" != "masked" ]
-}
+is_thinkpad()     { grep -qi 'lenovo' /sys/class/dmi/id/board_vendor 2>/dev/null; }
+has_ir_receiver() { ls /dev/lirc* /sys/class/rc/rc* >/dev/null 2>&1; }
+has_resume()      { [ "$(systemctl is-enabled suspend.target 2>/dev/null)" != "masked" ]; }
 
 # ---------------------------------------------------------------------------
 # App state detection
@@ -41,9 +49,7 @@ helium_1p_extension_ok() {
     [ -d "$HOME/.config/net.imput.helium/Default/Extensions/aeblfdkhhhdcdjpifhhbdiojplfjncoa" ]
 }
 
-tailscale_connected() {
-    tailscale ip >/dev/null 2>&1
-}
+tailscale_connected() { tailscale ip >/dev/null 2>&1; }
 
 tailscale_settings_ok() {
     _prefs=$(tailscale debug prefs 2>/dev/null)
@@ -51,21 +57,9 @@ tailscale_settings_ok() {
     printf '%s' "$_prefs" | grep -qE '"RouteAll":\s*true'
 }
 
-icloud_configured() {
-    rclone listremotes 2>/dev/null | grep -q '^icloud:'
-}
-
-nfs_accessible() {
-    timeout 5 ls "$HOME/.autofs-mounts/code" >/dev/null 2>&1
-}
-
-claude_desktop_authed() {
-    find "$HOME/.config/Claude" -name '*.json' 2>/dev/null | grep -q .
-}
-
-claude_code_authed() {
-    [ -f "$HOME/.claude/.credentials.json" ] || [ -f "$HOME/.claude/credentials" ]
-}
+icloud_configured()     { rclone listremotes 2>/dev/null | grep -q '^icloud:'; }
+claude_desktop_authed() { find "$HOME/.config/Claude" -name '*.json' 2>/dev/null | grep -q .; }
+claude_code_authed()    { [ -f "$HOME/.claude/.credentials.json" ] || [ -f "$HOME/.claude/credentials" ]; }
 
 jetbrains_authed() {
     find "$HOME/.local/share/JetBrains/Toolbox" \
@@ -78,28 +72,38 @@ timeshift_configured() {
 }
 
 # ---------------------------------------------------------------------------
-# Sections — each appends to TMP only if action is still needed
+# Section handlers
+# Pattern: if done → prune; else if absent → add; else → leave alone
 # ---------------------------------------------------------------------------
 
 section_1password() {
-    onepassword_keyring_ok && return
-    h '1Password'
-    li 'Open seahorse'
-    li 'Create a "login" keyring with no password'
-    li 'Sign in to 1Password'
-    li 'Lock, unlock, enter 2FA code'
+    if onepassword_keyring_ok; then
+        section_present '1Password' && section_remove '1Password'
+    else
+        section_present '1Password' && return
+        h '1Password'
+        li 'Open seahorse'
+        li 'Create a "login" keyring with no password'
+        li 'Sign in to 1Password'
+        li 'Lock, unlock, enter 2FA code'
+    fi
 }
 
 section_helium() {
-    helium_1p_extension_ok && tailscale_connected && icloud_configured && return
-    h 'Helium'
-    helium_1p_extension_ok || li 'Install 1Password browser extension'
-    tailscale_connected    || li 'Log into Tailscale admin console'
-    icloud_configured      || li 'Log into iCloud (needed for rclone; see iCloud section)'
+    if helium_1p_extension_ok && tailscale_connected && icloud_configured; then
+        section_present 'Helium' && section_remove 'Helium'
+    else
+        section_present 'Helium' && return
+        h 'Helium'
+        helium_1p_extension_ok || li 'Install 1Password browser extension'
+        tailscale_connected    || li 'Log into Tailscale admin console'
+        icloud_configured      || li 'Log into iCloud (needed for rclone; see iCloud section)'
+    fi
 }
 
 section_tailscale() {
-    # Always show — exit node check is always relevant after a repave
+    # Never auto-done: exit node check is always relevant after a repave
+    section_present 'Tailscale' && return
     h 'Tailscale'
     tailscale_connected   || li 'Connect'
     tailscale_settings_ok || li 'Run `tailscale set --accept-dns=true --accept-routes`'
@@ -107,40 +111,59 @@ section_tailscale() {
 }
 
 section_icloud() {
-    icloud_configured && return
-    h 'iCloud'
-    li 'Run `rclone config` and follow prompts to add a remote named `icloud`'
-    li 'When tokens expire (monthly), log into icloud.com when prompted — gatherd-prompt-icloud extracts cookies and updates rclone automatically'
-    li '[Details](https://forum.rclone.org/t/icloud-connect-not-working-http-error-400/52019/44)'
+    if icloud_configured; then
+        section_present 'iCloud' && section_remove 'iCloud'
+    else
+        section_present 'iCloud' && return
+        h 'iCloud'
+        li 'Run `rclone config` and follow prompts to add a remote named `icloud`'
+        li 'When tokens expire (monthly), log into icloud.com when prompted — gatherd-prompt-icloud extracts cookies and updates rclone automatically'
+        li '[Details](https://forum.rclone.org/t/icloud-connect-not-working-http-error-400/52019/44)'
+    fi
 }
 
 section_claude() {
-    claude_desktop_authed && claude_code_authed && return
-    h 'Claude'
-    claude_desktop_authed || li 'Desktop: log in via the app'
-    claude_code_authed    || li 'Code: run `claude` in a terminal'
+    if claude_desktop_authed && claude_code_authed; then
+        section_present 'Claude' && section_remove 'Claude'
+    else
+        section_present 'Claude' && return
+        h 'Claude'
+        claude_desktop_authed || li 'Desktop: log in via the app'
+        claude_code_authed    || li 'Code: run `claude` in a terminal'
+    fi
 }
 
 section_zoom() {
-    # Always show — login state not detectable
+    # Never auto-done: login state not detectable
+    section_present 'Zoom' && return
     h 'Zoom'
     li 'Log in'
     li 'Try sharing a window — confirm screen sharing works under Sway/wlroots'
 }
 
 section_jetbrains() {
-    jetbrains_authed && return
-    h 'JetBrains Toolbox'
-    li 'Log in to your JetBrains account by clicking the tray icon'
+    if jetbrains_authed; then
+        section_present 'JetBrains Toolbox' && section_remove 'JetBrains Toolbox'
+    else
+        section_present 'JetBrains Toolbox' && return
+        h 'JetBrains Toolbox'
+        li 'Log in to your JetBrains account by clicking the tray icon'
+    fi
 }
 
 section_timeshift() {
-    timeshift_configured && return
-    h 'Timeshift'
-    li 'Open Timeshift, confirm BTRFS is selected, click Finish'
+    if timeshift_configured; then
+        section_present 'Timeshift' && section_remove 'Timeshift'
+    else
+        section_present 'Timeshift' && return
+        h 'Timeshift'
+        li 'Open Timeshift, confirm BTRFS is selected, click Finish'
+    fi
 }
 
 section_verify() {
+    # Never auto-done: user manages this section manually
+    section_present 'Verify' && return
     h 'Verify'
     li 'Screen lock: let screen time out, then wiggle/tap — should see lock screen'
     has_resume && li 'Screen lock: close lid, reopen — should see lock screen'
@@ -152,8 +175,8 @@ section_verify() {
     li 'Systray (idempotency): run `gatherd-systray <app> [args...]` again — no duplicate tray icons appear'
     li 'Helium: first launch opens directly to browser, no setup tab'
     li 'NFS automount: access ~/.autofs-mounts/code — should mount from ap-juicer transparently'
-    icloud_configured && li 'iCloud: run `rclone lsd icloud:` — should list top-level folders without error'
-    icloud_configured && li 'iCloud re-auth: log out of icloud.com in Helium, log back in — `rclone lsd icloud:` should work again without manual steps'
+    li 'iCloud: run `rclone lsd icloud:` — should list top-level folders without error'
+    li 'iCloud re-auth: log out of icloud.com in Helium, log back in — `rclone lsd icloud:` should work again without manual steps'
     li 'Captive portal: join a portal network, confirm Helium opens automatically and portal login works'
     li 'Power management: run `tlp-stat | head -30` — confirm "Status: enabled" and correct power source'
     li 'Power management: run `sudo powertop --time=5` — Tunables tab should be mostly "Good"'
@@ -176,6 +199,8 @@ section_verify() {
 # Main
 # ---------------------------------------------------------------------------
 
+[ -f "$OUTPUT" ] || printf 'Manual steps remaining:\n' > "$OUTPUT"
+
 section_1password
 section_helium
 section_tailscale
@@ -186,8 +211,4 @@ section_jetbrains
 section_timeshift
 section_verify
 
-if [ -s "$TMP" ]; then
-    { printf 'Manual steps remaining:\n'; cat "$TMP"; } > "$OUTPUT"
-else
-    printf 'All done!\n' > "$OUTPUT"
-fi
+collapse_blanks

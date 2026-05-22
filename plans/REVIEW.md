@@ -22,14 +22,10 @@ Below that: GitHub Actions running ansible-lint on push would at least catch syn
 
 `bats` is installed but there are no tests for the shell scripts. The `gatherd-show-slow-progress` logic, `gatherd-launch-systray`, and the prompt scripts have real testable behavior.
 
-## What pro Ansible developers look for
+## Deferred
 
-- **`defaults/main.yml` in roles**: your variables are set in `machine_facts` tasks rather than documented in a defaults file. Pro practice is to declare every variable a role uses or provides with a default and a comment, even if it's just `false`.
-- **Role READMEs**: none of your roles have documentation. For personal use this matters less, but `machine_facts` especially deserves one.
-- **`no_log: true`** on the WiFi task that contains the PSK.
-- **Vault**: `ansible-vault encrypt_string` for the PSK takes 30 seconds and eliminates the plaintext-in-git problem.
-- **Tags**: you now have a structural fast/slow split, but no tags within phases. Tags let you re-run just the waybar config, or just AUR packages, without the full playbook.
-- **`become: false` hygiene**: some tasks run as root that don't need to. Not a correctness issue, but principle of least privilege.
+- **Tags**: no tags within phases. Tags let you re-run just the waybar config, or just AUR packages, without the full playbook. Worth doing once there's a converge/re-run story.
+- **`become: false` hygiene**: some tasks run as root that don't need to. Audit which tasks don't need root and add `become: false` explicitly.
 
 ## What you should want given your goals
 
@@ -37,4 +33,4 @@ The most notable missing piece is an **update story**. Right now the sentinel fi
 
 Related: there's no record of *when* or *which version* of the playbook ran on a given machine. A file written during provisioning with the git SHA would let you answer "is this machine current?"
 
-Finally — and this is probably already on your radar — secrets management. Vault for the WiFi PSK, and possibly for any future credentials (iCloud tokens, etc.) that you might be tempted to add. The git history already has the plaintext PSK; a `git filter-repo` pass and a rotation of the password would clean that up.
+Finally — secrets management for future credentials (iCloud tokens, etc.): use vault rather than committing them plaintext.

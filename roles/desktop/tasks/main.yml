@@ -475,6 +475,17 @@
     path: "{{ target_home }}/.config/sway/config.d/application_defaults"
     line: 'for_window [app_id="captive-browser"] floating enable, resize set width 70 ppt height 70 ppt'
 
+- name: Preserve keyhint popup font sizes despite GTK text-scaling-factor
+  # GDK_DPI_SCALE=1/text-scaling-factor cancels the gsettings scaling exactly,
+  # so the hardcoded Pango sizes render at their intended size while all other
+  # settings (theme, dark mode) are still read from the regular dconf backend.
+  ansible.builtin.replace:
+    path: "{{ target_home }}/.config/waybar/scripts/keyhint.sh"
+    regexp: '^yad "\$\{cheat\[@\]\}"'
+    replace: |
+      _ts=$(gsettings get org.gnome.desktop.interface text-scaling-factor 2>/dev/null || echo 1)
+      GDK_DPI_SCALE=$(awk "BEGIN{printf \"%.4f\", 1.0/$_ts}") yad "${cheat[@]}"
+
 - name: Create JetBrains Toolbox data directory
   ansible.builtin.file:
     path: "{{ target_home }}/.local/share/JetBrains/Toolbox"

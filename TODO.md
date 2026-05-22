@@ -2,12 +2,19 @@
 
 ## Most recent attempted features
 
+Wasn't paying attention to whether the slow-install progress terminal ever came up.
+Still need to verify that.
+
+-----
+
+
 needs re-verification on next repave:
 - terminal window for slow-Ansible progress (was anti-verified; fixed sentinel-file + timeout approach)
 - systray apps start up (was anti-verified; replaced five wrapper scripts with one generic gatherd-systray)
 - JetBrains Toolbox starts silently in tray (was almost-verified; now pre-seeds .storage.json to skip onboarding window)
+- JetBrains Toolbox user agreement dialog (was anti-verified; now pre-seeds .appState.json navigation to /main)
 - captive browser (was semi-verified; dropped unsupported --host-resolver-rules, added DnsOverHttps, switched to whatsmyip.schmonz.com)
-- first-run Helium shows exactly one setup tab (was anti-verified; no fix yet — needs investigation)
+- first-run Helium opens directly, no setup tab (was anti-verified; now pre-seeds helium.completed_onboarding in initial_preferences)
 
 ## Hardware
 

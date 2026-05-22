@@ -13,4 +13,3 @@
     dest: /etc/thinkfan.conf
     mode: '0644'
   notify: Etckeeper commit
-

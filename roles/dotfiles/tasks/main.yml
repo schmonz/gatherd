@@ -18,4 +18,3 @@
       dest: .gitignore_global
     - src: tmux.conf
       dest: .tmux.conf
-

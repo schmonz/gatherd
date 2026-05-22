@@ -34,7 +34,7 @@
         extra_args: "--mflags --skippgpcheck"
 
   always:
-    - name: Launch slow-installed systray apps
+    - name: Launch slow-installed systray apps  # noqa: risky-shell-pipe
       # swaymsg exec runs inside the live Sway session; SWAYSOCK must be set explicitly
       # since Ansible runs outside the session. Bails silently if Sway isn't up.
       ansible.builtin.shell: |

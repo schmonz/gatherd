@@ -200,7 +200,7 @@
     has_plenty_of_ram: true
   when: ansible_facts.memtotal_mb >= 8192
 
-- name: Check for infrared remote control receiver
+- name: Check for infrared remote control receiver  # noqa: risky-shell-pipe
   # /dev/lirc*: traditional LIRC path (requires lirc kernel module)
   # /sys/class/rc/rc*: modern rc-core path (Apple Remote, most built-ins)
   # /dev/irda* and /sys/class/irda/ are IrDA data ports — intentionally excluded.
@@ -225,7 +225,7 @@
       'ThinkPad' in (ansible_facts.product_name | default('')) or
       'ThinkPad' in (ansible_facts.product_version | default(''))
 
-- name: Check for TrackPoint input device
+- name: Check for TrackPoint input device  # noqa: risky-shell-pipe
   ansible.builtin.shell: |
     grep -rl "TrackPoint" /sys/class/input/input*/name 2>/dev/null | grep -q . && echo true || echo false
   register: _trackpoint
@@ -236,7 +236,7 @@
     has_thinkpad_trackpoint: true
   when: _trackpoint.stdout == 'true'
 
-- name: Check for ThinkVantage button input device
+- name: Check for ThinkVantage button input device  # noqa: risky-shell-pipe
   ansible.builtin.shell: |
     grep -rl "ThinkVantage" /sys/class/input/input*/name 2>/dev/null | grep -q . && echo true || echo false
   register: _vantage_button
@@ -287,7 +287,7 @@
     has_embedded_numpad: true
   when: _embedded_numpad.stdout == 'true'
 
-- name: Read primary screen width from DRM
+- name: Read primary screen width from DRM  # noqa: risky-shell-pipe
   ansible.builtin.shell: |
     for f in /sys/class/drm/card*/card*-*/modes; do
       head -1 "$f" 2>/dev/null

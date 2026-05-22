@@ -5,6 +5,9 @@ skip_list:
   - latest[git]
   # some browser preference JSON values are unavoidably long single-line strings
   - yaml[line-length]
+  # args[module] false positives from ansible.posix/community.general version conflict
+  # between .ansible/collections/ and system site-packages
+  - args[module]
 
 mock_modules:
   # collections not installed in the lint environment

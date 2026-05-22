@@ -495,6 +495,7 @@
               "isEnterpriseBlockedScreen": false
           }
       }
+    mode: '0600'
     force: false
 
 - name: Pre-seed JetBrains Toolbox app state to skip user agreement dialog
@@ -517,6 +518,7 @@
           },
           "windows": {}
       }
+    mode: '0600'
     force: false
 
 - name: Install gatherd-prompt-1password script

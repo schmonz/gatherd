@@ -515,71 +515,9 @@
 - name: Write post-setup notes
   # accept-dns and accept-routes require an authenticated tailscale session, so
   # they can't run during setup.
-  ansible.builtin.copy:
+  ansible.builtin.template:
+    src: gatherd-post-setup.md.j2
     dest: "{{ target_home }}/.config/gatherd-post-setup.md"
-    content: |
-      Manual steps remaining:
-
-      # 1Password
-      - Open seahorse
-      - Create a "login" keyring with no password
-      - Sign in to 1Password
-      - Lock, unlock, enter 2FA code
-
-      # Helium
-      - Install 1Password browser extension
-      - Log into Tailscale admin console
-      - Log into iCloud (needed for rclone; see iCloud section)
-
-      # Tailscale
-      - Connect
-      - Run `tailscale set --accept-dns=true --accept-routes`
-      - Fix exit node: check admin console ("cannot relay traffic")
-
-      # iCloud
-      - Run `rclone config` and follow prompts to add a remote named `icloud`
-      - When tokens expire (monthly), log into icloud.com when prompted — gatherd-prompt-icloud extracts cookies and updates rclone automatically
-      - [Details](https://forum.rclone.org/t/icloud-connect-not-working-http-error-400/52019/44)
-
-      # Claude
-      - Desktop: log in via the app
-      - Code: run `claude` in a terminal
-
-      # Zoom
-      - Log in
-      - Try sharing a window — confirm screen sharing works under Sway/wlroots
-
-      # JetBrains Toolbox
-      - Log in to your JetBrains account by clicking the tray icon
-
-      # Timeshift
-      - Open Timeshift, confirm BTRFS is selected, click Finish
-
-      # Verify
-      - Screen lock: let screen time out, then wiggle/tap — should see lock screen
-      - Screen lock: close lid, reopen — should see lock screen
-      - LocalSend: check alias is system hostname, not a random phrase
-      - On low-RAM machines: Helium → Settings → Performance — Memory Saver should be Maximum
-      - Systray (fast-path): after first login, 1Password, Tailscale, and arch-update tray icons appear without logging out
-      - Systray (slow-path): LocalSend and JetBrains Toolbox tray icons appear as soon as slow install finishes, without logging out
-      - JetBrains Toolbox: first launch goes straight to main screen, no user agreement dialog
-      - Systray (idempotency): run `gatherd-systray <app> [args...]` again — no duplicate tray icons appear
-      - Helium: first launch opens directly to browser, no setup tab
-      - iCloud: run `rclone lsd icloud:` — should list top-level folders without error
-      - iCloud re-auth: log out of icloud.com in Helium, log back in — `rclone lsd icloud:` should work again without manual steps
-      - Captive portal: join a portal network, confirm Helium opens automatically and portal login works
-      - Power management: run `tlp-stat | head -30` — confirm "Status: enabled" and correct power source
-      - Power management (ThinkPad): run `tlp-stat -b | grep -i thresh` — confirm 75/80 thresholds
-      - Power management: run `sudo powertop --time=5` — Tunables tab should be mostly "Good"
-      - Power management: on battery, run `upower -i $(upower -e | grep BAT)` — check energy-rate in watts
-      - IR receiver (T60/MBP): run `ls /dev/lirc* /sys/class/rc/rc* 2>/dev/null` — should show at least one device
-      - IR receiver (T60/MBP): run `ir-keytable` — confirm device listed with a keymap loaded
-      - IR receiver (T60/MBP): run `ir-keytable -t -s rc0` and press remote buttons — should show scancode + keycode per press
-      - ThinkPad fan control: run `cat /proc/acpi/ibm/fan` — should show current speed level and RPM
-      - ThinkPad fan control: run `systemctl status thinkfan` — should be active
-      - TrackPoint scroll (ThinkPad): in any scrollable window, hold middle button and push TrackPoint — should scroll
-      - ThinkVantage button (T60): press blue ThinkVantage button — should open a terminal
-
     mode: '0644'
 
 - name: Install gatherd-prompt-1password script

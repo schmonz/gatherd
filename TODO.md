@@ -3,6 +3,7 @@
 - NFS client automount: done and ansibilized. `~/.autofs-mounts/code` mounts from ap-juicer via tailscale (works on LAN and remote).
   - Still to do: migrate `/home/schmonz/trees` to a symlink → `.autofs-mounts/code/trees` (local `dotfiles/` already moved to `~/.dotfiles`; `trees/` dir now only has local repos)
 - Conky gap_y and systray icon-size: both now scale with foot_font_size, needs repave verification
+- Post-setup notes: generate at first sway login (not Ansible time) so app auth state is detectable — tailscale status, rclone icloud remote, secret-tool keyring queries, etc. Each section self-gates and appends only if needed. Re-runnable anytime to see what's still outstanding.
 
 
 ## Most recent attempted features

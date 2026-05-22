@@ -213,6 +213,7 @@ section_verify() {
 
 [ -f "$OUTPUT" ] || printf 'Manual steps remaining:\n' > "$OUTPUT"
 
+section_verify
 section_vault
 section_1password
 section_helium
@@ -222,6 +223,5 @@ section_claude
 section_zoom
 section_jetbrains
 section_timeshift
-section_verify
 
 collapse_blanks

@@ -425,6 +425,13 @@
     mode: '0755'
     remote_src: true
 
+- name: Install gatherd-post-setup-notes script
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-post-setup-notes"
+    dest: "{{ target_home }}/.local/bin/gatherd-post-setup-notes"
+    mode: '0755'
+    remote_src: true
+
 - name: Install gatherd-show-slow-progress script
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-show-slow-progress"
@@ -511,14 +518,6 @@
           "windows": {}
       }
     force: false
-
-- name: Write post-setup notes
-  # accept-dns and accept-routes require an authenticated tailscale session, so
-  # they can't run during setup.
-  ansible.builtin.template:
-    src: gatherd-post-setup.md.j2
-    dest: "{{ target_home }}/.config/gatherd-post-setup.md"
-    mode: '0644'
 
 - name: Install gatherd-prompt-1password script
   ansible.builtin.copy:

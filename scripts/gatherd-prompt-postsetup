@@ -1,2 +1,3 @@
 #!/bin/sh
+gatherd-post-setup-notes
 test -s "$HOME/.config/gatherd-post-setup.md" && xdg-open "$HOME/.config/gatherd-post-setup.md"

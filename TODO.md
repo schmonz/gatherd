@@ -8,6 +8,10 @@
 ## Most recent attempted features
 
 needs re-verification on next repave:
+- NFS automount via autofs (was not verified on repave; autofs from AUR, config in system role, service started in aur role, mounts ~/.autofs-mounts/code from ap-juicer via tailscale)
+- dotfiles cloned to ~/.dotfiles, symlinks for .gitconfig/.gitignore_global/.tmux.conf (was not verified on repave; ~/trees no longer created by playbook)
+- conky gap_y clears tmux statusbar (was not verified on repave; scales with foot_font_size)
+- systray icon-size matches waybar scale (was not verified on repave; scales with foot_font_size)
 - terminal window for slow-Ansible progress (was anti-verified; fixed sentinel-file + timeout approach)
 - systray apps start up (was anti-verified; replaced five wrapper scripts with one generic gatherd-systray)
 - JetBrains Toolbox starts silently in tray (was almost-verified; now pre-seeds .storage.json to skip onboarding window)

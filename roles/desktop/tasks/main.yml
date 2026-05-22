@@ -167,6 +167,14 @@
     regexp: 'font-size:\s*\d+px'
     replace: "font-size: {{ (16 * foot_font_size / 10) | round | int }}px"
 
+- name: Configure waybar tray icon size
+  ansible.builtin.replace:
+    path: "{{ target_home }}/.config/waybar/config"
+    after: '"tray"\s*:\s*\{'
+    before: '\}'
+    regexp: '"icon-size":\s*\d+'
+    replace: '"icon-size": {{ (16 * foot_font_size / 10) | round | int }}'
+
 - name: Configure foot font size for 80-col two-up layout
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/foot/foot.ini"

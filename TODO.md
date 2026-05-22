@@ -1,15 +1,8 @@
 # TODO
 
-- NFS client automount:
-  - Installed `autofs` (AUR) on this laptop
-  - Created `/home/schmonz/.autofs-mounts` as the autofs-managed parent
-  - `/etc/autofs/auto.master.d/ap-juicer.autofs`: drop-in pointing that parent at `/etc/autofs/auto.ap-juicer`, 600s idle timeout
-  - `/etc/autofs/auto.ap-juicer`: `code` key → `ap-juicer.local:/export/code`, NFSv4, soft mount, short timeouts
-  - Enabled and started `autofs.service`
-  - Still to do: migrate `/home/schmonz/trees` to a symlink → `.autofs-mounts/code/trees` (has local `dotfiles/` to relocate first)
-  - Still to do: ansibilize (client: autofs package + config files + service; server side is OMV, manual)
-- Slide the conky up by a "row" or two -- so I see all of it even when tmux statusbar
-- Magnify systray icons a little bit to match the waybar items
+- NFS client automount: done and ansibilized. `~/.autofs-mounts/code` mounts from ap-juicer via tailscale (works on LAN and remote).
+  - Still to do: migrate `/home/schmonz/trees` to a symlink → `.autofs-mounts/code/trees` (local `dotfiles/` already moved to `~/.dotfiles`; `trees/` dir now only has local repos)
+- Conky gap_y and systray icon-size: both now scale with foot_font_size, needs repave verification
 
 
 ## Most recent attempted features

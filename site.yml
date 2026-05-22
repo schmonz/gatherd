@@ -7,22 +7,8 @@
   any_errors_fatal: true
 
   pre_tasks:
-    - name: Detect target user
-      ansible.builtin.command: >
-        awk -F: '$3 >= 1000 && $3 < 65534 { print $1; exit }' /etc/passwd
-      register: _target_user
-      changed_when: false
-      failed_when: _target_user.stdout == ''
-
-    - name: Detect target home directory
-      ansible.builtin.command: "getent passwd {{ _target_user.stdout }}"
-      register: _target_passwd
-      changed_when: false
-
-    - name: Set target_user and target_home facts
-      ansible.builtin.set_fact:
-        target_user: "{{ _target_user.stdout }}"
-        target_home: "{{ _target_passwd.stdout.split(':')[5] }}"
+    - name: Detect target user and set facts
+      ansible.builtin.include_tasks: tasks/detect_user.yml
 
   roles:
     - machine_facts

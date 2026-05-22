@@ -1,9 +1,5 @@
 # Project Review
 
-## Immediate correctness issues
-
-- `site.yml` and `site-slow.yml` have identical pre_tasks blocks. They'll drift apart. Worth extracting into a shared include.
-
 ## What would make it more obviously correct
 
 The biggest gap is that there are no idempotency checks. You can't know the playbook is correct until you repave — which you've been doing repeatedly this session. Running it twice and asserting the second run has zero changes would catch most bugs without hardware. Related: ansible-lint is configured and thoughtful, but there's no CI enforcing it on push, so lint regressions only surface when you remember to run it manually.

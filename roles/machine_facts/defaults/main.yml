@@ -1,0 +1,26 @@
+---
+# Conservative defaults: assume least capability. Probes in tasks/main.yml
+# set these true (or to detected values) when hardware is found.
+has_resume: true
+has_lid_events: true
+has_powerbutton_events: true
+has_gl_capable_gpu: true
+has_avs_audio: false
+has_ambient_light_sensor: false
+has_applesmc: false
+has_cros_fkeys: false
+has_embedded_numpad: false
+has_extlinux: false
+has_facetimehd: false
+has_grub: false
+has_ir_receiver: false
+has_kbd_backlight: false
+has_phantom_second_display: false
+has_plenty_of_ram: false
+has_screen_backlight: false
+has_thinkpad_hardware: false
+has_thinkpad_trackpoint: false
+has_thinkpad_vantage_button: false
+is_aarch64: "{{ ansible_facts['architecture'] == 'aarch64' }}"
+screen_width_px: 1920
+foot_font_size: 14

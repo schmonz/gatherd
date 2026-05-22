@@ -325,7 +325,7 @@
           out_to_x = false,
           alignment = 'bottom_right',
           gap_x = 20,
-          gap_y = 20,
+          gap_y = {{ 20 + (foot_font_size | int * 8 // 3) }},
 
           own_window = true,
           own_window_type = 'desktop',

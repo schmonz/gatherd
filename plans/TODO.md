@@ -1,5 +1,12 @@
 # TODO
 
+- Helium should be pre-configured to always allow account.jetbrains.com to open links of this type in the associated app
+    - same for Zoom and whatever other apps we have that will want to do this
+- X270 seems to sleep pretty aggressively even if the Sway idle inhibitor is activated and the machine is plugged in. Is that TLP?
+- Do we in fact have `LaPromNyack` WiFi password stored somewhere?
+    - Let's also pre-populate a WiFi config for `PeasPlaycare`
+    - And `SchmiPhone` for tethering
+- Can we notice whenever we've joined a new WiFi, and prompt to add it to Ansible?
 - NFS client automount: done and ansibilized. `~/.autofs-mounts/code` mounts from ap-juicer via tailscale (works on LAN and remote).
   - Still to do: migrate `/home/schmonz/trees` to a symlink → `.autofs-mounts/code/trees` (local `dotfiles/` already moved to `~/.dotfiles`; `trees/` dir now only has local repos)
 - Conky gap_y and systray icon-size: both now scale with foot_font_size, needs repave verification
@@ -66,6 +73,13 @@ but if they ever look too small, here's how to scale each:
 Ansible hook: write `~/.config/electron-flags.conf` (covers Slack + Teams) and
 `~/.config/signal-desktop-flags.conf` from the desktop role, using
 `--force-device-scale-factor={{ foot_font_size | float / 10.0 }}`.
+
+## Multi-display
+
+- **Detection**: probe connected outputs, set a fact (e.g. `has_multiple_displays`) so tasks can condition on it
+- **Layout**: configure output positions in sway (which is primary, relative placement)
+- **Scaling**: font size and other size-dependent values (conky, waybar, systray icons) need to make sense across displays that may differ in resolution or DPI — figure out what "going well together" means and automate it
+- **Screen security on resume**: verify that at no point after lid-close / sleep / hibernate / lock is the pre-lock screen content visible — confirm swaylock is covering all outputs before the session is unsuspended
 
 ## Desktop / UX
 

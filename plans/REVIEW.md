@@ -16,7 +16,7 @@ The `postinstall` script and the Ansible playbook are conceptually distinct arti
 
 ## Testability
 
-`vm/test` boots the Arch Linux cloud image under QEMU, runs `site.yml`, then runs it again and asserts `changed=0`. Run it before repaving. Next step: extend to cover `site-user-async.yml` and `site-vault.yml`, and eventually the full `postinstall` → service chain.
+`vm/create-base` builds a reusable EOS Sway base image from the real installer ISO. `vm/test` snapshots it, boots under QEMU, runs `site.yml` twice, and asserts `changed=0`. Run it before repaving. Next step: extend to cover `site-user-async.yml` and `site-vault.yml`.
 
 `bats` is installed but there are no tests for the shell scripts. The `gatherd-show-slow-progress` logic, `gatherd-prompt-*`, and the systray scripts have real testable behavior.
 

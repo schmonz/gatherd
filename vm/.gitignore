@@ -1,5 +1,5 @@
-arch-base.qcow2
-test.qcow2
-seed.img
+*.iso
+*.qcow2
+*.img
 key
 key.pub

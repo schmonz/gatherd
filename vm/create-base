@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Create a reusable EOS Sway base image for vm/test.
+# Run this once; vm/test uses the result as a clean snapshot source.
+#
+# Usage: vm/create-base /path/to/EndeavourOS.iso
+set -euo pipefail
+
+VMDIR="$(cd "$(dirname "$0")" && pwd)"
+BASE="$VMDIR/eos-base.qcow2"
+KEY="$VMDIR/key"
+PORT=2225
+
+[[ $# -eq 1 ]] || { echo "Usage: $0 /path/to/EndeavourOS.iso" >&2; exit 1; }
+ISO="$(realpath "$1")"
+[[ -f "$ISO" ]] || { echo "ISO not found: $ISO" >&2; exit 1; }
+[[ -f "$BASE" ]] && { echo "eos-base.qcow2 already exists; delete it to recreate" >&2; exit 1; }
+
+[[ -f "$KEY" ]] || ssh-keygen -t ed25519 -f "$KEY" -N "" -q
+
+qemu-img create -f qcow2 "$BASE" 40G
+
+cat <<EOF
+
+Starting EOS installer. Before shutting down the VM:
+
+  1. Complete the Calamares install (Online → Sway desktop)
+  2. Open a terminal and run:
+
+       sudo systemctl enable --now sshd
+       sudo mkdir -p /root/.ssh
+       echo '$(cat "${KEY}.pub")' | sudo tee /root/.ssh/authorized_keys
+       sudo chmod 700 /root/.ssh && sudo chmod 600 /root/.ssh/authorized_keys
+
+  3. Shut down the VM.
+
+EOF
+
+qemu-system-x86_64 \
+    -enable-kvm -m 4096 -smp 2 \
+    -drive "file=$BASE,if=virtio,format=qcow2" \
+    -cdrom "$ISO" \
+    -boot d \
+    -net nic,model=virtio \
+    -net "user,hostfwd=tcp::${PORT}-:22" \
+    -display gtk
+
+echo "Verifying SSH access..."
+
+qemu-system-x86_64 \
+    -enable-kvm -m 4096 -smp 2 \
+    -drive "file=$BASE,if=virtio,format=qcow2" \
+    -net nic,model=virtio \
+    -net "user,hostfwd=tcp::${PORT}-:22" \
+    -display none &
+QEMU_PID=$!
+trap 'kill $QEMU_PID 2>/dev/null || true' EXIT
+
+SSH=(ssh -p "$PORT" -i "$KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=3 -o BatchMode=yes root@localhost)
+
+until "${SSH[@]}" true 2>/dev/null; do sleep 5; done
+echo "SSH OK"
+
+"${SSH[@]}" systemctl poweroff || true
+wait "$QEMU_PID" || true
+
+echo ""
+echo "Base image ready: $BASE"
+echo "Run vm/test to use it."

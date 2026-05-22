@@ -46,6 +46,7 @@
       - blueman
       # networking
       - gvfs-dnssd
+      - nfs-utils
       - tailscale
       # keyring
       - seahorse

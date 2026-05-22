@@ -19,19 +19,16 @@ ISO="$(realpath "$1")"
 
 qemu-img create -f qcow2 "$BASE" 40G
 
-cat <<EOF
+# ── Install ───────────────────────────────────────────────────────────────────
 
-Starting EOS installer. Before shutting down the VM:
+cat <<'EOF'
 
-  1. Complete the Calamares install (Online → Sway desktop)
-  2. Open a terminal and run:
+Starting EOS installer:
+  • Online install → Sway desktop
+  • Create a regular user (any name — the playbook detects first UID ≥ 1000)
+  • No need to configure SSH — that happens automatically after you shut down
 
-       sudo systemctl enable --now sshd
-       sudo mkdir -p /root/.ssh
-       echo '$(cat "${KEY}.pub")' | sudo tee /root/.ssh/authorized_keys
-       sudo chmod 700 /root/.ssh && sudo chmod 600 /root/.ssh/authorized_keys
-
-  3. Shut down the VM.
+Shut down the VM when installation is complete.
 
 EOF
 
@@ -44,7 +41,27 @@ qemu-system-x86_64 \
     -net "user,hostfwd=tcp::${PORT}-:22" \
     -display gtk
 
-echo "Verifying SSH access..."
+# ── Inject SSH key via NBD (no boot needed) ───────────────────────────────────
+
+echo "Injecting SSH key..."
+sudo modprobe nbd max_part=8
+sudo qemu-nbd --connect=/dev/nbd0 "$BASE"
+sleep 1
+
+MNTDIR=$(mktemp -d)
+# EOS uses Btrfs with @ subvolume for root
+sudo mount -o subvol=@ /dev/nbd0p1 "$MNTDIR"
+sudo mkdir -p "$MNTDIR/root/.ssh"
+cat "${KEY}.pub" | sudo tee "$MNTDIR/root/.ssh/authorized_keys" >/dev/null
+sudo chmod 700 "$MNTDIR/root/.ssh"
+sudo chmod 600 "$MNTDIR/root/.ssh/authorized_keys"
+sudo umount "$MNTDIR"
+rmdir "$MNTDIR"
+sudo qemu-nbd --disconnect /dev/nbd0
+
+# ── Update packages ───────────────────────────────────────────────────────────
+
+echo "Booting to update packages..."
 
 qemu-system-x86_64 \
     -enable-kvm -m 4096 -smp 2 \
@@ -58,7 +75,8 @@ trap 'kill $QEMU_PID 2>/dev/null || true' EXIT
 SSH=(ssh -p "$PORT" -i "$KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=3 -o BatchMode=yes root@localhost)
 
 until "${SSH[@]}" true 2>/dev/null; do sleep 5; done
-echo "SSH OK"
+
+"${SSH[@]}" pacman -Syu --noconfirm
 
 "${SSH[@]}" systemctl poweroff || true
 wait "$QEMU_PID" || true

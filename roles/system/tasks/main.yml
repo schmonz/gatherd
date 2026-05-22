@@ -79,6 +79,7 @@
       - bats
       # vm testing
       - qemu-base
+      - qemu-ui-gtk
       - mtools
       # power management
       - tlp

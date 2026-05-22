@@ -45,7 +45,7 @@ until "${SSH[@]}" true 2>/dev/null; do sleep 3; done
 
 # ── Install ansible and deploy repo ──────────────────────────────────────────
 
-"${SSH[@]}" pacman -Sy --noconfirm ansible git >/dev/null
+"${SSH[@]}" pacman -Syu --noconfirm ansible git >/dev/null
 
 "${SSH[@]}" mkdir -p /usr/local/lib/gatherd
 tar -C "$REPO" --exclude='.git' --exclude='vm' -c . \

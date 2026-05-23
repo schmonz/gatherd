@@ -2,12 +2,12 @@
 # Boot a fresh EOS Sway snapshot under QEMU, run the gatherd playbook,
 # then run it again and assert the second run produces no changes.
 #
-# Requires vm/create-base to have been run on this machine first.
+# Requires tests/create-base to have been run on this machine first.
 # Files are read from GATHERD_VM_DIR (default: ~/.local/share/gatherd).
 set -euo pipefail
 
-VMDIR="$(cd "$(dirname "$0")" && pwd)"
-REPO="$(cd "$VMDIR/.." && pwd)"
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
 VM_DIR="${GATHERD_VM_DIR:-$HOME/.local/share/gatherd}"
 BASE="$VM_DIR/eos-base.qcow2"
 DISK="$VM_DIR/test.qcow2"
@@ -22,17 +22,17 @@ cleanup() {
 trap cleanup EXIT
 
 ping -c1 -W1 ap-juicer.local &>/dev/null \
-    || { echo "ap-juicer.local not reachable — run vm/test only when local to the NFS host" >&2; exit 1; }
+    || { echo "ap-juicer.local not reachable — run tests/test only when local to the NFS host" >&2; exit 1; }
 
 [[ -f "$BASE" ]] || {
     echo "Base image not found: $BASE" >&2
-    echo "Run: vm/create-base /path/to/EndeavourOS.iso" >&2
-    echo "(Override location with: GATHERD_VM_DIR=/path vm/create-base ...)" >&2
+    echo "Run: tests/create-base /path/to/EndeavourOS.iso" >&2
+    echo "(Override location with: GATHERD_VM_DIR=/path tests/create-base ...)" >&2
     exit 1
 }
 [[ -f "$KEY" ]] || {
     echo "SSH key not found: $KEY" >&2
-    echo "Run: vm/create-base /path/to/EndeavourOS.iso" >&2
+    echo "Run: tests/create-base /path/to/EndeavourOS.iso" >&2
     exit 1
 }
 
@@ -75,7 +75,7 @@ for attempt in 1 2 3 4 5; do
 done
 
 "${SSH[@]}" mkdir -p /usr/local/lib/gatherd
-tar -C "$REPO" --exclude='.git' --exclude='vm' -c . \
+tar -C "$REPO" --exclude='.git' --exclude='tests' -c . \
     | "${SSH[@]}" tar -xC /usr/local/lib/gatherd
 
 "${SSH[@]}" "printf 'changeme\n' > /usr/local/lib/gatherd/.vault_pass"

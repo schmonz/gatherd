@@ -203,6 +203,24 @@
     - Reload logind
     - Etckeeper commit
 
+- name: Remove EOS default logind suspend drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/logind.conf.d/suspend.conf
+    state: absent
+  notify:
+    - Reload logind
+    - Etckeeper commit
+
+- name: Read effective logind configuration
+  ansible.builtin.command: systemd-analyze cat-config systemd/logind.conf
+  register: _logind_config
+  changed_when: false
+
+- name: Assert IdleAction=ignore is effective
+  ansible.builtin.assert:
+    that: _logind_config.stdout | regex_findall('(?m)^IdleAction=.*') | last == 'IdleAction=ignore'
+    fail_msg: "A drop-in is overriding IdleAction — check /etc/systemd/logind.conf.d/"
+
 - name: Mask sleep targets
   ansible.builtin.systemd:
     name: "{{ item }}"

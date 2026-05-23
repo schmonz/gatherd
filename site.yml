@@ -89,9 +89,9 @@
       become_user: root
 
     - name: Mark setup complete
-      ansible.builtin.file:
-        path: /etc/gatherd-complete
-        state: touch
+      ansible.builtin.copy:
+        dest: /etc/gatherd-complete
+        content: ""
         mode: '0644'
       become: true
       become_user: root

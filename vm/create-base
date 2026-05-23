@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 # Create a reusable EOS Sway base image for vm/test.
-# Run this once; vm/test uses the result as a clean snapshot source.
+# Run this once (per machine); vm/test uses the result as a clean snapshot source.
 #
 # Usage: vm/create-base /path/to/EndeavourOS.iso
+#
+# Files are stored in GATHERD_VM_DIR (default: ~/.local/share/gatherd).
+# Set that variable to override, e.g. on a machine with a specific fast disk.
 set -euo pipefail
 
-VMDIR="$(cd "$(dirname "$0")" && pwd)"
-BASE="$VMDIR/eos-base.qcow2"
-KEY="$VMDIR/key"
+VM_DIR="${GATHERD_VM_DIR:-$HOME/.local/share/gatherd}"
+BASE="$VM_DIR/eos-base.qcow2"
+KEY="$VM_DIR/key"
 PORT=2225
 
 [[ $# -eq 1 ]] || { echo "Usage: $0 /path/to/EndeavourOS.iso" >&2; exit 1; }
 ISO="$(realpath "$1")"
 [[ -f "$ISO" ]] || { echo "ISO not found: $ISO" >&2; exit 1; }
-[[ -f "$BASE" ]] && { echo "eos-base.qcow2 already exists; delete it to recreate" >&2; exit 1; }
+[[ -f "$BASE" ]] && { echo "$BASE already exists; delete it to recreate" >&2; exit 1; }
 
+mkdir -p "$VM_DIR"
 [[ -f "$KEY" ]] || ssh-keygen -t ed25519 -f "$KEY" -N "" -q
 
 qemu-img create -f qcow2 "$BASE" 40G

@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Boot a fresh EOS Sway snapshot under QEMU, run the gatherd playbook,
 # then run it again and assert the second run produces no changes.
+#
+# Requires vm/create-base to have been run on this machine first.
+# Files are read from GATHERD_VM_DIR (default: ~/.local/share/gatherd).
 set -euo pipefail
 
 VMDIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$VMDIR/.." && pwd)"
-BASE="$VMDIR/eos-base.qcow2"
-DISK="$VMDIR/test.qcow2"
-KEY="$VMDIR/key"
+VM_DIR="${GATHERD_VM_DIR:-$HOME/.local/share/gatherd}"
+BASE="$VM_DIR/eos-base.qcow2"
+DISK="$VM_DIR/test.qcow2"
+KEY="$VM_DIR/key"
 PORT=2225
 QEMU_PID=""
 
@@ -17,8 +21,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-[[ -f "$BASE" ]] || { echo "Base image not found — run vm/create-base first" >&2; exit 1; }
-[[ -f "$KEY" ]]  || { echo "SSH key not found — run vm/create-base first" >&2; exit 1; }
+ping -c1 -W1 ap-juicer.local &>/dev/null \
+    || { echo "ap-juicer.local not reachable — run vm/test only when local to the NFS host" >&2; exit 1; }
+
+[[ -f "$BASE" ]] || {
+    echo "Base image not found: $BASE" >&2
+    echo "Run: vm/create-base /path/to/EndeavourOS.iso" >&2
+    echo "(Override location with: GATHERD_VM_DIR=/path vm/create-base ...)" >&2
+    exit 1
+}
+[[ -f "$KEY" ]] || {
+    echo "SSH key not found: $KEY" >&2
+    echo "Run: vm/create-base /path/to/EndeavourOS.iso" >&2
+    exit 1
+}
 
 # ── Fresh snapshot ────────────────────────────────────────────────────────────
 
@@ -45,7 +61,18 @@ until "${SSH[@]}" true 2>/dev/null; do sleep 3; done
 
 # ── Install ansible and deploy repo ──────────────────────────────────────────
 
-"${SSH[@]}" pacman -Syu --noconfirm ansible
+for attempt in 1 2 3 4 5; do
+    "${SSH[@]}" rm -rf /var/lib/pacman/sync/
+    if "${SSH[@]}" pacman -Syu --noconfirm ansible; then
+        break
+    elif [[ $attempt -lt 5 ]]; then
+        echo "pacman attempt $attempt failed, retrying in 10s..."
+        sleep 10
+    else
+        echo "pacman failed after 5 attempts" >&2
+        exit 1
+    fi
+done
 
 "${SSH[@]}" mkdir -p /usr/local/lib/gatherd
 tar -C "$REPO" --exclude='.git' --exclude='vm' -c . \

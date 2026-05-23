@@ -307,15 +307,12 @@
   ansible.builtin.systemd:
     name: gatherd-vault.path
     enabled: true
-    state: started
     daemon_reload: true
 
 - name: Enable system services
   ansible.builtin.systemd:
     name: "{{ item }}"
     enabled: true
-    state: started
-    no_block: true
   loop:
     - sshd
     - tailscaled
@@ -387,5 +384,4 @@
   ansible.builtin.shell: |
     fwupdmgr get-updates || true
     fwupdmgr update || true
-  register: _fwupdmgr
-  changed_when: "'No updates available' not in _fwupdmgr.stderr"
+  changed_when: false

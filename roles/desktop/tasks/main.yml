@@ -31,13 +31,13 @@
 
 - name: Configure sudo askpass (seahorse ssh-askpass, already installed)
   ansible.builtin.copy:
-    dest: "{{ target_home }}/.config/environment.d/50-askpass.conf"
+    dest: "{{ target_home }}/.config/environment.d/50-gatherd-askpass.conf"
     content: "SUDO_ASKPASS=/usr/lib/seahorse/ssh-askpass\n"
     mode: '0644'
 
 - name: Add ~/.local/bin to user session PATH
   ansible.builtin.copy:
-    dest: "{{ target_home }}/.config/environment.d/50-path.conf"
+    dest: "{{ target_home }}/.config/environment.d/50-gatherd-path.conf"
     content: "PATH=${HOME}/.local/bin:${PATH}\n"
     mode: '0644'
 

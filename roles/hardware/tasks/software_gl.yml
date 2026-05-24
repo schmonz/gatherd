@@ -12,7 +12,7 @@
   # X1400) cannot drive modern OpenGL; llvmpipe via LIBGL_ALWAYS_SOFTWARE=1 is the
   # only working renderer on these GPUs.
   ansible.builtin.copy:
-    dest: "{{ target_home }}/.config/environment.d/50-softgl.conf"
+    dest: "{{ target_home }}/.config/environment.d/50-gatherd-softgl.conf"
     content: "LIBGL_ALWAYS_SOFTWARE=1\n"
     mode: '0644'
   become: true

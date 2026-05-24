@@ -13,8 +13,8 @@
 
 - name: Write autofs master drop-in for ap-juicer
   ansible.builtin.copy:
-    dest: /etc/autofs/auto.master.d/ap-juicer.autofs
-    content: "{{ target_home }}/.autofs-mounts  /etc/autofs/auto.ap-juicer  --timeout=600\n"
+    dest: /etc/autofs/auto.master.d/gatherd-ap-juicer.autofs
+    content: "{{ target_home }}/.autofs-mounts  /etc/autofs/auto.gatherd-ap-juicer  --timeout=600\n"
     mode: '0644'
   notify:
     - Reload autofs
@@ -22,7 +22,7 @@
 
 - name: Write autofs map for ap-juicer
   ansible.builtin.copy:
-    dest: /etc/autofs/auto.ap-juicer
+    dest: /etc/autofs/auto.gatherd-ap-juicer
     content: "code  -fstype=nfs4,soft,timeo=15,retrans=3  {{ nfs_server }}:/export/code\n"
     mode: '0644'
   notify:
@@ -59,7 +59,7 @@
 # After= reverses for stop, so this makes autofs stop before tailscaled.
 - name: Order autofs shutdown before tailscaled
   ansible.builtin.copy:
-    dest: /etc/systemd/system/autofs.service.d/tailscaled-ordering.conf
+    dest: /etc/systemd/system/autofs.service.d/gatherd-tailscaled-ordering.conf
     content: |
       [Unit]
       After=tailscaled.service

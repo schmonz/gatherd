@@ -2,7 +2,7 @@
 - name: Enable thinkpad_acpi fan control
   # Required for thinkfan to write to /proc/acpi/ibm/fan.
   ansible.builtin.copy:
-    dest: /etc/modprobe.d/thinkpad_acpi.conf
+    dest: /etc/modprobe.d/gatherd-thinkpad_acpi.conf
     content: "options thinkpad_acpi fan_control=1\n"
     mode: '0644'
   notify: Etckeeper commit

@@ -156,7 +156,7 @@
 
 - name: Configure macOS-style keyboard layout
   ansible.builtin.copy:
-    dest: /etc/X11/xorg.conf.d/00-keyboard.conf
+    dest: /etc/X11/xorg.conf.d/00-gatherd-keyboard.conf
     content: |
       Section "InputClass"
           Identifier "system-keyboard"
@@ -200,7 +200,7 @@
 - name: Write logind power-key drop-in
   ansible.builtin.template:
     src: "{{ 'logind-power-key.conf.j2' if has_resume else 'logind-disable-sleep.conf.j2' }}"
-    dest: "/etc/systemd/logind.conf.d/{{ 'power-key' if has_resume else 'disable-sleep' }}.conf"
+    dest: "/etc/systemd/logind.conf.d/gatherd-{{ 'power-key' if has_resume else 'disable-sleep' }}.conf"
     mode: '0644'
   notify:
     - Reload logind
@@ -246,7 +246,7 @@
 
 - name: Write sleep disable config
   ansible.builtin.copy:
-    dest: /etc/systemd/sleep.conf.d/disable-sleep.conf
+    dest: /etc/systemd/sleep.conf.d/gatherd-disable-sleep.conf
     content: |
       [Sleep]
       AllowHibernation=no
@@ -259,7 +259,7 @@
 
 - name: Write ThinkPad power-button udev rule
   ansible.builtin.copy:
-    dest: /etc/udev/rules.d/99-power-button-sway.rules
+    dest: /etc/udev/rules.d/99-gatherd-power-button-sway.rules
     content: |
       # Strips power-switch tag so logind releases its exclusive grab.
       # Allows libinput/Sway to handle XF86PowerOff via bindsym.
@@ -296,7 +296,7 @@
 
 - name: Disable systemd user-session freeze before suspend
   ansible.builtin.copy:
-    dest: /etc/systemd/system/systemd-suspend.service.d/no-freeze-user-sessions.conf
+    dest: /etc/systemd/system/systemd-suspend.service.d/gatherd-no-freeze-user-sessions.conf
     content: |
       [Service]
       Environment="SYSTEMD_SLEEP_FREEZE_USER_SESSIONS=false"

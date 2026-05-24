@@ -7,7 +7,7 @@
 
 - name: Add ~/.local/bin to user-session PATH
   ansible.builtin.copy:
-    dest: /etc/environment.d/10-local-bin.conf
+    dest: /etc/environment.d/10-gatherd-local-bin.conf
     content: "PATH=${HOME}/.local/bin:${PATH}\n"
     mode: '0644'
   notify: Etckeeper commit

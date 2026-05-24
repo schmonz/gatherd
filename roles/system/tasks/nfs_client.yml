@@ -38,6 +38,16 @@
     mode: '0755'
   changed_when: false
 
+- name: Symlink ~/trees to NFS code mount
+  ansible.builtin.file:
+    src: "{{ target_home }}/.autofs-mounts/code/trees"
+    dest: "{{ target_home }}/trees"
+    state: link
+    force: true
+    follow: false
+    owner: "{{ target_user }}"
+    group: "{{ target_user }}"
+
 - name: Create autofs.service drop-in directory
   ansible.builtin.file:
     path: /etc/systemd/system/autofs.service.d

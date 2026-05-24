@@ -12,7 +12,7 @@ Type=oneshot
 WorkingDirectory=/usr/local/lib/gatherd
 ExecStartPre=ansible-galaxy collection install --requirements-file /usr/local/lib/gatherd/requirements.yml
 ExecStart=systemd-inhibit --what=sleep --who=gatherd-vault --why="Vault-protected configuration in progress" --mode=block \
-    ansible-playbook /usr/local/lib/gatherd/site-vault.yml
+    ansible-playbook --vault-password-file=/usr/local/lib/gatherd/.vault_pass /usr/local/lib/gatherd/site-vault.yml
 RemainAfterExit=no
 StandardOutput=journal+console
 StandardError=journal+console

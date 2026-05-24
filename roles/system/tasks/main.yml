@@ -342,6 +342,11 @@
     - cronie
     - tlp
 
+- name: Start tailscaled
+  ansible.builtin.systemd:
+    name: tailscaled
+    state: started
+
 - name: Configure firewall default zone
   ansible.builtin.command: firewall-cmd --set-default-zone=home
   changed_when: false

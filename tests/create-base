@@ -49,16 +49,20 @@ qemu-system-x86_64 \
 
 echo "Injecting SSH key..."
 sudo modprobe nbd max_part=8
+sudo qemu-nbd --disconnect /dev/nbd0 2>/dev/null || true
 sudo qemu-nbd --connect=/dev/nbd0 "$BASE"
 sleep 1
 
 MNTDIR=$(mktemp -d)
 # EOS uses Btrfs with @ subvolume for root
+_fs=$(sudo blkid -o value -s TYPE /dev/nbd0p1)
+[[ "$_fs" == "btrfs" ]] || { echo "Expected btrfs on /dev/nbd0p1, got: $_fs" >&2; exit 1; }
 sudo mount -o subvol=@ /dev/nbd0p1 "$MNTDIR"
 sudo mkdir -p "$MNTDIR/root/.ssh"
 cat "${KEY}.pub" | sudo tee "$MNTDIR/root/.ssh/authorized_keys" >/dev/null
 sudo chmod 700 "$MNTDIR/root/.ssh"
 sudo chmod 600 "$MNTDIR/root/.ssh/authorized_keys"
+sudo systemctl --root="$MNTDIR" enable sshd
 sudo umount "$MNTDIR"
 rmdir "$MNTDIR"
 sudo qemu-nbd --disconnect /dev/nbd0
@@ -72,11 +76,11 @@ qemu-system-x86_64 \
     -drive "file=$BASE,if=virtio,format=qcow2" \
     -net nic,model=virtio \
     -net "user,hostfwd=tcp::${PORT}-:22" \
-    -display none &
+    -nographic </dev/null &
 QEMU_PID=$!
 trap 'kill $QEMU_PID 2>/dev/null || true' EXIT
 
-SSH=(ssh -p "$PORT" -i "$KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=3 -o BatchMode=yes root@localhost)
+SSH=(ssh -p "$PORT" -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 -o BatchMode=yes root@localhost)
 
 until "${SSH[@]}" true 2>/dev/null; do sleep 5; done
 

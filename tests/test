@@ -47,11 +47,12 @@ qemu-system-x86_64 \
     -drive "file=$DISK,if=virtio,format=qcow2" \
     -net nic,model=virtio \
     -net "user,hostfwd=tcp::${PORT}-:22" \
-    -display none &
+    -nographic </dev/null &
 QEMU_PID=$!
 
 SSH=(ssh -p "$PORT" -i "$KEY"
     -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
     -o ConnectTimeout=3
     -o BatchMode=yes
     root@localhost)

@@ -1,5 +1,8 @@
 # TODO
 
+- I've logged into JetBrains Toolbox, but on Sway login it still plants its window (not the login window, just the list of JetBrains apps) right in the middle of the screen -- do not want window, just systray icon
+- Add Private Internet Access
+- Set up VNC
 - Helium should be pre-configured to always allow account.jetbrains.com to open links of this type in the associated app
     - same for Zoom and whatever other apps we have that will want to do this
 - X270 seems to sleep pretty aggressively even if the Sway idle inhibitor is activated and the machine is plugged in. Is that TLP?

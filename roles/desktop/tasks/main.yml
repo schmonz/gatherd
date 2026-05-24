@@ -35,12 +35,6 @@
     content: "SUDO_ASKPASS=/usr/lib/seahorse/ssh-askpass\n"
     mode: '0644'
 
-- name: Add ~/.local/bin to user session PATH
-  ansible.builtin.copy:
-    dest: "{{ target_home }}/.config/environment.d/50-gatherd-path.conf"
-    content: "PATH=${HOME}/.local/bin:${PATH}\n"
-    mode: '0644'
-
 - name: Configure gtklock (no unauthenticated power buttons)
   ansible.builtin.template:
     src: gtklock-config.ini.j2

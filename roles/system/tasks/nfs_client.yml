@@ -37,3 +37,23 @@
     group: "{{ target_user }}"
     mode: '0755'
   changed_when: false
+
+- name: Create autofs.service drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/autofs.service.d
+    state: directory
+    mode: '0755'
+
+# The NFS server is reached over Tailscale, so tailscaled must still be up
+# when autofs stops at shutdown -- otherwise umount.nfs4 hangs until SIGKILL.
+# After= reverses for stop, so this makes autofs stop before tailscaled.
+- name: Order autofs shutdown before tailscaled
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/autofs.service.d/tailscaled-ordering.conf
+    content: |
+      [Unit]
+      After=tailscaled.service
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Etckeeper commit

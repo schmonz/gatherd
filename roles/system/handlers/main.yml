@@ -28,3 +28,7 @@
     name: autofs
     state: reloaded
   failed_when: false
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true

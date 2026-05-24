@@ -1,14 +1,14 @@
 #!/bin/sh
-systemctl is-active --quiet gatherd-slow.service || exit 0
+systemctl is-active --quiet gatherd-user-async.service || exit 0
 
 printf '\033]0;Package Installation\007'
 echo "Installing remaining packages..."
 echo ""
 
-journalctl -fn 50 -u gatherd-slow.service &
+journalctl -fn 50 -u gatherd-user-async.service &
 jctl_pid=$!
 
-while systemctl is-active --quiet gatherd-slow.service; do
+while systemctl is-active --quiet gatherd-user-async.service; do
     sleep 2
 done
 
@@ -18,9 +18,9 @@ wait "$jctl_pid" 2>/dev/null
 
 echo ""
 echo "----------------------------------------"
-if systemctl is-failed --quiet gatherd-slow.service; then
+if systemctl is-failed --quiet gatherd-user-async.service; then
     echo "Installation failed."
-    echo "Details: journalctl -u gatherd-slow.service"
+    echo "Details: journalctl -u gatherd-user-async.service"
 else
     echo "Installation complete."
 fi

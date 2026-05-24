@@ -10,8 +10,7 @@
     - Let's also pre-populate a WiFi config for `PeasPlaycare`
     - And `SchmiPhone` for tethering
 - Can we notice whenever we've joined a new WiFi, and prompt to add it to Ansible?
-- NFS client automount: done and ansibilized. `~/.autofs-mounts/code` mounts from ap-juicer via tailscale (works on LAN and remote).
-  - Still to do: migrate `/home/schmonz/trees` to a symlink → `.autofs-mounts/code/trees` (local `dotfiles/` already moved to `~/.dotfiles`; `trees/` dir now only has local repos)
+- NFS client automount: done and ansibilized. `~/.autofs-mounts/code` mounts from ap-juicer via tailscale (works on LAN and remote). `~/trees` symlinked to `.autofs-mounts/code/trees`.
 - Conky gap_y and systray icon-size: both now scale with foot_font_size, needs repave verification
 - Post-setup notes: generate at first sway login (not Ansible time) so app auth state is detectable — tailscale status, rclone icloud remote, secret-tool keyring queries, etc. Each section self-gates and appends only if needed. Re-runnable anytime to see what's still outstanding.
 

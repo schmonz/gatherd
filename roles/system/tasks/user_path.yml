@@ -1,0 +1,13 @@
+---
+- name: Ensure /etc/environment.d exists
+  ansible.builtin.file:
+    path: /etc/environment.d
+    state: directory
+    mode: '0755'
+
+- name: Add ~/.local/bin to user-session PATH
+  ansible.builtin.copy:
+    dest: /etc/environment.d/10-local-bin.conf
+    content: "PATH=${HOME}/.local/bin:${PATH}\n"
+    mode: '0644'
+  notify: Etckeeper commit

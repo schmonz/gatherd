@@ -188,6 +188,29 @@
     mode: '0644'
   notify: Etckeeper commit
 
+- name: Create Chromium managed-policy directory
+  ansible.builtin.file:
+    path: /etc/chromium/policies/managed
+    state: directory
+    mode: '0755'
+
+- name: Auto-launch external apps from trusted origins (Helium and ungoogled-chromium)
+  ansible.builtin.copy:
+    dest: /etc/chromium/policies/managed/gatherd-auto-launch-protocols.json
+    content: |
+      {
+          "AutoLaunchProtocolsFromOrigins": [
+              {"protocol": "jetbrains",     "allowed_origins": ["https://account.jetbrains.com", "https://www.jetbrains.com"]},
+              {"protocol": "zoommtg",       "allowed_origins": [".zoom.us"]},
+              {"protocol": "zoomus",        "allowed_origins": [".zoom.us"]},
+              {"protocol": "zoomphonecall", "allowed_origins": [".zoom.us"]},
+              {"protocol": "slack",         "allowed_origins": [".slack.com"]},
+              {"protocol": "msteams",       "allowed_origins": ["https://teams.microsoft.com"]}
+          ]
+      }
+    mode: '0644'
+  notify: Etckeeper commit
+
 - name: Flush handlers
   ansible.builtin.meta: flush_handlers
 

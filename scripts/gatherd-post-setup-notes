@@ -187,6 +187,7 @@ section_verify() {
     li 'JetBrains Toolbox: click the tray icon — main app list shows directly, no user agreement dialog'
     li 'Systray (idempotency): run `gatherd-systray <app> [args...]` again — no duplicate tray icons appear'
     li 'Helium: first launch opens directly to browser, no setup tab'
+    li 'Helium: open `helium://policy` — `AutoLaunchProtocolsFromOrigins` shown with Status OK; clicking a `jetbrains://`/`zoommtg://`/`slack://`/`msteams://` link from a whitelisted origin opens the app with no prompt'
     li 'NFS automount: access ~/.autofs-mounts/code — should mount from ap-juicer transparently'
     li 'iCloud: run `rclone lsd icloud:` — should list top-level folders without error'
     li 'iCloud re-auth: log out of icloud.com in Helium, log back in — `rclone lsd icloud:` should work again without manual steps'

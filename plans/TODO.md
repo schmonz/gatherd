@@ -2,8 +2,6 @@
 
 - Add Private Internet Access
 - Set up VNC
-- Helium should be pre-configured to always allow account.jetbrains.com to open links of this type in the associated app
-    - same for Zoom and whatever other apps we have that will want to do this
 - X270 seems to sleep pretty aggressively even if the Sway idle inhibitor is activated and the machine is plugged in. Is that TLP?
 - Do we in fact have `LaPromNyack` WiFi password stored somewhere?
     - Let's also pre-populate a WiFi config for `PeasPlaycare`

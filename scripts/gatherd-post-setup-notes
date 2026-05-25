@@ -200,6 +200,7 @@ section_verify() {
     section_present 'Verify' && return
     h 'Verify'
     li 'WiFi: join LaPromNyack from the network menu — should connect without entering a password'
+    li 'WiFi unmanaged-network nudge: hand-join any new network, log out and back in — an "Unmanaged WiFi" section listing it should appear in this file'
     li 'Screen lock: let screen time out, then wiggle/tap — should see lock screen'
     has_resume && li 'Screen lock: close lid, reopen — should see lock screen'
     li 'LocalSend: check alias is system hostname, not a random phrase'

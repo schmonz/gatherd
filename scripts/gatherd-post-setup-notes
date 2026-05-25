@@ -151,6 +151,29 @@ section_jetbrains() {
     fi
 }
 
+section_unmanaged_wifi() {
+    # Content is purely derived from current NM state vs Ansible manifest;
+    # always rewrite from scratch so newly joined networks surface promptly.
+    [ -r /etc/gatherd-managed-wifi.list ] || {
+        section_present 'Unmanaged WiFi' && section_remove 'Unmanaged WiFi'
+        return
+    }
+
+    saved=$(nmcli -t -f NAME,TYPE connection show 2>/dev/null \
+        | awk -F: '$2 == "802-11-wireless" { print $1 }' \
+        | sort -u)
+    unmanaged=$(printf '%s\n' "$saved" | grep -vxFf /etc/gatherd-managed-wifi.list || true)
+
+    section_present 'Unmanaged WiFi' && section_remove 'Unmanaged WiFi'
+    [ -n "$unmanaged" ] || return
+
+    h 'Unmanaged WiFi'
+    li 'These saved WiFi connections are not in Ansible — consider adding to wifi_networks (SSID) + group_vars/all/vault.yml (PSK):'
+    printf '%s\n' "$unmanaged" | while IFS= read -r ssid; do
+        [ -n "$ssid" ] && li "  - $ssid"
+    done
+}
+
 section_vault() {
     if [ -f /etc/gatherd-vault-complete ]; then
         section_present 'Vault' && section_remove 'Vault'
@@ -216,6 +239,7 @@ section_verify() {
 [ -f "$OUTPUT" ] || printf 'Manual steps remaining:\n' > "$OUTPUT"
 
 section_verify
+section_unmanaged_wifi
 section_vault
 section_1password
 section_helium

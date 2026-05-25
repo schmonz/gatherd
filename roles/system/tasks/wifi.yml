@@ -31,3 +31,10 @@
   notify:
     - Reload NetworkManager connections
     - Etckeeper commit
+
+- name: Write manifest of Ansible-managed WiFi SSIDs
+  ansible.builtin.copy:
+    dest: /etc/gatherd-managed-wifi.list
+    content: "{{ wifi_networks | map(attribute='ssid') | sort | join('\n') }}\n"
+    mode: '0644'
+  notify: Etckeeper commit

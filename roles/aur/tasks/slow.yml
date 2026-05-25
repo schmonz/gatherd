@@ -43,7 +43,7 @@
         XDG_RUNTIME_DIR=/run/user/$(id -u) SWAYSOCK="$sock" \
           swaymsg exec "$HOME/.local/bin/gatherd-systray localsend --hidden"
         XDG_RUNTIME_DIR=/run/user/$(id -u) SWAYSOCK="$sock" \
-          swaymsg exec "$HOME/.local/bin/gatherd-systray jetbrains-toolbox --minimize-to-tray"
+          swaymsg exec "$HOME/.local/bin/gatherd-systray jetbrains-toolbox --minimize"
       changed_when: false
 
     - name: Revoke NOPASSWD pacman after slow AUR installs

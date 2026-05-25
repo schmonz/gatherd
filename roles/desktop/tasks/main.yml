@@ -487,7 +487,7 @@
     mode: '0755'
 
 - name: Pre-seed JetBrains Toolbox storage to skip onboarding window
-  # technicalOnboardingFinished suppresses the window that overrides --minimize-to-tray.
+  # technicalOnboardingFinished suppresses the window that overrides --minimize.
   # force: false means Toolbox can update the file freely after first run.
   ansible.builtin.copy:
     dest: "{{ target_home }}/.local/share/JetBrains/Toolbox/.storage.json"
@@ -619,6 +619,6 @@
     - regexp: "^exec .*gatherd-systray tailscale"
       line: "exec {{ target_home }}/.local/bin/gatherd-systray tailscale systray"
     - regexp: "^exec .*gatherd-systray jetbrains-toolbox"
-      line: "exec {{ target_home }}/.local/bin/gatherd-systray jetbrains-toolbox --minimize-to-tray"
+      line: "exec {{ target_home }}/.local/bin/gatherd-systray jetbrains-toolbox --minimize"
     - regexp: "^exec .*gatherd-systray arch-update"
       line: "exec {{ target_home }}/.local/bin/gatherd-systray arch-update --tray"

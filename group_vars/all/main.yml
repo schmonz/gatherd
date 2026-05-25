@@ -5,3 +5,7 @@ nfs_server: ap-juicer.taile54b91.ts.net
 wifi_networks:
   - ssid: LaPromNyack
     psk: "{{ vault_wifi_psk_lapromnyack }}"
+  - ssid: PeasPlaycare
+    psk: "{{ vault_wifi_psk_peasplaycare }}"
+  - ssid: SchmiPhone
+    psk: "{{ vault_wifi_psk_schmiphone }}"

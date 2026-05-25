@@ -211,6 +211,14 @@
     mode: '0644'
   notify: Etckeeper commit
 
+- name: Allow target_user to write the vault password file as root
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/gatherd-vault-pass
+    content: "{{ target_user }} ALL=(root) NOPASSWD: /usr/local/lib/gatherd/scripts/gatherd-write-vault-pass\n"
+    mode: '0440'
+    validate: visudo -cf %s
+  notify: Etckeeper commit
+
 - name: Flush handlers
   ansible.builtin.meta: flush_handlers
 

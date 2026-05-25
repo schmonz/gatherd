@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+umask 077
+cat > /usr/local/lib/gatherd/.vault_pass

@@ -363,10 +363,11 @@
     - gatherd-async.service
     - gatherd-async.path
 
-- name: Enable gatherd vault-gated path units
+- name: Enable and start gatherd vault-gated path units
   ansible.builtin.systemd:
     name: "{{ item }}"
     enabled: true
+    state: started
     daemon_reload: true
   loop:
     - gatherd-vault.path

@@ -1,28 +1,12 @@
 # TODO
 
+- Discord downloads itself on first launch?!? make sure we get it all the way to systray as part of user-slow-async
 - GParted
 - Which Web Apps do I want?
     - LLMs: ChatGPT, Lumo, Grok, ...)
     - iCloud: Drive, Notes, Reminders
 - Add Private Internet Access
 - Set up VNC
-- NFS client automount: done and ansibilized. `~/.autofs-mounts/code` mounts from ap-juicer via tailscale (works on LAN and remote). `~/trees` symlinked to `.autofs-mounts/code/trees`.
-- Post-setup notes: generate at first sway login (not Ansible time) so app auth state is detectable — tailscale status, rclone icloud remote, secret-tool keyring queries, etc. Each section self-gates and appends only if needed. Re-runnable anytime to see what's still outstanding.
-
-
-## Most recent attempted features
-
-needs re-verification on next repave:
-- NFS automount via autofs (was not verified on repave; autofs from AUR, config in system role, service started in aur role, mounts ~/.autofs-mounts/code from ap-juicer via tailscale)
-- dotfiles cloned to ~/.dotfiles, symlinks for .gitconfig/.gitignore_global/.tmux.conf (was not verified on repave; ~/trees no longer created by playbook)
-- conky gap_y clears tmux statusbar (was not verified on repave; scales with foot_font_size)
-- systray icon-size matches waybar scale (was not verified on repave; scales with foot_font_size)
-- terminal window for slow-Ansible progress (was anti-verified; fixed sentinel-file + timeout approach)
-- systray apps start up (was anti-verified; replaced five wrapper scripts with one generic gatherd-systray)
-- JetBrains Toolbox starts silently in tray (was almost-verified; now pre-seeds .storage.json to skip onboarding window)
-- JetBrains Toolbox user agreement dialog (was anti-verified; now pre-seeds .appState.json navigation to /main)
-- captive browser (was semi-verified; dropped unsupported --host-resolver-rules, added DnsOverHttps, switched to whatsmyip.schmonz.com)
-- first-run Helium opens directly, no setup tab (was anti-verified; now pre-seeds helium.completed_onboarding in initial_preferences)
 
 ## Hardware
 

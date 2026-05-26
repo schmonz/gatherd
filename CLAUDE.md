@@ -23,6 +23,15 @@ completes, in the background. Three plays:
 
 Writes `/etc/gatherd/user-async-complete` when done.
 
+## Finishing a TODO item
+
+When a feature is implemented and working:
+
+1. Add a verification step to `section_verify` in `scripts/gatherd-post-setup-notes` — describe what to do and what to expect, in the same imperative style as the existing items.
+2. Delete the item from `plans/TODO.md`.
+
+The post-setup notes are the living test suite for the playbook. TODO.md is not a record of what was done; git log is.
+
 ## Code style
 
 **Task names read like imperative sentences.** A good task name makes the play log

@@ -7,8 +7,15 @@
   any_errors_fatal: true
 
   pre_tasks:
-    - name: Check whether a Sway session is currently active
-      ansible.builtin.command: pgrep -x sway
+    - name: Detect an active Wayland/Sway session
+      # WAYLAND_DISPLAY + XDG_SESSION_TYPE give an instant env-only answer
+      # when sudo preserves them (sudo -E, or env_keep configured). Default
+      # sudo strips them, so fall through to the sway IPC socket glob, which
+      # is env-independent and faster than pgrep'ing all of procfs.
+      ansible.builtin.shell: |
+        [ -n "${WAYLAND_DISPLAY:-}" ] && exit 0
+        [ "${XDG_SESSION_TYPE:-}" = "wayland" ] && exit 0
+        ls /run/user/*/sway-ipc.*.sock >/dev/null 2>&1
       register: _sway_check
       changed_when: false
       failed_when: false

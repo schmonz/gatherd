@@ -1,6 +1,8 @@
 # TODO
 
-- GParted
+- **GParted**: install, then verify it launches on Wayland. The package's `Exec=gparted`
+  may fail because root has no Wayland display; if so, override the desktop entry with:
+  `Exec=sh -c 'WAYLAND_DISPLAY="$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" XDG_RUNTIME_DIR=/run/user/0 gparted'`
 - Which Web Apps do I want?
     - LLMs: ChatGPT, Lumo, Grok, ...)
     - iCloud: Drive, Notes, Reminders

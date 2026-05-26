@@ -561,6 +561,11 @@
     mode: '0755'
     remote_src: true
 
+- name: Remove sway-install.sh stray gparted desktop entry
+  ansible.builtin.file:
+    path: "{{ target_home }}/.local/share/applications/gparted.desktop"
+    state: absent
+
 - name: Remove obsolete gnome-keyring --unlock autostart lines
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"

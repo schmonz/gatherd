@@ -1,6 +1,7 @@
 # TODO
 
-- webapp fixer isn't fixing
+- Vesktop has a first-run config screen -- let's preconfigure to avoid this
+- Private Internet Access is not already logged in, pops a first-run Quick Tour screen that has a "Quick Tour" and a "Log In" button
 - Which Web Apps do I want?
     - LLMs: ChatGPT, Lumo, Grok, ...)
     - iCloud: Drive, Notes, Reminders

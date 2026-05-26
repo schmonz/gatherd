@@ -1,6 +1,6 @@
 [Unit]
 Description=Detect captive portals and launch captive-browser
-After=graphical-session.target
+After=default.target
 
 [Service]
 Type=simple
@@ -9,4 +9,4 @@ Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=default.target

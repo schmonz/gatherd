@@ -8,7 +8,7 @@
     - .local/bin
     - .config/arch-update
     - .config/systemd/user/timers.target.wants
-    - .config/systemd/user/graphical-session.target.wants
+    - .config/systemd/user/default.target.wants
     - .config/gtklock
     - .config/environment.d
     - .config/sway/config.d
@@ -380,7 +380,7 @@
 - name: Enable gatherd user services
   # systemd-specific; will need a different mechanism on Artix/s6
   ansible.builtin.file:
-    path: "{{ target_home }}/.config/systemd/user/graphical-session.target.wants/{{ item }}"
+    path: "{{ target_home }}/.config/systemd/user/default.target.wants/{{ item }}"
     src: "{{ target_home }}/.config/systemd/user/{{ item }}"
     state: link
   loop:

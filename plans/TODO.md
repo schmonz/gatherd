@@ -2,6 +2,8 @@
 
 - Vesktop has a first-run config screen -- let's preconfigure to avoid this
 - Private Internet Access is not already logged in, pops a first-run Quick Tour screen that has a "Quick Tour" and a "Log In" button
+- Have we actually solved the NFS-autofs-Tailscale shutdown ordering problem?
+- Set up SSH authorized key from public URL
 - Which Web Apps do I want?
     - LLMs: ChatGPT, Lumo, Grok, ...)
     - iCloud: Drive, Notes, Reminders

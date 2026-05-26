@@ -1,181 +1,197 @@
-# Remote GUI access via VNC
+# Remote GUI access via VNC — EndeavourOS Sway fleet
 
-Goal: connect to the same user session I'd see at the console, with
-discovery via mDNS so hosts appear in Finder's Network tab, and
-in-protocol TLS doing the encryption. Authentication against Unix
-accounts.
+Ansible-driven setup for the Sway fleet. Linux Mint mini handled
+separately and manually (see VNC-MINT.md).
 
-## Architecture decision: in-protocol TLS, not SSH tunneling
+## Architecture: VNC over SSH, no in-protocol TLS
 
-Initial plan was VNC-bound-to-localhost + SSH tunneling (the macOS
-Screens "Secure Connection" model as I understood it). Turned out
-Screens' Secure Connection is usually negotiating **VNC's own TLS
-extension** (VeNCrypt-style), not opening an SSH tunnel — same as
-Apple's built-in Screen Sharing does when connecting Mac-to-Mac.
+The journey (full prose in VNC-MINT.md): in-protocol TLS works in
+theory with VeNCrypt but interop with Screens 5 on macOS is broken
+(Screens doesn't speak VeNCrypt Plain auth). TigerVNC on macOS works
+but is unpleasant; RealVNC won't negotiate with non-RealVNC servers.
 
-Implications:
-- Finder's "Share Screen" button doesn't know how to SSH-tunnel.
-  If I want Finder discovery to actually connect, the VNC service has
-  to be reachable on the network with in-protocol encryption.
-- SSH tunneling still works fine and is arguably more paranoid (SSH
-  crypto is more battle-tested than VNC server TLS implementations),
-  but it forecloses Finder discovery and forces Screens-only.
+The working answer is VNC bound to localhost + Screens via SSH tunnel.
+sshd is the auth boundary; VNC has no auth of its own because nothing
+can reach the port except SSH-authenticated processes. No PAM, no
+TLS certs, no second credential.
 
-Chose Finder convenience + in-protocol TLS. Tradeoff accepted: VNC port
-is on the network (Tailscale or LAN), but TLS-wrapped and authenticated
-against the Unix account database.
+## Ansible-relevant decisions and per-host state
 
-## EndeavourOS / Sway / Wayland (fleet)
+### Packages to install
 
-wayvnc **does** support PAM authentication (against Unix accounts),
-contrary to my earlier impression. It's a build-time option
-(`enable_pam` in meson, auto-enabled when libpam is present) and a
-runtime config option (`enable_pam=true`).
+- `wayvnc`
 
-The Arch `wayvnc` package installs `/etc/pam.d/wayvnc` (using
-`pam_unix.so`) starting in pkgrel 0.8.0-2 (Aug 2024). Current EOS
-should have it. Verify before relying on it:
+(No avahi, no nss-mdns, no openssl cert generation — none of it is
+needed in the SSH-tunnel model. Hostname resolution happens via
+Tailscale MagicDNS or /etc/hosts.)
 
-```
-pacman -Ql wayvnc | grep pam
-# expect: /etc/pam.d/wayvnc
-```
+### Services to enable
 
-If missing, copy the upstream config:
+None. wayvnc is started from the Sway session config, not via systemd.
 
-```
-sudo tee /etc/pam.d/wayvnc <<'PAM'
-auth required pam_unix.so nodelay deny=3 unlock_time=600
-account required pam_unix.so nodelay deny=3 unlock_time=600
-PAM
-```
-
-`~/.config/sway/config.d/autostart_applications`, after existing exec lines:
-
-```
-exec wayvnc 0.0.0.0 5900
-```
-
-### Install / mDNS
-
-```
-sudo pacman -S wayvnc avahi nss-mdns
-sudo systemctl enable --now avahi-daemon
-```
-
-Add `mdns_minimal` to `/etc/nsswitch.conf` hosts line for `.local`
-resolution from the box itself.
-
-### TLS + PAM config
-
-Generate a cert (per upstream README — uses ECDSA, more modern than
-the old RSA recipe):
-
-```
-mkdir -p ~/.config/wayvnc
-cd ~/.config/wayvnc
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1 \
-  -sha384 -days 3650 -nodes \
-  -keyout tls_key.pem -out tls_cert.pem \
-  -subj "/CN=$(hostname)" \
-  -addext "subjectAltName=DNS:$(hostname),DNS:$(hostname).local"
-chmod 600 tls_key.pem
-```
+### Per-user config files (~/.config/wayvnc/)
 
 `~/.config/wayvnc/config`:
 
 ```
-address=0.0.0.0
-enable_auth=true
-enable_pam=true
-private_key_file=/home/schmonz/.config/wayvnc/tls_key.pem
-certificate_file=/home/schmonz/.config/wayvnc/tls_cert.pem
+address=127.0.0.1
+enable_auth=false
 ```
 
-With `enable_pam=true`, the `username` and `password` config options
-are ignored — auth goes through `/etc/pam.d/wayvnc`, which means real
-Unix credentials.
+`127.0.0.1` is the explicit form; wayvnc's default is also localhost
+but being explicit makes intent obvious.
 
-### Avahi announcements
+### Sway config addition
 
-`/etc/avahi/services/rfb.service`:
-
-```xml
-<?xml version="1.0" standalone='no'?>
-<!DOCTYPE service-group SYSTEM "avahi.dtd">
-<service-group>
-  <name replace-wildcards="yes">%h</name>
-  <service>
-    <type>_rfb._tcp</type>
-    <port>5900</port>
-  </service>
-</service-group>
-```
-
-Also worth adding SSH for Screens-sidebar discovery and as a fallback
-if VNC-over-TLS hits a client-compatibility snag:
-
-`/etc/avahi/services/ssh.service`:
-
-```xml
-<?xml version="1.0" standalone='no'?>
-<!DOCTYPE service-group SYSTEM "avahi.dtd">
-<service-group>
-  <name replace-wildcards="yes">%h</name>
-  <service>
-    <type>_ssh._tcp</type>
-    <port>22</port>
-  </service>
-</service-group>
-```
-
-Avahi picks these up without restart. Verify from the Mac:
+`~/.config/sway/config` needs:
 
 ```
-dns-sd -B _rfb._tcp local.
+exec wayvnc
 ```
 
-### macOS Screen Sharing compatibility gotcha
+Use a marker block (`# BEGIN ansible wayvnc` / `# END ansible wayvnc`)
+or a dedicated include file for idempotent management.
 
-The wayvnc README notes that macOS Screen Sharing historically requires
-DES-based VNC auth, which is **incompatible with PAM** (per the
-wayvnc(1) man page: "DES authentication does not work when enable_pam
-is enabled, as PAM overrides password-based authentication").
+### sshd
 
-In practice, modern macOS Screen Sharing negotiates more capable
-security types (VeNCrypt/TLS + Apple Diffie-Hellman, or RSA-AES) before
-falling back to DES. Whether `enable_pam=true` + TLS works seamlessly
-from Finder needs to be tested on the actual macOS version in use.
+Default sshd config with `AllowTcpForwarding yes` (the default) is
+fine. No changes needed unless a hardened sshd_config has disabled
+forwarding.
 
-Fallback options if Finder won't connect to wayvnc with PAM:
-1. Use Screens instead of Finder — its security-type negotiation is
-   more flexible.
-2. Disable PAM, set `username`/`password` in config, accept the
-   "separate credential" tradeoff. Keep TLS.
-3. SSH tunnel + VNC client from the Mac — bypasses all the
-   security-type negotiation issues.
+### Verification tasks (post-deploy)
 
-### Connect
+- `~/.config/wayvnc/config` has expected contents.
+- Sway config contains `exec wayvnc` (in the marker block).
+- `sshd -T | grep allowtcpforwarding` returns `yes`.
 
-Finder → Network → host → Share Screen. TLS cert prompt on first
-connection, then Unix username/password (handled by PAM), then in.
+(There's no service to check until a Sway session is running. wayvnc
+only starts on next sway session anyway, which is fine since the
+whole arrangement requires being at the machine to start a sway
+session.)
 
-## Client setup
+## Client setup (Screens 5 on macOS)
 
-### Screens / Finder (macOS, iOS)
+Same two-tab dance as the Mint mini. The non-obvious bit: the
+Connection tab address is `localhost`, NOT the hostname. The hostname
+goes in the Security tab as the SSH target.
 
-- Hosts auto-appear via mDNS once `_rfb._tcp` is announced.
-- First connection: trust the self-signed cert.
-- Then: Unix username/password on both Mint and Sway machines.
+### Connection tab
 
-### Linux client
+- **Operating System**: Linux
+- **Protocol**: VNC
+- **Address**: `localhost`
+- **Port**: 5900
+- **Authentication Type**: None
 
-Same model — point a VNC client that supports VeNCrypt/TLS at the
-host:port. `remmina` works; TigerVNC's `vncviewer` does too.
+### Security tab
+
+- **Use Secure Connections**: ON
+- **Enable for Local Connections**: ON
+- **Address**: `<hostname>.local` or `<hostname>.<tailnet>.ts.net`
+- **Port**: 22
+- **Username**: `schmonz`
+- **Password / key**: as appropriate
+
+## Connect
+
+After starting a Sway session on the target host, Screens connects
+via the saved config. SSH key auth, host fingerprint trust on first
+connection, then straight into the running Sway session — no VNC
+auth prompt, no cert dialog.
+
+## Client setup (Remmina on Linux)
+
+Remmina is the most pleasant free VNC client on Linux and has
+first-class SSH-tunnel support — same conceptual model as Screens.
+KRDC is a decent second choice if you're already in KDE-land; it
+pulls in fewer dependencies on a KDE desktop than on Sway.
+
+Install:
+
+```
+sudo apt install remmina remmina-plugin-vnc     # Mint / Debian
+sudo pacman -S remmina libvncserver              # EOS / Arch
+```
+
+(pkgsrc has remmina too if needed on NetBSD.)
+
+### Connecting to a Sway/Mint box (VNC + SSH tunnel)
+
+New connection → VNC protocol. Two tabs of relevance:
+
+**Basic tab:**
+- **Server**: `localhost:5900` (the target *inside* the SSH tunnel —
+  same Screens gotcha applies here)
+- **Username / Password**: blank (no VNC auth)
+- **Color depth**: True color (32 bpp) or whatever feels good
+
+**SSH Tunnel tab:**
+- **Enable SSH tunnel**: ON
+- **Custom**: `<hostname>:22` (or `<hostname>.<tailnet>.ts.net:22`)
+- **Username**: `schmonz`
+- **Authentication**: Public key (automatic) — Remmina uses
+  `~/.ssh/id_*` and the agent
+
+First connection prompts to trust the SSH host key; stored
+thereafter. No VNC password ever requested.
+
+### Connecting to a Mac with Screen Sharing + Remote Login
+
+The Mac approach: Remote Login (SSH) is already on, so the SSH
+tunnel works. Screen Sharing always wants *some* VNC-layer auth —
+there's no "no auth" option in the Mac UI. But the credential it
+wants is your macOS account password (via Apple Diffie-Hellman ARD
+auth), not a separate VNC password.
+
+Setup on the Mac: System Settings → General → Sharing → Screen
+Sharing → enable, "Allow access for: Only these users" → your user
+account. Crucially, do NOT set a "VNC viewers may control screen
+with password" (the legacy VNC password option in Computer
+Settings). That field, when set, exposes RFB 3.3 legacy auth on the
+network and is a separate credential to manage.
+
+In Remmina:
+
+**Basic tab:**
+- **Server**: `localhost:5900`
+- **Username**: your macOS username
+- **Password**: your macOS account password (Remmina stores it)
+- **Color depth**: True color
+
+**SSH Tunnel tab:**
+- **Enable SSH tunnel**: ON
+- **Custom**: `<mac-hostname>:22`
+- **Username**: your macOS username
+- **Authentication**: Public key (set up `~/.ssh/authorized_keys`
+  on the Mac first)
+
+Not quite as clean as the Linux "no VNC auth at all" pattern —
+Screen Sharing always wants a credential at the VNC layer — but
+at least it's your real macOS account password, not a separate
+one to maintain. Remmina caches it after first entry.
+
+### KRDC
+
+If preferred: same idea, different UI. New connection → VNC → server
+field as above → there's an "Use SSH tunnel" toggle in the connection
+options that opens fields for SSH host, port, and username. Works
+fine; Remmina just has a more polished saved-connections workflow.
 
 ## Tailscale ACL implication
 
-VNC is now on the network (not localhost-only), but bound to TLS +
-Unix auth. ACLs can still scope which devices can reach port 5900 —
-useful to restrict to my own devices on the tailnet.
+VNC is bound to localhost — off the network entirely. Only sshd is
+remotely reachable. Tailscale ACLs only need to scope SSH (port 22).
+
+## Footnote: Wayland pre-login GUI access (state as of 2026)
+
+Sway + greetd still has no clean way to share the greeter session over
+VNC and seamlessly continue into the user session — fundamental to
+Wayland's compositor-as-consent-boundary design. GNOME 46+ has this
+working via GDM + GNOME Remote Desktop (RDP); KDE Plasma has it via
+KRdp. Neither helps a Sway fleet.
+
+If pre-login access ever becomes important: SSH in and fix it from the
+terminal, or run an SDDM-with-sway-as-greeter setup with its own
+wayvnc instance and accept the two-step handoff at login. Hasn't been
+necessary so far.
 

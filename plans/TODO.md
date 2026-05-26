@@ -4,8 +4,8 @@
 - **PIA credentials from 1Password**: move `piactl login` out of `slow.yml` and into a `gatherd-prompt-pia` script (Sway autostart, same pattern as `gatherd-prompt-tailscale`) that fetches username/password from `op`. Removes `vault_pia_username` and `vault_pia_password` from `vault.yml`.
 - Set up SSH authorized key from public URL
 - Which Web Apps do I want?
-    - LLMs: Lumo, Grok, ...)
     - iCloud: Drive, Notes, Reminders
+
 - Set up VNC
 - JetBrains IDE settings, starting with font size
 

@@ -190,13 +190,13 @@ active code paths.
 2. Run `bash <(curl -fsSL …/bootstrap.sh)` — no further input
 3. System reboots, `gatherd.service` fires, playbook completes
 4. Sway session is usable, all configured services running, hardware quirks applied
-5. `/etc/gatherd-complete` exists; service does not re-run on next boot
+5. `/etc/gatherd/complete` exists; service does not re-run on next boot
 
 ---
 
 ## Notes for subsequent Artix/s6 migration
 
-Steps 1–4 leave systemd intact. The already-completed renames (`/etc/gatherd-complete`,
+Steps 1–4 leave systemd intact. The already-completed renames (`/etc/gatherd/complete`,
 `/usr/local/lib/gatherd`) mean the first-boot marker and service directory are already
 init-system-neutral. Steps 1–3 do not add new systemd dependencies. Step 3's bootstrap
 script will need a parallel `bootstrap-artix.sh` when that migration happens.

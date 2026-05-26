@@ -4,8 +4,8 @@ After=network-online.target nss-lookup.target gatherd.service
 Wants=network-online.target nss-lookup.target
 ConditionPathExists=/usr/local/lib/gatherd/site-vault.yml
 ConditionPathExists=/usr/local/lib/gatherd/.vault_pass
-ConditionPathExists=/etc/gatherd-complete
-ConditionPathExists=!/etc/gatherd-vault-complete
+ConditionPathExists=/etc/gatherd/complete
+ConditionPathExists=!/etc/gatherd/vault-complete
 
 [Service]
 Type=oneshot

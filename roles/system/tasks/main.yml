@@ -2,6 +2,12 @@
 # systemd-resolved is required for `tailscale set --accept-dns`, which pushes
 # Tailscale's DNS into the local resolver. It must also be started early here
 # (before its place in the service loop below) because package downloads need DNS.
+- name: Create /etc/gatherd state directory
+  ansible.builtin.file:
+    path: /etc/gatherd
+    state: directory
+    mode: '0755'
+
 - name: Start systemd-resolved
   ansible.builtin.systemd:
     name: systemd-resolved

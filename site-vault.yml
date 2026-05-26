@@ -38,6 +38,6 @@
   post_tasks:
     - name: Mark vault setup complete
       ansible.builtin.file:
-        path: /etc/gatherd-vault-complete
+        path: /etc/gatherd/vault-complete
         state: touch
         mode: '0644'

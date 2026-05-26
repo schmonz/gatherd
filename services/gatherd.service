@@ -4,7 +4,7 @@ After=network-online.target nss-lookup.target systemd-user-sessions.service
 Before=greetd.service
 Wants=network-online.target nss-lookup.target
 ConditionPathExists=/usr/local/lib/gatherd/site.yml
-ConditionPathExists=!/etc/gatherd-complete
+ConditionPathExists=!/etc/gatherd/complete
 
 [Service]
 Type=oneshot

@@ -44,7 +44,7 @@
   post_tasks:
     - name: Mark slow setup complete
       ansible.builtin.file:
-        path: /etc/gatherd-user-async-complete
+        path: /etc/gatherd/user-async-complete
         state: touch
         mode: '0644'
       become: true

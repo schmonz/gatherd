@@ -90,7 +90,7 @@
 
     - name: Mark setup complete
       ansible.builtin.copy:
-        dest: /etc/gatherd-complete
+        dest: /etc/gatherd/complete
         content: ""
         mode: '0644'
       become: true

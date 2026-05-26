@@ -12,7 +12,7 @@ each driven by its own systemd service in `services/`.
 3. **User** (`dotfiles`, `aur`, `desktop` roles) — dotfiles, AUR packages, user config
    via `become_user: target_user` using `su` (no sudo needed, runner is root)
 
-Writes `/etc/gatherd-complete` when done; service does not re-run after that.
+Writes `/etc/gatherd/complete` when done; service does not re-run after that.
 
 **`site-user-async.yml`** — run by `gatherd-user-async.service` after `gatherd.service`
 completes, in the background. Three plays:
@@ -21,7 +21,7 @@ completes, in the background. Three plays:
 2. **Slow system packages** — `roles/system/tasks/slow.yml`
 3. **Slow AUR packages** — `roles/aur/tasks/slow.yml`
 
-Writes `/etc/gatherd-user-async-complete` when done.
+Writes `/etc/gatherd/user-async-complete` when done.
 
 ## Code style
 

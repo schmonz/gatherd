@@ -3,8 +3,8 @@ Description=gatherd background package installation
 After=network-online.target nss-lookup.target gatherd.service
 Wants=network-online.target nss-lookup.target
 ConditionPathExists=/usr/local/lib/gatherd/site-user-async.yml
-ConditionPathExists=/etc/gatherd-complete
-ConditionPathExists=!/etc/gatherd-user-async-complete
+ConditionPathExists=/etc/gatherd/complete
+ConditionPathExists=!/etc/gatherd/user-async-complete
 
 [Service]
 Type=oneshot

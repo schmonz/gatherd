@@ -528,13 +528,16 @@
     state: directory
     mode: '0755'
 
-- name: Pre-seed JetBrains Toolbox storage to skip onboarding window
-  # technicalOnboardingFinished suppresses the window that overrides --minimize.
+- name: Pre-seed JetBrains Toolbox storage to skip onboarding and user agreement
+  # firstRunDate must be present or Toolbox treats startup as a first run, overriding
+  # .appState.json to /endUserAgreement regardless of what we pre-seeded there.
+  # technicalOnboardingFinished suppresses the onboarding window that overrides --minimize.
   # force: false means Toolbox can update the file freely after first run.
   ansible.builtin.copy:
     dest: "{{ target_home }}/.local/share/JetBrains/Toolbox/.storage.json"
     content: |
       {
+          "firstRunDate": "2020-01-01T00:00:00.000+00:00",
           "onboarding": {
               "currentTechnicalStep": 0,
               "version": 1,

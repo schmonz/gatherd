@@ -207,10 +207,10 @@
       {
           "AutoLaunchProtocolsFromOrigins": [
               {"protocol": "jetbrains",     "allowed_origins": ["https://account.jetbrains.com", "https://www.jetbrains.com"]},
-              {"protocol": "zoommtg",       "allowed_origins": [".zoom.us"]},
-              {"protocol": "zoomus",        "allowed_origins": [".zoom.us"]},
-              {"protocol": "zoomphonecall", "allowed_origins": [".zoom.us"]},
-              {"protocol": "slack",         "allowed_origins": [".slack.com"]},
+              {"protocol": "zoommtg",       "allowed_origins": ["https://zoom.us", "https://*.zoom.us"]},
+              {"protocol": "zoomus",        "allowed_origins": ["https://zoom.us", "https://*.zoom.us"]},
+              {"protocol": "zoomphonecall", "allowed_origins": ["https://zoom.us", "https://*.zoom.us"]},
+              {"protocol": "slack",         "allowed_origins": ["https://slack.com", "https://*.slack.com"]},
               {"protocol": "msteams",       "allowed_origins": ["https://teams.microsoft.com"]}
           ]
       }

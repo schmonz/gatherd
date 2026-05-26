@@ -16,6 +16,7 @@
           # file transfer
           - localsend-bin
           # communication
+          - vesktop-bin
           - slack-electron
           - zoom
           - teams-for-linux-electron-bin
@@ -44,6 +45,8 @@
           swaymsg exec "$HOME/.local/bin/gatherd-systray localsend --hidden"
         XDG_RUNTIME_DIR=/run/user/$(id -u) SWAYSOCK="$sock" \
           swaymsg exec "$HOME/.local/bin/gatherd-systray jetbrains-toolbox --minimize"
+        XDG_RUNTIME_DIR=/run/user/$(id -u) SWAYSOCK="$sock" \
+          swaymsg exec "$HOME/.local/bin/gatherd-systray vesktop --start-minimized"
       changed_when: false
 
     - name: Revoke NOPASSWD pacman after slow AUR installs

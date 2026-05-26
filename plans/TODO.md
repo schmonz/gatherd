@@ -1,6 +1,5 @@
 # TODO
 
-- Discord downloads itself on first launch?!? make sure we get it all the way to systray as part of user-slow-async
 - GParted
 - Which Web Apps do I want?
     - LLMs: ChatGPT, Lumo, Grok, ...)

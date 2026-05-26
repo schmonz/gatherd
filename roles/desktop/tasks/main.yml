@@ -369,7 +369,7 @@
 - name: Install gatherd user service units
   # systemd-specific; will need a different mechanism on Artix/s6
   ansible.builtin.copy:
-    src: "{{ setup_dir }}/services/{{ item }}"
+    src: "{{ setup_dir }}/services/user/{{ item }}"
     dest: "{{ target_home }}/.config/systemd/user/{{ item }}"
     mode: '0644'
     remote_src: true
@@ -618,7 +618,7 @@
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
     regexp: "^exec .*gatherd-show-slow-progress"
-    line: "exec sh -c '[ -f /etc/gatherd/user-async-complete ] && exit 0; exec foot -e {{ target_home }}/.local/bin/gatherd-show-slow-progress'"
+    line: "exec sh -c '[ -f /etc/gatherd/async-complete ] && exit 0; exec foot -e {{ target_home }}/.local/bin/gatherd-show-slow-progress'"
 
 - name: Remove autostart entries now managed as systemd user services
   ansible.builtin.lineinfile:

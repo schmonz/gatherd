@@ -14,14 +14,14 @@ each driven by its own systemd service in `services/`.
 
 Writes `/etc/gatherd/complete` when done; service does not re-run after that.
 
-**`site-user-async.yml`** — run by `gatherd-user-async.service` after `gatherd.service`
+**`site-async.yml`** — run by `gatherd-async.service` after `gatherd.service`
 completes, in the background. Three plays:
 
 1. **Detect** (same pre_tasks + `machine_facts` as `site.yml`)
 2. **Slow system packages** — `roles/system/tasks/slow.yml`
 3. **Slow AUR packages** — `roles/aur/tasks/slow.yml`
 
-Writes `/etc/gatherd/user-async-complete` when done.
+Writes `/etc/gatherd/async-complete` when done.
 
 ## Finishing a TODO item
 
@@ -57,7 +57,7 @@ module names.
 - Templates: `.j2` files in `roles/<role>/templates/`
 - Handlers: trigger reboots and other post-change actions (e.g. `grub-mkconfig`)
 - Slow tasks (long downloads, big compiles): in `roles/<role>/tasks/slow.yml`,
-  included by `site-user-async.yml` so they run after login is available
+  included by `site-async.yml` so they run after login is available
 
 **Idempotency.** Ansible gives this for free with most modules — lean on it.
 For `command`/`shell` tasks, use `creates:`, `changed_when:`, or explicit checks.

@@ -22,9 +22,9 @@ pacman -S --noconfirm --needed ansible git rate-mirrors
 mirror_flavor=$([ "$(uname -m)" = "aarch64" ] && echo archarm || echo arch)
 sudo -u "$target_user" rate-mirrors --per-mirror-timeout 1500 "$mirror_flavor" > /etc/pacman.d/mirrorlist
 
-ln -sf "$DEST/services/gatherd.service" /etc/systemd/system/gatherd.service
-ln -sf "$DEST/services/gatherd-user-async.service" /etc/systemd/system/gatherd-user-async.service
-systemctl enable gatherd.service gatherd-user-async.service
+ln -sf "$DEST/services/system/gatherd.service" /etc/systemd/system/gatherd.service
+ln -sf "$DEST/services/system/gatherd-async.service" /etc/systemd/system/gatherd-async.service
+systemctl enable gatherd.service gatherd-async.service
 
 # Pre-mask services that conflict with TLP so they never start on first boot.
 # Without this, power-profiles-daemon starts (and fails) before Ansible can

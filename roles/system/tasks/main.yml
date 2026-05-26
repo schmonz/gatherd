@@ -354,7 +354,7 @@
 
 - name: Install gatherd-vault systemd units
   ansible.builtin.file:
-    src: "{{ setup_dir }}/services/{{ item }}"
+    src: "{{ setup_dir }}/services/system/{{ item }}"
     dest: "/etc/systemd/system/{{ item }}"
     state: link
   loop:

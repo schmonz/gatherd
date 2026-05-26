@@ -426,6 +426,7 @@
     mode: '0755'
     remote_src: true
 
+
 - name: Install gatherd-show-slow-progress script
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-show-slow-progress"
@@ -627,5 +628,7 @@
       line: "exec {{ target_home }}/.local/bin/gatherd-systray jetbrains-toolbox --minimize"
     - regexp: "^exec .*gatherd-systray vesktop"
       line: "exec {{ target_home }}/.local/bin/gatherd-systray vesktop --start-minimized"
+    - regexp: "^exec .*gatherd-systray.*/pia-client"
+      line: "exec {{ target_home }}/.local/bin/gatherd-systray /opt/piavpn/bin/pia-client"
     - regexp: "^exec .*gatherd-systray arch-update"
       line: "exec {{ target_home }}/.local/bin/gatherd-systray arch-update --tray"

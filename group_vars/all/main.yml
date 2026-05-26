@@ -1,5 +1,7 @@
 ---
 dotfiles_repo: "https://github.com/schmonz/dotfiles.git"
+pia_username: "{{ vault_pia_username }}"
+pia_password: "{{ vault_pia_password }}"
 setup_dir: "/usr/local/lib/gatherd"
 nfs_server: ap-juicer.taile54b91.ts.net
 wifi_networks:

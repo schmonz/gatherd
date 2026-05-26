@@ -16,6 +16,7 @@
           # file transfer
           - localsend-bin
           # communication
+          - piavpn-bin
           - vesktop-bin
           - slack-electron
           - zoom
@@ -34,6 +35,39 @@
         state: present
         extra_args: "--mflags --skippgpcheck"
 
+    - name: Enable and start PIA daemon
+      ansible.builtin.systemd:
+        name: piavpn
+        enabled: true
+        state: started
+      become: true
+      become_user: root
+
+    - name: Check if already logged in to PIA
+      ansible.builtin.command: >
+        python3 -c "
+        import json, sys
+        try:
+            d = json.load(open('/opt/piavpn/etc/account.json'))
+            sys.exit(0 if d.get('loggedIn') else 1)
+        except:
+            sys.exit(1)"
+      register: _pia_logged_in
+      changed_when: false
+      failed_when: false
+      become: true
+      become_user: root
+
+    - name: Log in to PIA
+      ansible.builtin.shell: |
+        tmpfile=$(mktemp)
+        chmod 600 "$tmpfile"
+        printf '%s\n%s\n' '{{ pia_username }}' '{{ pia_password }}' > "$tmpfile"
+        /opt/piavpn/bin/piactl login "$tmpfile"
+        rm -f "$tmpfile"
+      when: _pia_logged_in.rc != 0
+      no_log: true
+
   always:
     - name: Launch slow-installed systray apps  # noqa: risky-shell-pipe
       # swaymsg exec runs inside the live Sway session; SWAYSOCK must be set explicitly
@@ -47,6 +81,8 @@
           swaymsg exec "$HOME/.local/bin/gatherd-systray jetbrains-toolbox --minimize"
         XDG_RUNTIME_DIR=/run/user/$(id -u) SWAYSOCK="$sock" \
           swaymsg exec "$HOME/.local/bin/gatherd-systray vesktop --start-minimized"
+        XDG_RUNTIME_DIR=/run/user/$(id -u) SWAYSOCK="$sock" \
+          swaymsg exec "$HOME/.local/bin/gatherd-systray /opt/piavpn/bin/pia-client"
       changed_when: false
 
     - name: Revoke NOPASSWD pacman after slow AUR installs

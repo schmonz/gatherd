@@ -3,8 +3,8 @@
 - Which Web Apps do I want?
     - LLMs: ChatGPT, Lumo, Grok, ...)
     - iCloud: Drive, Notes, Reminders
-- Add Private Internet Access
 - Set up VNC
+- JetBrains IDE settings, starting with font size
 
 ## Hardware
 

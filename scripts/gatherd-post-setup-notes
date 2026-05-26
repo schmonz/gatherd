@@ -225,6 +225,7 @@ section_verify() {
     li 'Helium auto-launch: log into a Slack workspace — Helium should open Slack with no "open this link" dialog'
     li 'Helium auto-launch: join a Zoom meeting from a zoom.us link — Helium should open Zoom with no dialog'
     li 'NFS automount: access ~/.autofs-mounts/code — should mount from ap-juicer transparently'
+    li 'NFS shutdown: shut down with NFS mounted and active — should complete cleanly without a multi-second pause'
     li 'iCloud: run `rclone lsd icloud:` — should list top-level folders without error'
     li 'iCloud re-auth: log out of icloud.com in Helium, log back in — `rclone lsd icloud:` should work again without manual steps'
     li 'Captive portal: join a portal network, confirm Helium opens automatically and portal login works'

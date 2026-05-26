@@ -54,14 +54,22 @@
     state: directory
     mode: '0755'
 
-# The NFS server is reached over Tailscale, so tailscaled must still be up
-# when autofs stops at shutdown -- otherwise umount.nfs4 hangs until SIGKILL.
-# After= reverses for stop, so this makes autofs stop before tailscaled.
-- name: Order autofs shutdown before tailscaled
+- name: Get target user UID for autofs ordering
+  ansible.builtin.command: id -u {{ target_user }}
+  register: target_uid
+  changed_when: false
+
+# Two ordering constraints for clean NFS unmount at shutdown (Before= reverses for stop):
+# 1. Before=user-<uid>.slice: all user processes (terminals, Sway, etc.) die first,
+#    releasing file handles on NFS mounts before autofs tries to unmount them.
+# 2. After=tailscaled.service: autofs stops before tailscaled, so umount.nfs4 can
+#    still reach the NFS server over Tailscale.
+- name: Order autofs shutdown after user session and before tailscaled
   ansible.builtin.copy:
     dest: /etc/systemd/system/autofs.service.d/gatherd-tailscaled-ordering.conf
     content: |
       [Unit]
+      Before=user-{{ target_uid.stdout }}.slice
       After=tailscaled.service
     mode: '0644'
   notify:

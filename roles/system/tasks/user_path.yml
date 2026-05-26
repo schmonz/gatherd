@@ -11,3 +11,12 @@
     content: "PATH=${HOME}/.local/bin:${PATH}\n"
     mode: '0644'
   notify: Etckeeper commit
+
+- name: Keep Go workspace out of home directory
+  ansible.builtin.copy:
+    dest: /etc/environment.d/10-gatherd-go.conf
+    content: |
+      GOPATH=${HOME}/.local/share/go
+      GOBIN=${HOME}/.local/bin
+    mode: '0644'
+  notify: Etckeeper commit

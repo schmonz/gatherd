@@ -203,7 +203,7 @@ section_verify() {
     li 'WiFi: join LaPromNyack from the network menu — should connect without entering a password'
     li 'WiFi unmanaged-network nudge: hand-join any new network, log out and back in — an "Unmanaged WiFi" section listing it should appear in this file'
     li 'Screen lock: let screen time out, then wiggle/tap — should see lock screen'
-    has_resume && li 'Screen lock: close lid, reopen — should see lock screen'
+    has_resume && li 'Screen lock: close lid, reopen — lock screen appears immediately with no flash of desktop content beforehand'
     li 'LocalSend: check alias is system hostname, not a random phrase'
     li 'Dotfiles: run `ls -la ~/.gitconfig ~/.gitignore_global ~/.tmux.conf` — each should be a symlink into ~/.dotfiles/'
     li 'On low-RAM machines: Helium → Settings → Performance — Memory Saver should be Maximum'

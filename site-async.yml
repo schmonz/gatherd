@@ -37,6 +37,9 @@
   environment:
     PATH: "{{ target_home }}/.local/bin:{{ ansible_env.PATH }}"
 
+  vars_files:
+    - vault/vault.yml
+
   tasks:
     - name: Install slow AUR packages
       ansible.builtin.include_tasks: roles/aur/tasks/slow.yml

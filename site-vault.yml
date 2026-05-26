@@ -21,6 +21,9 @@
   become: true
   any_errors_fatal: true
 
+  vars_files:
+    - vault/vault.yml
+
   handlers:
     - name: Reload NetworkManager connections
       ansible.builtin.command: nmcli connection reload

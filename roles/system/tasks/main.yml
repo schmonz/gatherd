@@ -352,7 +352,7 @@
     - systemd-rfkill.socket
     - power-profiles-daemon.service
 
-- name: Install gatherd-vault systemd units
+- name: Install gatherd vault-gated systemd units
   ansible.builtin.file:
     src: "{{ setup_dir }}/services/system/{{ item }}"
     dest: "/etc/systemd/system/{{ item }}"
@@ -360,12 +360,17 @@
   loop:
     - gatherd-vault.service
     - gatherd-vault.path
+    - gatherd-async.service
+    - gatherd-async.path
 
-- name: Enable gatherd-vault.path
+- name: Enable gatherd vault-gated path units
   ansible.builtin.systemd:
-    name: gatherd-vault.path
+    name: "{{ item }}"
     enabled: true
     daemon_reload: true
+  loop:
+    - gatherd-vault.path
+    - gatherd-async.path
 
 - name: Enable system services
   ansible.builtin.systemd:

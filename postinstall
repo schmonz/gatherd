@@ -32,8 +32,7 @@ select_fastest_mirrors() {
 
 register_boot_services() {
     ln -sf "$GATHERD_HOME/services/system/gatherd.service" /etc/systemd/system/gatherd.service
-    ln -sf "$GATHERD_HOME/services/system/gatherd-async.service" /etc/systemd/system/gatherd-async.service
-    systemctl enable gatherd.service gatherd-async.service
+    systemctl enable gatherd.service
 }
 
 mask_conflicting_services() {

@@ -629,6 +629,6 @@
     - regexp: "^exec .*gatherd-systray vesktop"
       line: "exec {{ target_home }}/.local/bin/gatherd-systray vesktop --start-minimized"
     - regexp: "^exec .*gatherd-systray.*/pia-client"
-      line: "exec {{ target_home }}/.local/bin/gatherd-systray /opt/piavpn/bin/pia-client"
+      line: "exec {{ target_home }}/.local/bin/gatherd-systray /opt/piavpn/bin/pia-client --quiet"
     - regexp: "^exec .*gatherd-systray arch-update"
       line: "exec {{ target_home }}/.local/bin/gatherd-systray arch-update --tray"

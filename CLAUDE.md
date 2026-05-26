@@ -32,6 +32,8 @@ When a feature is implemented and working:
 
 The post-setup notes are the living test suite for the playbook. TODO.md is not a record of what was done; git log is.
 
+Before calling a feature done, test it locally. The verify step documents what to check on a fresh repave; it is not a substitute for confirming the thing works right now.
+
 ## Code style
 
 **Task names read like imperative sentences.** A good task name makes the play log

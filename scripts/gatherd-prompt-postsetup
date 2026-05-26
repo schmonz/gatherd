@@ -1,3 +1,5 @@
 #!/bin/sh
-gatherd-post-setup-notes
+# Sway-autostarted children don't inherit ~/.local/bin in PATH, so invoke
+# the sibling by absolute path.
+"$(dirname "$0")/gatherd-post-setup-notes"
 test -s "$HOME/.config/gatherd-post-setup.md" && xdg-open "$HOME/.config/gatherd-post-setup.md"

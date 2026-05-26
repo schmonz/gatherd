@@ -6,27 +6,53 @@
 #
 set -euo pipefail
 
-REPO_URL="https://github.com/schmonz/gatherd.git"
-DEST="/usr/local/lib/gatherd"
-SWAY_CE_URL="https://raw.githubusercontent.com/EndeavourOS-Community-Editions/sway/main/setup_sway_isomode.bash"
+GATHERD_HOME="/usr/local/lib/gatherd"
 
-target_user=$(awk -F: '$3 >= 1000 && $3 < 65534 { print $1; exit }' /etc/passwd)
+detect_target_user() {
+    awk -F: '$3 >= 1000 && $3 < 65534 { print $1; exit }' /etc/passwd
+}
 
-curl -fsSL "$SWAY_CE_URL" | bash -s -- "$target_user"
+setup_sway_community_edition() {
+    curl -fsSL "https://raw.githubusercontent.com/EndeavourOS-Community-Editions/sway/main/setup_sway_isomode.bash" | bash -s -- "$1"
+}
 
-pacman -S --noconfirm --needed ansible git rate-mirrors
+install_prerequisites() {
+    pacman -S --noconfirm --needed ansible git rate-mirrors
+}
 
-[[ -d "$DEST/.git" ]] || git clone "$REPO_URL" "$DEST"
+install_gatherd() {
+    [[ -d "$GATHERD_HOME/.git" ]] || git clone "https://github.com/schmonz/gatherd.git" "$GATHERD_HOME"
+}
 
-# Select fastest mirrors once, before the first Ansible run needs them.
-mirror_flavor=$([ "$(uname -m)" = "aarch64" ] && echo archarm || echo arch)
-sudo -u "$target_user" rate-mirrors --per-mirror-timeout 1500 "$mirror_flavor" > /etc/pacman.d/mirrorlist
+select_fastest_mirrors() {
+    local flavor
+    flavor=$([ "$(uname -m)" = "aarch64" ] && echo archarm || echo arch)
+    sudo -u "$1" rate-mirrors --per-mirror-timeout 1500 "$flavor" > /etc/pacman.d/mirrorlist
+}
 
-ln -sf "$DEST/services/system/gatherd.service" /etc/systemd/system/gatherd.service
-ln -sf "$DEST/services/system/gatherd-async.service" /etc/systemd/system/gatherd-async.service
-systemctl enable gatherd.service gatherd-async.service
+register_boot_services() {
+    ln -sf "$GATHERD_HOME/services/system/gatherd.service" /etc/systemd/system/gatherd.service
+    ln -sf "$GATHERD_HOME/services/system/gatherd-async.service" /etc/systemd/system/gatherd-async.service
+    systemctl enable gatherd.service gatherd-async.service
+}
 
-# Pre-mask services that conflict with TLP so they never start on first boot.
-# Without this, power-profiles-daemon starts (and fails) before Ansible can
-# mask it, leaving systemd in a state that can hang TLP's startup.
-systemctl mask power-profiles-daemon.service systemd-rfkill.service systemd-rfkill.socket
+mask_conflicting_services() {
+    # power-profiles-daemon starts (and fails) before Ansible can mask it,
+    # leaving systemd in a state that can hang TLP's startup.
+    systemctl mask power-profiles-daemon.service systemd-rfkill.service systemd-rfkill.socket
+}
+
+main() {
+    local target_user
+    target_user=$(detect_target_user)
+
+    setup_sway_community_edition "$target_user"
+    install_prerequisites
+    install_gatherd
+    select_fastest_mirrors "$target_user"
+    register_boot_services
+    mask_conflicting_services
+}
+
+main "$@"
+exit $?

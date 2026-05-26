@@ -1,0 +1,19 @@
+[Desktop Entry]
+Version=1.0
+Name={{ item.name }}
+Comment={{ item.comment | default('') }}
+Exec=helium-browser --app={{ item.url }} --class=WebApp-{{ item.codename }} --name=WebApp-{{ item.codename }} --user-data-dir={{ target_home }}/.local/share/ice/profiles/{{ item.codename }}
+Terminal=false
+X-MultipleArgs=false
+Type=Application
+Icon={{ (target_home + '/.local/share/ice/icons/' + item.codename + '.png') if item.icon_url is defined else 'applications-internet' }}
+Categories=GTK;
+MimeType=text/html;text/xml;application/xhtml_xml;
+StartupWMClass=WebApp-{{ item.codename }}
+StartupNotify=true
+X-WebApp-Browser=Helium
+X-WebApp-URL={{ item.url }}
+X-WebApp-CustomParameters=
+X-WebApp-Navbar=false
+X-WebApp-PrivateWindow=false
+X-WebApp-Isolated=true

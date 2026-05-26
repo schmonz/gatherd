@@ -4,6 +4,13 @@ pia_username: "{{ vault_pia_username }}"
 pia_password: "{{ vault_pia_password }}"
 setup_dir: "/usr/local/lib/gatherd"
 nfs_server: ap-juicer.taile54b91.ts.net
+web_apps:
+  - name: ChatGPT
+    url: https://chatgpt.com
+    comment: LLM
+    codename: ChatGPT
+    icon_url: https://chatgpt.com/favicon.ico
+
 wifi_networks:
   - ssid: LaPromNyack
     psk: "{{ vault_wifi_psk_lapromnyack }}"

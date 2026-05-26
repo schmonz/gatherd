@@ -237,17 +237,6 @@
     create: true
     mode: '0644'
 
-- name: Hide unwanted desktop entries
-  ansible.builtin.copy:
-    dest: "{{ target_home }}/{{ item }}"
-    content: |
-      [Desktop Entry]
-      Hidden=true
-    mode: '0644'
-  loop:
-    - .local/share/applications/chromium.desktop
-    - .local/share/applications/kde4/webapp-manager.desktop
-
 - name: Set default browser via mimeapps
   ansible.builtin.copy:
     dest: "{{ target_home }}/.config/mimeapps.list"
@@ -375,7 +364,6 @@
     mode: '0644'
     remote_src: true
   loop:
-    - gatherd-fix-webapps.service
     - gatherd-prompt-captiveportal.service
 
 - name: Enable gatherd user services
@@ -385,7 +373,6 @@
     src: "{{ target_home }}/.config/systemd/user/{{ item }}"
     state: link
   loop:
-    - gatherd-fix-webapps.service
     - gatherd-prompt-captiveportal.service
 
 - name: Configure captive-browser to use Ungoogled Chromium
@@ -418,13 +405,6 @@
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-prompt-captiveportal"
     dest: "{{ target_home }}/.local/bin/gatherd-prompt-captiveportal"
-    mode: '0755'
-    remote_src: true
-
-- name: Install gatherd-fix-webapps script
-  ansible.builtin.copy:
-    src: "{{ setup_dir }}/scripts/gatherd-fix-webapps"
-    dest: "{{ target_home }}/.local/bin/gatherd-fix-webapps"
     mode: '0755'
     remote_src: true
 
@@ -571,6 +551,53 @@
     mode: '0600'
     force: false
 
+- name: Create web app icon and profile directories
+  ansible.builtin.file:
+    path: "{{ target_home }}/.local/share/ice/{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - icons
+    - profiles
+
+- name: Download and convert web app favicon to PNG
+  # Converts any favicon format (ICO, PNG, etc.) to a single PNG via Pillow.
+  # PNG is required for fuzzel, which does not support ICO.
+  ansible.builtin.shell: |
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    curl -sSL --max-time 10 -A 'Mozilla/5.0' -o "$tmp" '{{ item.icon_url }}'
+    python3 -c "
+    from PIL import Image
+    import sys
+    Image.open(sys.argv[1]).save(sys.argv[2])
+    " "$tmp" '{{ target_home }}/.local/share/ice/icons/{{ item.codename }}.png'
+  args:
+    creates: "{{ target_home }}/.local/share/ice/icons/{{ item.codename }}.png"
+  loop: "{{ web_apps | selectattr('icon_url', 'defined') | list }}"
+
+- name: Create web app Chromium profile directory
+  ansible.builtin.file:
+    path: "{{ target_home }}/.local/share/ice/profiles/{{ item.codename }}/Default"
+    state: directory
+    mode: '0755'
+  loop: "{{ web_apps }}"
+
+- name: Pre-seed web app Chromium profile
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.local/share/ice/profiles/{{ item.codename }}/Default/Preferences"
+    content: '{}'
+    mode: '0600'
+    force: false
+  loop: "{{ web_apps }}"
+
+- name: Create web app desktop entries
+  ansible.builtin.template:
+    src: web-app.desktop.j2
+    dest: "{{ target_home }}/.local/share/applications/WebApp-{{ item.codename }}.desktop"
+    mode: '0644'
+  loop: "{{ web_apps }}"
+
 - name: Install gatherd-prompt-1password script
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-prompt-1password"
@@ -648,7 +675,6 @@
     regexp: "^exec (?:.*/)?{{ item }}$"
     state: absent
   loop:
-    - gatherd-fix-webapps
     - gatherd-prompt-captiveportal
 
 - name: Add gatherd script autostart entries

@@ -1,5 +1,11 @@
 #!/bin/sh
-systemctl is-active --quiet gatherd-user-async.service || exit 0
+# Type=oneshot RemainAfterExit=no services never sit in ActiveState=active
+# long enough for `systemctl is-active` to catch them — they're in
+# `activating` for the duration of ExecStart. Drive the wait off the
+# completion marker site-user-async.yml writes, with is-failed as the
+# escape hatch.
+
+[ -f /etc/gatherd/user-async-complete ] && exit 0
 
 printf '\033]0;Package Installation\007'
 echo "Installing remaining packages..."
@@ -8,7 +14,8 @@ echo ""
 journalctl -fn 50 -u gatherd-user-async.service &
 jctl_pid=$!
 
-while systemctl is-active --quiet gatherd-user-async.service; do
+while [ ! -f /etc/gatherd/user-async-complete ]; do
+    systemctl is-failed --quiet gatherd-user-async.service && break
     sleep 2
 done
 
@@ -18,11 +25,11 @@ wait "$jctl_pid" 2>/dev/null
 
 echo ""
 echo "----------------------------------------"
-if systemctl is-failed --quiet gatherd-user-async.service; then
+if [ -f /etc/gatherd/user-async-complete ]; then
+    echo "Installation complete."
+else
     echo "Installation failed."
     echo "Details: journalctl -u gatherd-user-async.service"
-else
-    echo "Installation complete."
 fi
 printf "Press Enter to close... "
 read -r _

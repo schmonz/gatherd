@@ -3,6 +3,11 @@
 # - Fixes non-spec-compliant quoting (--app="url" → --app=url) so strict launchers like fuzzel accept them.
 # - Seeds default zoom level into each webapp's ice profile.
 
+_pidfile="${XDG_RUNTIME_DIR}/gatherd-fix-webapps.pid"
+[ -f "$_pidfile" ] && kill -0 "$(cat "$_pidfile")" 2>/dev/null && exit 0
+printf '%s\n' "$$" > "$_pidfile"
+trap 'rm -f "$_pidfile"' EXIT HUP INT TERM
+
 seed_zoom() {
     local userdata
     userdata=$(sed -n '/^Exec=/s/.*--user-data-dir=\([^ ]*\).*/\1/p' "$1")
@@ -25,7 +30,7 @@ PYEOF
 }
 
 fix_webapp() {
-    sed -i 's/--app="\([^"]*\)"/--app=\1/g' "$1"
+    grep -q '--app="' "$1" && sed -i 's/--app="\([^"]*\)"/--app=\1/g' "$1"
     seed_zoom "$1"
 }
 

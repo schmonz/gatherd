@@ -7,6 +7,27 @@
   any_errors_fatal: true
 
   pre_tasks:
+    - name: Check whether a Sway session is currently active
+      ansible.builtin.command: pgrep -x sway
+      register: _sway_check
+      changed_when: false
+      failed_when: false
+
+    - name: Refuse to run during a Sway session
+      ansible.builtin.fail:
+        msg: |
+          site.yml is designed to run before greetd starts (via
+          gatherd.service before login). Running it inside a live
+          Sway session restarts services Sway depends on and will
+          end the session. To re-run safely:
+            - Reboot. gatherd.service will re-run if /etc/gatherd/complete is gone.
+            - Or switch to a console TTY (Ctrl+Alt+F2), stop greetd, then run.
+            - Or pass -e sway_guard_override=true if you know what you're doing
+              (e.g. an idempotency test inside a VM that's already past first boot).
+      when:
+        - _sway_check.rc == 0
+        - not (sway_guard_override | default(false) | bool)
+
     - name: Detect target user and set facts
       ansible.builtin.include_tasks: tasks/detect_user.yml
 

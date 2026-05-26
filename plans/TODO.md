@@ -1,12 +1,12 @@
 # TODO
 
+- GParted
+- Which Web Apps do I want?
+    - LLMs: ChatGPT, Lumo, Grok, ...)
+    - iCloud: Drive, Notes, Reminders
 - Add Private Internet Access
 - Set up VNC
-- X270 seems to sleep pretty aggressively even if the Sway idle inhibitor is activated and the machine is plugged in. Is that TLP?
-- Pre-populate additional WiFi configs (vault-encrypted PSKs): `PeasPlaycare`, `SchmiPhone` (tethering)
-- Can we notice whenever we've joined a new WiFi, and prompt to add it to Ansible?
 - NFS client automount: done and ansibilized. `~/.autofs-mounts/code` mounts from ap-juicer via tailscale (works on LAN and remote). `~/trees` symlinked to `.autofs-mounts/code/trees`.
-- Conky gap_y and systray icon-size: both now scale with foot_font_size, needs repave verification
 - Post-setup notes: generate at first sway login (not Ansible time) so app auth state is detectable — tailscale status, rclone icloud remote, secret-tool keyring queries, etc. Each section self-gates and appends only if needed. Re-runnable anytime to see what's still outstanding.
 
 

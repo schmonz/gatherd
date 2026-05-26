@@ -1,0 +1,6 @@
+---
+# Personal configuration for this gatherd installation.
+# Copy this file to personal.yml and fill in your values.
+# personal.yml is gitignored so your choices stay out of the repo.
+
+dotfiles_repo: "https://github.com/YOURNAME/dotfiles.git"

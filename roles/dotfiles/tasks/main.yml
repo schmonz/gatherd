@@ -5,6 +5,7 @@
     dest: "{{ target_home }}/.dotfiles"
     version: HEAD
     update: false
+  when: dotfiles_repo is defined
 
 - name: Symlink dotfiles
   ansible.builtin.file:
@@ -18,3 +19,4 @@
       dest: .gitignore_global
     - src: tmux.conf
       dest: .tmux.conf
+  when: dotfiles_repo is defined

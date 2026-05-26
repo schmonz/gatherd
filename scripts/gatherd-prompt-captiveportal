@@ -1,13 +1,9 @@
 #!/bin/sh
 # Watches NM connectivity state; launches captive-browser on portal detection.
-# Outer loop reconnects if nmcli monitor exits (e.g. on NM restart).
-while true; do
-    LC_ALL=C nmcli monitor 2>/dev/null | while IFS= read -r line; do
-        case "$line" in
-            *[Cc]onnectivity*[Pp]ortal*)
-                pgrep -x captive-browser >/dev/null || captive-browser &
-                ;;
-        esac
-    done
-    sleep 5
+LC_ALL=C nmcli monitor 2>/dev/null | while IFS= read -r line; do
+    case "$line" in
+        *[Cc]onnectivity*[Pp]ortal*)
+            pgrep -x captive-browser >/dev/null || captive-browser &
+            ;;
+    esac
 done

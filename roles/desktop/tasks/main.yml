@@ -366,20 +366,26 @@
     src: /usr/lib/systemd/user/arch-update.timer
     state: link
 
-- name: Install gatherd-fix-webapps user service unit
+- name: Install gatherd user service units
   # systemd-specific; will need a different mechanism on Artix/s6
   ansible.builtin.copy:
-    src: "{{ setup_dir }}/services/gatherd-fix-webapps.service"
-    dest: "{{ target_home }}/.config/systemd/user/gatherd-fix-webapps.service"
+    src: "{{ setup_dir }}/services/{{ item }}"
+    dest: "{{ target_home }}/.config/systemd/user/{{ item }}"
     mode: '0644'
     remote_src: true
+  loop:
+    - gatherd-fix-webapps.service
+    - gatherd-prompt-captiveportal.service
 
-- name: Enable gatherd-fix-webapps user service
+- name: Enable gatherd user services
   # systemd-specific; will need a different mechanism on Artix/s6
   ansible.builtin.file:
-    path: "{{ target_home }}/.config/systemd/user/graphical-session.target.wants/gatherd-fix-webapps.service"
-    src: "{{ target_home }}/.config/systemd/user/gatherd-fix-webapps.service"
+    path: "{{ target_home }}/.config/systemd/user/graphical-session.target.wants/{{ item }}"
+    src: "{{ target_home }}/.config/systemd/user/{{ item }}"
     state: link
+  loop:
+    - gatherd-fix-webapps.service
+    - gatherd-prompt-captiveportal.service
 
 - name: Configure captive-browser to use Ungoogled Chromium
   ansible.builtin.copy:
@@ -621,6 +627,7 @@
     state: absent
   loop:
     - gatherd-fix-webapps
+    - gatherd-prompt-captiveportal
 
 - name: Add gatherd script autostart entries
   ansible.builtin.lineinfile:
@@ -628,7 +635,6 @@
     regexp: "^exec (?:.*/)?{{ item }}$"
     line: "exec {{ target_home }}/.local/bin/{{ item }}"
   loop:
-    - gatherd-prompt-captiveportal
     - gatherd-prompt-1password
     - gatherd-prompt-tailscale
     - gatherd-prompt-icloud

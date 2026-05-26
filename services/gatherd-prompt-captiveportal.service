@@ -1,0 +1,12 @@
+[Unit]
+Description=Detect captive portals and launch captive-browser
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gatherd-prompt-captiveportal
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

@@ -206,6 +206,7 @@ section_verify() {
     has_resume && li 'Screen lock: close lid, reopen — lock screen appears immediately with no flash of desktop content beforehand'
     li 'LocalSend: check alias is system hostname, not a random phrase'
     li 'Dotfiles: run `ls -la ~/.gitconfig ~/.gitignore_global ~/.tmux.conf` — each should be a symlink into ~/.dotfiles/'
+    li 'SSH authorized keys: run `cat ~/.ssh/authorized_keys` — should contain your public keys from dotfiles'
     li 'On low-RAM machines: Helium → Settings → Performance — Memory Saver should be Maximum'
     li 'Systray (fast-path): after first login, 1Password, Tailscale, and arch-update tray icons appear without logging out'
     li 'Systray (slow-path): LocalSend, JetBrains Toolbox, Discord (vesktop), and PIA tray icons appear as soon as slow install finishes, without logging out'

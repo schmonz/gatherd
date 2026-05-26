@@ -4,3 +4,7 @@
 # personal.yml is gitignored so your choices stay out of the repo.
 
 dotfiles_repo: "https://github.com/YOURNAME/dotfiles.git"
+
+# File containing SSH public keys to add to ~/.ssh/authorized_keys on repave.
+# Relative paths are resolved from ~/.dotfiles/; absolute paths work too.
+# ssh_authorized_keys_dotfile: ssh-authorized-keys

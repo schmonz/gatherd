@@ -7,6 +7,13 @@
     update: false
   when: dotfiles_repo is defined
 
+- name: Populate SSH authorized_keys from dotfiles
+  ansible.posix.authorized_key:
+    user: "{{ target_user }}"
+    key: "{{ lookup('file', target_home + '/.dotfiles/' + ssh_authorized_keys_dotfile) }}"
+    state: present
+  when: ssh_authorized_keys_dotfile is defined and ssh_authorized_keys_dotfile
+
 - name: Symlink dotfiles
   ansible.builtin.file:
     src: "{{ target_home }}/.dotfiles/{{ item.src }}"

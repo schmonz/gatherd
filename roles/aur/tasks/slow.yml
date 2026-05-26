@@ -11,8 +11,6 @@
     - name: Install slow AUR packages
       kewlfft.aur.aur:
         name:
-          # web browsers
-          - ungoogled-chromium-bin
           # file transfer
           - localsend-bin
           # communication

@@ -1,11 +1,11 @@
 # TODO
 
-- Watch me create a Web App, then have Ansible (re)create it
+- Is fwupdmgr actually doing any fetching via Ansible? When I invoke get-updates directly it says it hasn't fetched in over 30 days
 - Have we actually solved the NFS-autofs-Tailscale shutdown ordering problem?
 - **PIA credentials from 1Password**: move `piactl login` out of `slow.yml` and into a `gatherd-prompt-pia` script (Sway autostart, same pattern as `gatherd-prompt-tailscale`) that fetches username/password from `op`. Removes `vault_pia_username` and `vault_pia_password` from `vault.yml`.
 - Set up SSH authorized key from public URL
 - Which Web Apps do I want?
-    - LLMs: ChatGPT, Lumo, Grok, ...)
+    - LLMs: Lumo, Grok, ...)
     - iCloud: Drive, Notes, Reminders
 - Set up VNC
 - JetBrains IDE settings, starting with font size
@@ -100,7 +100,3 @@ Ansible hook: write `~/.config/electron-flags.conf` (covers Slack + Teams) and
 
 - **arch-update timer**: currently a systemd user timer; will need a different
   mechanism on Artix/s6.
-- **webapp-manager** generates non-spec-compliant `Exec` lines (`--app="url"`
-  instead of `--app=url`), causing fuzzel to refuse to launch them.
-  `gatherd-fix-webapps` auto-fixes new entries via inotifywait. Consider filing
-  an upstream bug.

@@ -89,7 +89,6 @@
           - 1password
           # web browsers
           - helium-browser-bin
-          - webapp-manager
           - captive-browser
           # snapshots
           - timeshift-autosnap

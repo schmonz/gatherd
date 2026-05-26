@@ -200,7 +200,7 @@
     state: directory
     mode: '0755'
 
-- name: Auto-launch external apps from trusted origins (Helium and ungoogled-chromium)
+- name: Auto-launch external apps from trusted origins (Helium)
   ansible.builtin.copy:
     dest: /etc/chromium/policies/managed/gatherd-auto-launch-protocols.json
     content: |

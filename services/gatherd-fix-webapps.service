@@ -1,0 +1,12 @@
+[Unit]
+Description=Fix webapp-manager desktop entries
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gatherd-fix-webapps
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

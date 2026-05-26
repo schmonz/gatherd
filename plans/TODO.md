@@ -1,5 +1,6 @@
 # TODO
 
+- webapp fixer isn't fixing
 - Which Web Apps do I want?
     - LLMs: ChatGPT, Lumo, Grok, ...)
     - iCloud: Drive, Notes, Reminders

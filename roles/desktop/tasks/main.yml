@@ -8,6 +8,7 @@
     - .local/bin
     - .config/arch-update
     - .config/systemd/user/timers.target.wants
+    - .config/systemd/user/graphical-session.target.wants
     - .config/gtklock
     - .config/environment.d
     - .config/sway/config.d
@@ -365,6 +366,21 @@
     src: /usr/lib/systemd/user/arch-update.timer
     state: link
 
+- name: Install gatherd-fix-webapps user service unit
+  # systemd-specific; will need a different mechanism on Artix/s6
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/services/gatherd-fix-webapps.service"
+    dest: "{{ target_home }}/.config/systemd/user/gatherd-fix-webapps.service"
+    mode: '0644'
+    remote_src: true
+
+- name: Enable gatherd-fix-webapps user service
+  # systemd-specific; will need a different mechanism on Artix/s6
+  ansible.builtin.file:
+    path: "{{ target_home }}/.config/systemd/user/graphical-session.target.wants/gatherd-fix-webapps.service"
+    src: "{{ target_home }}/.config/systemd/user/gatherd-fix-webapps.service"
+    state: link
+
 - name: Configure captive-browser to use Ungoogled Chromium
   ansible.builtin.copy:
     dest: "{{ target_home }}/.config/captive-browser.toml"
@@ -598,13 +614,20 @@
     regexp: "^exec .*gatherd-show-slow-progress"
     line: "exec sh -c '[ -f /etc/gatherd/user-async-complete ] && exit 0; exec foot -e {{ target_home }}/.local/bin/gatherd-show-slow-progress'"
 
+- name: Remove autostart entries now managed as systemd user services
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
+    regexp: "^exec (?:.*/)?{{ item }}$"
+    state: absent
+  loop:
+    - gatherd-fix-webapps
+
 - name: Add gatherd script autostart entries
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
     regexp: "^exec (?:.*/)?{{ item }}$"
     line: "exec {{ target_home }}/.local/bin/{{ item }}"
   loop:
-    - gatherd-fix-webapps
     - gatherd-prompt-captiveportal
     - gatherd-prompt-1password
     - gatherd-prompt-tailscale

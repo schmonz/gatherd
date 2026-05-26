@@ -226,6 +226,7 @@ section_verify() {
     li 'iCloud: run `rclone lsd icloud:` — should list top-level folders without error'
     li 'iCloud re-auth: log out of icloud.com in Helium, log back in — `rclone lsd icloud:` should work again without manual steps'
     li 'Captive portal: join a portal network, confirm Helium opens automatically and portal login works'
+    li 'Firmware updates: run `fwupdmgr get-updates` — should not warn that metadata is older than 30 days'
     li 'Power management: run `tlp-stat | head -30` — confirm "Status: enabled" and correct power source'
     li 'Power management: run `sudo powertop --time=5` — Tunables tab should be mostly "Good"'
     li 'Power management: on battery, run `upower -i $(upower -e | grep BAT)` — check energy-rate in watts'

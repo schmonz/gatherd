@@ -59,6 +59,8 @@
       become_user: root
 
     - name: Log in to PIA
+      # piactl login produces no parseable output; `when:` already ensures this
+      # only runs when the daemon is not logged in, so if it runs, it changed.
       ansible.builtin.shell: |
         tmpfile=$(mktemp)
         chmod 600 "$tmpfile"
@@ -66,7 +68,42 @@
         /opt/piavpn/bin/piactl login "$tmpfile"
         rm -f "$tmpfile"
       when: _pia_logged_in.rc != 0
+      changed_when: true
       no_log: true
+
+    - name: Suppress PIA Quick Tour by pre-seeding session count
+      # PIA shows the Quick Tour when sessionCount == 0. Setting it to 1
+      # makes firstRunFlag false without ever connecting to a VPN server.
+      ansible.builtin.shell: |
+        python3 - <<'PYEOF'
+        import json
+        path = '/opt/piavpn/etc/settings.json'
+        d = json.load(open(path))
+        if d.get('sessionCount', 0) == 0:
+            d['sessionCount'] = 1
+            d['successfulSessionCount'] = 1
+            with open(path, 'w') as f:
+                json.dump(d, f)
+            print('changed')
+        else:
+            print('ok')
+        PYEOF
+      args:
+        executable: /bin/bash
+      register: _pia_session
+      changed_when: _pia_session.stdout == 'changed'
+      become: true
+      become_user: root
+
+    - name: Restart piavpn to load updated session count into memory
+      # Must run inline (not as a handler) so the daemon is ready before
+      # the always block launches pia-client via swaymsg.
+      ansible.builtin.systemd: # noqa: no-handler
+        name: piavpn
+        state: restarted
+      become: true
+      become_user: root
+      when: _pia_session.changed
 
   always:
     - name: Launch slow-installed systray apps  # noqa: risky-shell-pipe

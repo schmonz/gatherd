@@ -1,5 +1,6 @@
 # TODO
 
+- is `~/.local/bin` supposed to be on my PATH? seems not to be
 - Shutdown is blocked for over two minutes by a Tailscale stop job (or similar wording)
 - PIA first-run still shows Quick Tour / Log In (and when I click Log In, it doesn't have my username and password)
 - **T470 machine description string**: tweak `gatherd-describe-machine` output for T470 — current string isn't quite the human-readable form we want.

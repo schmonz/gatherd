@@ -396,6 +396,23 @@
     - cronie
     - tlp
 
+- name: Create tailscaled drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/tailscaled.service.d
+    state: directory
+    mode: '0755'
+
+- name: Reduce tailscaled stop timeout to prevent multi-minute shutdown delay
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/tailscaled.service.d/gatherd-stop-timeout.conf
+    content: |
+      [Service]
+      TimeoutStopSec=10
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Etckeeper commit
+
 - name: Start tailscaled
   ansible.builtin.systemd:
     name: tailscaled
@@ -429,11 +446,13 @@
   notify: Etckeeper commit
 
 - name: Configure greetd Sway autologin
+  # bash --login sources /etc/profile.d/* before exec'ing sway, so environment
+  # set there (PATH, GOBIN, etc.) is available to sway and all child processes.
   ansible.builtin.blockinfile:
     path: /etc/greetd/greetd.conf
     block: |
       [initial_session]
-      command = "sway"
+      command = "bash --login -c 'exec sway'"
       user = "{{ target_user }}"
     marker: "# {mark} ANSIBLE MANAGED BLOCK"
   notify: Etckeeper commit

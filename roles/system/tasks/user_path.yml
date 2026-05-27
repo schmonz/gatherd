@@ -1,22 +1,31 @@
 ---
-- name: Ensure /etc/environment.d exists
-  ansible.builtin.file:
-    path: /etc/environment.d
-    state: directory
-    mode: '0755'
-
 - name: Add ~/.local/bin to user-session PATH
+  # profile.d is sourced by the login shell that greetd starts before exec'ing
+  # sway, so this reaches foot and any process launched from the desktop.
+  # environment.d would only reach systemd user services, not sway itself.
   ansible.builtin.copy:
-    dest: /etc/environment.d/10-gatherd-local-bin.conf
-    content: "PATH=${HOME}/.local/bin:${PATH}\n"
+    dest: /etc/profile.d/gatherd-local-bin.sh
+    content: "export PATH=\"${HOME}/.local/bin:${PATH}\"\n"
     mode: '0644'
   notify: Etckeeper commit
 
 - name: Keep Go workspace out of home directory
   ansible.builtin.copy:
-    dest: /etc/environment.d/10-gatherd-go.conf
+    dest: /etc/profile.d/gatherd-go.sh
     content: |
-      GOPATH=${HOME}/.local/share/go
-      GOBIN=${HOME}/.local/bin
+      export GOPATH="${HOME}/.local/share/go"
+      export GOBIN="${HOME}/.local/bin"
     mode: '0644'
+  notify: Etckeeper commit
+
+- name: Remove obsolete environment.d PATH file
+  ansible.builtin.file:
+    path: /etc/environment.d/10-gatherd-local-bin.conf
+    state: absent
+  notify: Etckeeper commit
+
+- name: Remove obsolete environment.d Go file
+  ansible.builtin.file:
+    path: /etc/environment.d/10-gatherd-go.conf
+    state: absent
   notify: Etckeeper commit

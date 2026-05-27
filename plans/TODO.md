@@ -31,7 +31,10 @@
   `python-validity` for Validity 0097-family).
 
 - **ThinkPad smart card reader**: investigate `pcscd` + `opensc`. T60 has a
-  built-in reader; verify other models.
+  built-in reader; X270 (20HMS6VR00) has Alcor Micro AU9540 (058f:9540), a
+  USB CCID-class device — use this to develop the probe and install steps.
+  T470 (20JM000BUS) does NOT have one — no USB CCID interface, no PCI smart
+  card device.
 
 - **ThinkPad docking**: investigate `dockd` or udev rules for dock/undock events
   (display reconfiguration, power profile switch).

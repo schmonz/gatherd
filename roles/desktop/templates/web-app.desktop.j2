@@ -6,7 +6,7 @@ Exec=helium-browser --app={{ item.url }} --class=WebApp-{{ item.codename }} --na
 Terminal=false
 X-MultipleArgs=false
 Type=Application
-Icon={{ (target_home + '/.local/share/ice/icons/' + item.codename + '.png') if item.icon_url is defined else 'applications-internet' }}
+Icon={{ target_home }}/.local/share/ice/icons/{{ item.codename }}.png
 Categories=GTK;
 MimeType=text/html;text/xml;application/xhtml_xml;
 StartupWMClass=WebApp-{{ item.codename }}

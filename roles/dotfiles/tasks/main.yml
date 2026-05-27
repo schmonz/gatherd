@@ -12,7 +12,7 @@
     user: "{{ target_user }}"
     key: "{{ lookup('file', target_home + '/.dotfiles/' + ssh_authorized_keys_dotfile) }}"
     state: present
-  when: ssh_authorized_keys_dotfile is defined and ssh_authorized_keys_dotfile
+  when: ssh_authorized_keys_dotfile is defined and ssh_authorized_keys_dotfile | length > 0
 
 - name: Symlink dotfiles
   ansible.builtin.file:

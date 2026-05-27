@@ -75,12 +75,14 @@ for attempt in 1 2 3 4 5; do
     fi
 done
 
+"${SSH[@]}" 'sed -i "s/-fLC - --retry/-fLC - --max-time 120 --retry/g" /etc/makepkg.conf'
+
 "${SSH[@]}" mkdir -p /usr/local/lib/gatherd
 tar -C "$REPO" --exclude='.git' --exclude='tests' -c . \
     | "${SSH[@]}" tar -xC /usr/local/lib/gatherd
 
 "${SSH[@]}" "printf 'changeme\n' > /usr/local/lib/gatherd/.vault_pass"
-"${SSH[@]}" ansible-galaxy collection install \
+"${SSH[@]}" ansible-galaxy collection install --no-cache \
     -r /usr/local/lib/gatherd/requirements.yml
 
 # ── Run 1 ─────────────────────────────────────────────────────────────────────

@@ -67,10 +67,6 @@ jetbrains_authed() {
         -name '*.json' 2>/dev/null | grep -q .
 }
 
-timeshift_configured() {
-    grep -q '"backup_type"' /etc/timeshift/timeshift.json 2>/dev/null
-}
-
 # ---------------------------------------------------------------------------
 # Section handlers
 # Pattern: if done → prune; else if absent → add; else → leave alone
@@ -183,16 +179,6 @@ section_vault() {
     fi
 }
 
-section_timeshift() {
-    if timeshift_configured; then
-        section_present 'Timeshift' && section_remove 'Timeshift'
-    else
-        section_present 'Timeshift' && return
-        h 'Timeshift'
-        li 'Open Timeshift, confirm BTRFS is selected, click Finish'
-    fi
-}
-
 section_verify() {
     # Never auto-done: user manages this section manually
     section_present 'Verify' && return
@@ -214,6 +200,7 @@ section_verify() {
     li 'WiFi + captive portal: join LaPromNyack from the network menu — should connect without entering a password, specialized Helium auto-navigates to portal'
     li 'WiFi unmanaged-network nudge: hand-join any new network, log out and back in — an "Unmanaged WiFi" section listing it should appear in this file'
     li 'iCloud: run `rclone lsd icloud:` — should list top-level folders without error'
+    li 'Timeshift: run `grep backup_device_uuid /etc/timeshift/timeshift.json` — should show a non-empty UUID (open the GUI and click Finish if not)'
 }
 
 # ---------------------------------------------------------------------------
@@ -232,6 +219,5 @@ section_icloud
 section_claude
 section_zoom
 section_jetbrains
-section_timeshift
 
 collapse_blanks

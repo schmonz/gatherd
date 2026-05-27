@@ -260,6 +260,44 @@
     has_embedded_numpad: true
   when: _embedded_numpad.stdout == 'true'
 
+# Timeshift in BTRFS mode needs the root BTRFS filesystem UUID and (when the
+# filesystem sits on a LUKS container) the UUID of the underlying partition.
+# Detect both so the system role can write /etc/timeshift/timeshift.json
+# without the GUI's "click Finish" step.
+- name: Read root mount source, fstype, and UUID
+  ansible.builtin.command: findmnt / -no SOURCE,FSTYPE,UUID
+  register: _root_mount
+  changed_when: false
+
+- name: Parse root mount fields
+  ansible.builtin.set_fact:
+    # findmnt prints the source as "/dev/mapper/luks-XXX[/@subvol]" for a BTRFS
+    # subvolume mount; strip the bracketed subvolume to get the device path.
+    _root_source: "{{ _root_mount.stdout.split()[0] | regex_replace('\\[.*\\]$', '') }}"
+    _root_fstype: "{{ _root_mount.stdout.split()[1] }}"
+    _root_uuid: "{{ _root_mount.stdout.split()[2] }}"
+
+- name: Find UUID of LUKS container under root  # noqa: risky-shell-pipe
+  # lsblk -s walks the device tree toward parents; for the BTRFS root mapper,
+  # the crypto_LUKS line is the partition we want. PKNAME returns empty for
+  # mapper devices so use -s + fstype filter instead.
+  ansible.builtin.shell: >
+    lsblk -snlo NAME,UUID,FSTYPE {{ _root_source }} | awk '$3=="crypto_LUKS"{print $2; exit}'
+  register: _root_parent_uuid
+  changed_when: false
+  when:
+    - _root_source is match('^/dev/mapper/luks-')
+    - _root_fstype == 'btrfs'
+
+- name: Detect has_luks_btrfs_root
+  ansible.builtin.set_fact:
+    has_luks_btrfs_root: true
+    timeshift_backup_device_uuid: "{{ _root_uuid }}"
+    timeshift_parent_device_uuid: "{{ _root_parent_uuid.stdout | trim }}"
+  when:
+    - _root_parent_uuid is not skipped
+    - (_root_parent_uuid.stdout | default('')) | trim | length > 0
+
 - name: Read primary screen width from DRM  # noqa: risky-shell-pipe
   ansible.builtin.shell: |
     for f in /sys/class/drm/card*/card*-*/modes; do
@@ -300,6 +338,7 @@
     has_grub: "{{ has_grub }}"
     has_ir_receiver: "{{ has_ir_receiver }}"
     has_kbd_backlight: "{{ has_kbd_backlight }}"
+    has_luks_btrfs_root: "{{ has_luks_btrfs_root }}"
     has_phantom_second_display: "{{ has_phantom_second_display }}"
     has_plenty_of_ram: "{{ has_plenty_of_ram }}"
     has_screen_backlight: "{{ has_screen_backlight }}"
@@ -309,3 +348,5 @@
     is_aarch64: "{{ is_aarch64 }}"
     screen_width_px: "{{ screen_width_px }}"
     foot_font_size: "{{ foot_font_size }}"
+    timeshift_backup_device_uuid: "{{ timeshift_backup_device_uuid }}"
+    timeshift_parent_device_uuid: "{{ timeshift_parent_device_uuid }}"

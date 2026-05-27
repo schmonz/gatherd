@@ -476,6 +476,10 @@
 - name: Configure NFS client automount
   ansible.builtin.include_tasks: nfs_client.yml
 
+- name: Configure Timeshift snapshots
+  ansible.builtin.include_tasks: timeshift.yml
+  when: has_luks_btrfs_root
+
 - name: Run firmware updates
   ansible.builtin.shell: |
     fwupdmgr refresh || true

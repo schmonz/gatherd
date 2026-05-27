@@ -15,6 +15,7 @@ has_facetimehd: false
 has_grub: false
 has_ir_receiver: false
 has_kbd_backlight: false
+has_luks_btrfs_root: false
 has_phantom_second_display: false
 has_plenty_of_ram: false
 has_screen_backlight: false
@@ -24,3 +25,5 @@ has_thinkpad_vantage_button: false
 is_aarch64: "{{ ansible_facts['architecture'] == 'aarch64' }}"
 screen_width_px: 1920
 foot_font_size: 14
+timeshift_backup_device_uuid: ""
+timeshift_parent_device_uuid: ""

@@ -1,5 +1,6 @@
 # TODO
 
+- **T470 machine description string**: tweak `gatherd-describe-machine` output for T470 — current string isn't quite the human-readable form we want.
 - **PIA credentials from 1Password**: move `piactl login` out of `slow.yml` and into a `gatherd-prompt-pia` script (Sway autostart, same pattern as `gatherd-prompt-tailscale`) that fetches username/password from `op`. Removes `vault_pia_username` and `vault_pia_password` from `vault.yml`.
 - Which Web Apps do I want?
     - iCloud: Drive, Notes, Reminders
@@ -97,3 +98,15 @@ Ansible hook: write `~/.config/electron-flags.conf` (covers Slack + Teams) and
 
 - **arch-update timer**: currently a systemd user timer; will need a different
   mechanism on Artix/s6.
+
+## Configurability
+
+- **Personal / per-machine config**: replace the `hardcoded_*` placeholders in
+  `group_vars/all/main.yml` (currently `hardcoded_dotfiles_repo`,
+  `hardcoded_ssh_authorized_keys_dotfile`) with a real delivery mechanism so
+  the repo carries no me-specific defaults. Candidates: `ansible-playbook -e
+  @/etc/gatherd/personal.yml` with the file staged by Calamares (or USB at
+  install); inventory + `host_vars/` pointing at an out-of-repo path;
+  network-fetched config in `postinstall`. Add an early `assert` listing every
+  required key so missing config fails fast instead of silently skipping
+  tasks.

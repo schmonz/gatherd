@@ -8,57 +8,46 @@ web_apps:
     url: https://chatgpt.com
     comment: LLM
     codename: ChatGPT
-    icon_url: https://chatgpt.com/favicon.ico
   - name: Lumo
     url: https://lumo.proton.me
     comment: LLM
     codename: Lumo
-    icon_url: https://lumo.proton.me/assets/favicon.ico
   - name: Grok
     url: https://grok.com
     comment: LLM
     codename: Grok
-    icon_url: https://grok.com/images/favicon.ico
   - name: Perplexity
     url: https://www.perplexity.ai
     comment: LLM
     codename: Perplexity
-    icon_url: https://www.perplexity.ai/favicon.ico
   - name: Gemini
     url: https://gemini.google.com
     comment: LLM
     codename: Gemini
-    icon_url: https://www.gstatic.com/lamda/images/gemini_sparkle_4g_512_lt_f94943af3be039176192d.png
   - name: DeepSeek
     url: https://chat.deepseek.com
     comment: LLM
     codename: DeepSeek
-    icon_url: https://deepseek.com/favicon.ico
   - name: Copilot
     url: https://copilot.microsoft.com
     comment: LLM
     codename: Copilot
-    icon_url: https://copilot.microsoft.com/favicon.ico
   - name: Le Chat
     url: https://chat.mistral.ai
     comment: LLM
     codename: LeChat
-    icon_url: https://mistral.ai/favicon.ico
   - name: Meta AI
     url: https://meta.ai
     comment: LLM
     codename: MetaAI
-    icon_url: https://meta.ai/favicon.ico
   - name: HuggingChat
     url: https://huggingface.co/chat
     comment: LLM
     codename: HuggingChat
-    icon_url: https://huggingface.co/favicon.ico
   - name: Poe
     url: https://poe.com
     comment: LLM
     codename: Poe
-    icon_url: https://poe.com/favicon.ico
 
 wifi_networks:
   - ssid: LaPromNyack

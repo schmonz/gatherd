@@ -561,17 +561,17 @@
     - profiles
 
 - name: Download and convert web app favicon to PNG
-  # Converts any favicon format (ICO, PNG, etc.) to a single PNG via Pillow.
-  # PNG is required for fuzzel, which does not support ICO. A single bad URL
-  # (404, redirect to HTML, unreadable format) must not abort site.yml — that
-  # would skip the gatherd-prompt-* installs and autostart entries that come
-  # later in this role. Missing icons surface as a generic fallback in fuzzel;
-  # the verify step catches stragglers.
+  # Fetched via DuckDuckGo's icon service to dodge per-site bot blocking
+  # (Cloudflare on chatgpt.com etc.) and keep one URL pattern. Pillow stays
+  # in the pipeline because the service occasionally returns ICO. A single
+  # failure must not abort site.yml — that would skip the gatherd-prompt-*
+  # installs and autostart entries later in this role. Missing icons fall
+  # back to fuzzel's generic glyph; the verify step catches stragglers.
   ansible.builtin.shell: |
     set -eu
     tmp=$(mktemp)
     trap 'rm -f "$tmp"' EXIT
-    curl -fsSL --max-time 10 -A 'Mozilla/5.0' -o "$tmp" '{{ item.icon_url }}'
+    curl -fsSL --max-time 10 -o "$tmp" 'https://icons.duckduckgo.com/ip3/{{ item.url | urlsplit("hostname") }}.ico'
     python3 -c '
     from PIL import Image
     import sys
@@ -579,7 +579,7 @@
     ' "$tmp" '{{ target_home }}/.local/share/ice/icons/{{ item.codename }}.png'
   args:
     creates: "{{ target_home }}/.local/share/ice/icons/{{ item.codename }}.png"
-  loop: "{{ web_apps | selectattr('icon_url', 'defined') | list }}"
+  loop: "{{ web_apps }}"
   register: _favicon_dl
   changed_when: _favicon_dl.rc == 0
   failed_when: false

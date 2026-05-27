@@ -22,6 +22,7 @@ model=$(fastfetch --structure Host --logo none --key-width 0 2>/dev/null \
       } else {
         sub(/ \([0-9][0-9.]*\)[[:space:]]*$/, "")
       }
+      sub(/ W[0-9][A-Z0-9]*$/, "")
       print
     }')
 

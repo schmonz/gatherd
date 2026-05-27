@@ -197,6 +197,9 @@ section_verify() {
     # Never auto-done: user manages this section manually
     section_present 'Verify' && return
     h 'Verify'
+    li 'PIA: on sway login, only the tray icon appears — no Quick Tour screen pops up'
+    li 'JetBrains Toolbox: click the tray icon — main app list shows directly, no user agreement dialog'
+    li 'Tailscale shutdown: shut down — should complete in under 30 seconds with no "A stop job is running for Tailscale" delay'
     if not has_plenty_of_ram; then
         li 'On low-RAM machines: Helium → Settings → Performance — Memory Saver should be Maximum'
     fi
@@ -208,14 +211,9 @@ section_verify() {
         li 'IR receiver: run `ir-keytable` — confirm device listed with a keymap loaded'
         li 'IR receiver: run `ir-keytable -t -s rc0` and press remote buttons — should show scancode + keycode per press'
     fi
-    li 'PATH: open a foot terminal — run `which gatherd-post-setup-notes` — should resolve to ~/.local/bin/gatherd-post-setup-notes'
     li 'WiFi + captive portal: join LaPromNyack from the network menu — should connect without entering a password, specialized Helium auto-navigates to portal'
     li 'WiFi unmanaged-network nudge: hand-join any new network, log out and back in — an "Unmanaged WiFi" section listing it should appear in this file'
-    li 'Tailscale shutdown: shut down — should complete in under 30 seconds with no "A stop job is running for Tailscale" delay'
-    li 'PIA: on sway login, only the tray icon appears — no Quick Tour screen pops up'
-    li 'JetBrains Toolbox: click the tray icon — main app list shows directly, no user agreement dialog'
     li 'iCloud: run `rclone lsd icloud:` — should list top-level folders without error'
-    li 'Firmware updates: run `fwupdmgr get-updates` — should not warn that metadata is older than 30 days'
 }
 
 # ---------------------------------------------------------------------------

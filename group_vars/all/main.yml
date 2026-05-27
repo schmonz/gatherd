@@ -4,11 +4,12 @@ pia_password: "{{ vault_pia_password }}"
 setup_dir: "/usr/local/lib/gatherd"
 nfs_server: ap-juicer.taile54b91.ts.net
 
-# Hardcoded placeholders for per-user/per-machine config. Replace with a real
-# delivery mechanism (extra-vars file, host_vars, Calamares-staged file, etc.)
-# when this repo grows configurability; the consumers reference these by name.
+# Hardcoded per-user/per-machine config. Replace with a real delivery mechanism
+# (extra-vars file, host_vars, Calamares-staged file, etc.) when this repo grows
+# configurability; consumers reference these by name.
 hardcoded_dotfiles_repo: "https://github.com/schmonz/dotfiles.git"
 hardcoded_ssh_authorized_keys_dotfile: ssh-authorized-keys
+# wifi_networks is defined entirely in vault — SSIDs are personal data, not just PSKs.
 
 web_apps:
   - name: ChatGPT
@@ -58,11 +59,3 @@ web_apps:
     url: https://poe.com
     comment: LLM
     codename: Poe
-
-wifi_networks:
-  - ssid: LaPromNyack
-    psk: "{{ vault_wifi_psk_lapromnyack }}"
-  - ssid: PeasPlaycare
-    psk: "{{ vault_wifi_psk_peasplaycare }}"
-  - ssid: SchmiPhone
-    psk: "{{ vault_wifi_psk_schmiphone }}"

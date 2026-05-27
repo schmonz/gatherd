@@ -105,11 +105,11 @@ Ansible hook: write `~/.config/electron-flags.conf` (covers Slack + Teams) and
 ## Configurability
 
 - **Personal / per-machine config**: replace the `hardcoded_*` placeholders in
-  `group_vars/all/main.yml` (currently `hardcoded_dotfiles_repo`,
-  `hardcoded_ssh_authorized_keys_dotfile`) with a real delivery mechanism so
-  the repo carries no me-specific defaults. Candidates: `ansible-playbook -e
-  @/etc/gatherd/personal.yml` with the file staged by Calamares (or USB at
-  install); inventory + `host_vars/` pointing at an out-of-repo path;
-  network-fetched config in `postinstall`. Add an early `assert` listing every
-  required key so missing config fails fast instead of silently skipping
-  tasks.
+  `group_vars/all/main.yml` (`hardcoded_dotfiles_repo`,
+  `hardcoded_ssh_authorized_keys_dotfile`) and `wifi_networks` in the vault
+  with a real delivery mechanism so the repo carries no me-specific defaults.
+  Candidates: `ansible-playbook -e @/etc/gatherd/personal.yml` with the file
+  staged by Calamares (or USB at install); inventory + `host_vars/` pointing
+  at an out-of-repo path; network-fetched config in `postinstall`. Add an
+  early `assert` listing every required key so missing config fails fast
+  instead of silently skipping tasks.

@@ -116,9 +116,7 @@ section_icloud() {
     else
         section_present 'iCloud' && return
         h 'iCloud'
-        li 'Run `rclone config` and follow prompts to add a remote named `icloud`'
-        li 'When tokens expire (monthly), log into icloud.com when prompted — gatherd-prompt-icloud extracts cookies and updates rclone automatically'
-        li '[Details](https://forum.rclone.org/t/icloud-connect-not-working-http-error-400/52019/44)'
+        li 'Run `rclone config` and follow prompts to add a remote named `icloud`; complete 2FA when prompted'
     fi
 }
 
@@ -217,7 +215,6 @@ section_verify() {
     li 'PIA: on sway login, only the tray icon appears — no Quick Tour screen pops up'
     li 'JetBrains Toolbox: click the tray icon — main app list shows directly, no user agreement dialog'
     li 'iCloud: run `rclone lsd icloud:` — should list top-level folders without error'
-    li 'iCloud re-auth: log out of icloud.com in Helium, log back in — `rclone lsd icloud:` should work again without manual steps'
     li 'Firmware updates: run `fwupdmgr get-updates` — should not warn that metadata is older than 30 days'
 }
 

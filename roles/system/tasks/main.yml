@@ -60,6 +60,8 @@
       - fwupd
       # text editor
       - xed
+      # favicon conversion for web-app desktop entries (ICO→PNG for fuzzel)
+      - python-pillow
       # printing
       - cups
       - cups-browsed

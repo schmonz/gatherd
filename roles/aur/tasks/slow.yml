@@ -112,6 +112,19 @@
       become_user: root
       when: _pia_session.changed
 
+    - name: Wait for piavpn IPC to be ready  # noqa: no-handler
+      # systemctl restart returns when the unit is active, but the daemon's
+      # IPC may not yet be serving the new sessionCount. If pia-client launches
+      # in that window it reads firstRunFlag as the default (true) and shows
+      # the Quick Tour. Poll piactl until it gets a real response.
+      ansible.builtin.command: /opt/piavpn/bin/piactl get connectionstate
+      register: _pia_ready
+      retries: 30
+      delay: 1
+      until: _pia_ready.rc == 0
+      changed_when: false
+      when: _pia_session.changed
+
   always:
     - name: Launch slow-installed systray apps  # noqa: risky-shell-pipe
       # swaymsg exec runs inside the live Sway session; SWAYSOCK must be set explicitly

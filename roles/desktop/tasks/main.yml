@@ -561,17 +561,19 @@
     - profiles
 
 - name: Download and convert web app favicon to PNG
-  # Fetched via DuckDuckGo's icon service to dodge per-site bot blocking
-  # (Cloudflare on chatgpt.com etc.) and keep one URL pattern. Pillow stays
-  # in the pipeline because the service occasionally returns ICO. A single
-  # failure must not abort site.yml — that would skip the gatherd-prompt-*
-  # installs and autostart entries later in this role. Missing icons fall
-  # back to fuzzel's generic glyph; the verify step catches stragglers.
+  # Default source is DuckDuckGo's icon service: one URL pattern, sidesteps
+  # per-site bot blocking (Cloudflare on chatgpt.com etc.). Per-entry icon_url
+  # overrides when DDG returns the wrong icon (e.g. Gemini's generic Google
+  # favicon vs the sparkle). Pillow stays in the pipeline because either source
+  # can return ICO. A single failure must not abort site.yml — that would skip
+  # the gatherd-prompt-* installs and autostart entries later in this role.
+  # Missing icons fall back to fuzzel's generic glyph; the verify step catches
+  # stragglers.
   ansible.builtin.shell: |
     set -eu
     tmp=$(mktemp)
     trap 'rm -f "$tmp"' EXIT
-    curl -fsSL --max-time 10 -o "$tmp" 'https://icons.duckduckgo.com/ip3/{{ item.url | urlsplit("hostname") }}.ico'
+    curl -fsSL --max-time 10 -o "$tmp" '{{ item.icon_url | default("https://icons.duckduckgo.com/ip3/" + (item.url | urlsplit("hostname")) + ".ico") }}'
     python3 -c '
     from PIL import Image
     import sys

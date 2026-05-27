@@ -3,6 +3,13 @@ pia_username: "{{ vault_pia_username }}"
 pia_password: "{{ vault_pia_password }}"
 setup_dir: "/usr/local/lib/gatherd"
 nfs_server: ap-juicer.taile54b91.ts.net
+
+# Hardcoded placeholders for per-user/per-machine config. Replace with a real
+# delivery mechanism (extra-vars file, host_vars, Calamares-staged file, etc.)
+# when this repo grows configurability; the consumers reference these by name.
+hardcoded_dotfiles_repo: "https://github.com/schmonz/dotfiles.git"
+hardcoded_ssh_authorized_keys_dotfile: ssh-authorized-keys
+
 web_apps:
   - name: ChatGPT
     url: https://chatgpt.com
@@ -24,6 +31,9 @@ web_apps:
     url: https://gemini.google.com
     comment: LLM
     codename: Gemini
+    # DDG returns Google's generic favicon for gemini.google.com; pin the
+    # sparkle from gstatic instead.
+    icon_url: https://www.gstatic.com/lamda/images/gemini_sparkle_4g_512_lt_f94943af3be039176192d.png
   - name: DeepSeek
     url: https://chat.deepseek.com
     comment: LLM

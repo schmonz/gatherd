@@ -1,4 +1,3 @@
 .ansible/
 ._*
 .vault_pass
-group_vars/all/personal.yml

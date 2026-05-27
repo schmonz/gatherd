@@ -19,9 +19,16 @@
 
 - **iSight camera**: detect and install `isight-firmware` (AUR).
 
-- **ThinkPad fingerprint reader**: investigate `fprintd` + PAM integration.
-  Needs per-model enrollment testing (T60 optical sensor vs. newer swipe/touch
-  sensors).
+- **Expand fingerprint PAM beyond sudo**: currently `pam_fprintd.so` is only
+  wired into `/etc/pam.d/sudo`. Once we trust it, also add to `system-auth`
+  (covers greetd login, gtklock lock screen, polkit). Verify on a TTY before
+  rolling out, since a broken system-auth edit can lock you out of GUI logins.
+
+- **Generalize fingerprint reader support**: the probe in `machine_facts`
+  currently matches only Validity 138a:0097 (driven by `python-validity`).
+  When we hit a different reader, extend the USB ID case statement and branch
+  the install task (stock `fprintd` for libfprint-supported sensors,
+  `python-validity` for Validity 0097-family).
 
 - **ThinkPad smart card reader**: investigate `pcscd` + `opensc`. T60 has a
   built-in reader; verify other models.

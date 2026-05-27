@@ -99,6 +99,17 @@
         state: present
         extra_args: "--mflags --skippgpcheck"
 
+    - name: Install AUR fingerprint reader driver
+      # python-validity drives the Validity 138a:0097 sensor and brings in
+      # open-fprintd and fprintd-clients-git (which together provide the
+      # standard fprintd D-Bus interface plus pam_fprintd.so).
+      kewlfft.aur.aur:
+        name:
+          - python-validity
+        use: yay
+        state: present
+      when: has_fingerprint_reader
+
   always:
     - name: Revoke NOPASSWD pacman
       ansible.builtin.lineinfile:

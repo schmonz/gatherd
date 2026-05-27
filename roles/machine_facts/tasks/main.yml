@@ -187,6 +187,27 @@
     has_ir_receiver: true
   when: _ir_receiver.stdout == 'true'
 
+# Only known-supported fingerprint readers count. Today that's Validity 138a:0097
+# (driven by python-validity); add USB IDs here as we encounter more.
+- name: Check USB devices for a supported fingerprint reader
+  ansible.builtin.shell: |
+    for dev in /sys/bus/usb/devices/*; do
+      [ -e "$dev/idVendor" ] || continue
+      v=$(cat "$dev/idVendor")
+      p=$(cat "$dev/idProduct")
+      case "$v:$p" in
+        138a:0097) echo true; exit 0 ;;
+      esac
+    done
+    echo false
+  register: _fingerprint_reader
+  changed_when: false
+
+- name: Detect has_fingerprint_reader
+  ansible.builtin.set_fact:
+    has_fingerprint_reader: true
+  when: _fingerprint_reader.stdout == 'true'
+
 # Lenovo ThinkPad SMBIOS — TrackPoint buttons, smart card, ThinkVantage button,
 # fingerprint reader are ThinkPad-specific.
 - name: Detect has_thinkpad_hardware
@@ -335,6 +356,7 @@
     has_embedded_numpad: "{{ has_embedded_numpad }}"
     has_extlinux: "{{ has_extlinux }}"
     has_facetimehd: "{{ has_facetimehd }}"
+    has_fingerprint_reader: "{{ has_fingerprint_reader }}"
     has_grub: "{{ has_grub }}"
     has_ir_receiver: "{{ has_ir_receiver }}"
     has_kbd_backlight: "{{ has_kbd_backlight }}"

@@ -480,6 +480,10 @@
   ansible.builtin.include_tasks: timeshift.yml
   when: has_luks_btrfs_root
 
+- name: Configure fingerprint reader PAM
+  ansible.builtin.include_tasks: fingerprint.yml
+  when: has_fingerprint_reader
+
 - name: Run firmware updates
   ansible.builtin.shell: |
     fwupdmgr refresh || true

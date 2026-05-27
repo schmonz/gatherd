@@ -526,42 +526,28 @@
     mode: '0600'
     force: false
 
-- name: Pre-seed JetBrains Toolbox app state to skip user agreement dialog
-  # Toolbox replaces .appState.json on every startup, so force: true is safe (gatherd
-  # runs once). force: true also wins over a backup copy stuck at /endUserAgreement.
-  # state.json pre-seeding (below) is also required: without it Toolbox ignores this
-  # file on first run and forces /endUserAgreement regardless.
-  ansible.builtin.copy:
-    dest: "{{ target_home }}/.local/share/JetBrains/Toolbox/.appState.json"
-    content: |
-      {
-          "navigationStacks": {
-              "Widget": [
-                  {
-                      "url": "/main",
-                      "title": {
-                          "type": "KeepAsIs",
-                          "string": ""
-                      }
-                  }
-              ]
-          },
-          "windows": {}
-      }
-    mode: '0600'
-    force: true
+- name: Create JetBrains Java preferences directory for EUA acceptance
+  # Toolbox records EUA acceptance in Java Preferences, not in .storage.json
+  # (acceptedLicenseAgreementHashes stays empty even after accepting). The
+  # node name is Toolbox-internal and gets encoded by java.util.prefs via
+  # Base64.byteArrayToAltBase64 — deterministic for a given Toolbox build,
+  # so the encoded directory name below is stable as long as the AUR package
+  # version doesn't change. If Toolbox prompts for the EUA again after an
+  # upgrade, accept once and re-capture this path + prefs.xml.
+  ansible.builtin.file:
+    path: "{{ target_home }}/.java/.userPrefs/jetbrains/_!(!!cg\"p!(}!}@\"j!(k!|w\"w!'8!b!\"p!':!e@=="
+    state: directory
+    mode: '0755'
 
-- name: Pre-seed JetBrains Toolbox state to suppress first-run agreement check
-  # Toolbox checks for state.json at startup to distinguish first run from subsequent
-  # runs. Without it, Toolbox ignores .appState.json and forces /endUserAgreement.
-  # force: false lets Toolbox update freely (it adds appVersion etc. on first run).
+- name: Pre-seed JetBrains EUA acceptance in Java Preferences
   ansible.builtin.copy:
-    dest: "{{ target_home }}/.local/share/JetBrains/Toolbox/state.json"
+    dest: "{{ target_home }}/.java/.userPrefs/jetbrains/_!(!!cg\"p!(}!}@\"j!(k!|w\"w!'8!b!\"p!':!e@==/prefs.xml"
     content: |
-      {
-          "version": 1,
-          "tools": []
-      }
+      <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+      <!DOCTYPE map SYSTEM "http://java.sun.com/dtd/preferences.dtd">
+      <map MAP_XML_VERSION="1.0">
+        <entry key="eua_accepted_version" value="2.0"/>
+      </map>
     mode: '0644'
     force: false
 

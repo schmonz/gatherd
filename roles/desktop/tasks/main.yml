@@ -333,7 +333,7 @@
       };
 
       conky.text = [[${alignr}${exec {{ target_home }}/.local/bin/gatherd-describe-machine}
-      ${alignr}${nodename}]];
+      ${alignr}${font Noto Sans:bold:size={{ (foot_font_size | int * 32 / 14) | round | int }}}${nodename}]];
 
 - name: Configure arch-update
   ansible.builtin.copy:

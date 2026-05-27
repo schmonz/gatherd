@@ -197,7 +197,7 @@ section_verify() {
         li 'IR receiver: run `ir-keytable` — confirm device listed with a keymap loaded'
         li 'IR receiver: run `ir-keytable -t -s rc0` and press remote buttons — should show scancode + keycode per press'
     fi
-    li 'WiFi + captive portal: join LaPromNyack from the network menu — should connect without entering a password, specialized Helium auto-navigates to portal'
+    li 'WiFi + captive portal: at LaPromNyack, see captive-portal browser, join'
     li 'WiFi unmanaged-network nudge: hand-join any new network, log out and back in — an "Unmanaged WiFi" section listing it should appear in this file'
     li 'iCloud: run `rclone lsd icloud:` — should list top-level folders without error'
     li 'Timeshift: run `grep backup_device_uuid /etc/timeshift/timeshift.json` — should show a non-empty UUID (open the GUI and click Finish if not)'

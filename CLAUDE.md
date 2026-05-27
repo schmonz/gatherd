@@ -34,6 +34,10 @@ The post-setup notes are the living test suite for the playbook. TODO.md is not 
 
 Before calling a feature done, test it locally. The verify step documents what to check on a fresh repave; it is not a substitute for confirming the thing works right now.
 
+## Repave cadence
+
+Count the `li` lines in `section_verify` in `scripts/gatherd-post-setup-notes`. If there are more than 10, suggest that it's time to repave and run through the verify checklist.
+
 ## Code style
 
 **Task names read like imperative sentences.** A good task name makes the play log

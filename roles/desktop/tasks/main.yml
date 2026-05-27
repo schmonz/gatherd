@@ -508,11 +508,9 @@
     state: directory
     mode: '0755'
 
-- name: Pre-seed JetBrains Toolbox storage to skip onboarding and user agreement
-  # firstRunDate must be present or Toolbox treats startup as a first run, overriding
-  # .appState.json to /endUserAgreement regardless of what we pre-seeded there.
+- name: Pre-seed JetBrains Toolbox storage to skip onboarding
   # technicalOnboardingFinished suppresses the onboarding window that overrides --minimize.
-  # force: false means Toolbox can update the file freely after first run.
+  # force: false lets Toolbox update the file freely after first run.
   ansible.builtin.copy:
     dest: "{{ target_home }}/.local/share/JetBrains/Toolbox/.storage.json"
     content: |
@@ -529,8 +527,10 @@
     force: false
 
 - name: Pre-seed JetBrains Toolbox app state to skip user agreement dialog
-  # Toolbox shows the agreement dialog when navigationStacks points to /endUserAgreement.
-  # Pre-seeding /main bypasses it; force: false lets Toolbox update freely after first run.
+  # Toolbox replaces .appState.json on every startup, so force: true is safe (gatherd
+  # runs once). force: true also wins over a backup copy stuck at /endUserAgreement.
+  # state.json pre-seeding (below) is also required: without it Toolbox ignores this
+  # file on first run and forces /endUserAgreement regardless.
   ansible.builtin.copy:
     dest: "{{ target_home }}/.local/share/JetBrains/Toolbox/.appState.json"
     content: |
@@ -549,6 +549,20 @@
           "windows": {}
       }
     mode: '0600'
+    force: true
+
+- name: Pre-seed JetBrains Toolbox state to suppress first-run agreement check
+  # Toolbox checks for state.json at startup to distinguish first run from subsequent
+  # runs. Without it, Toolbox ignores .appState.json and forces /endUserAgreement.
+  # force: false lets Toolbox update freely (it adds appVersion etc. on first run).
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.local/share/JetBrains/Toolbox/state.json"
+    content: |
+      {
+          "version": 1,
+          "tools": []
+      }
+    mode: '0644'
     force: false
 
 - name: Create web app icon and profile directories

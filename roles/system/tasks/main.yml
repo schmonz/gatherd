@@ -364,16 +364,22 @@
     - gatherd-vault.path
     - gatherd-async.service
     - gatherd-async.path
+  notify: Reload systemd
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
 
 - name: Enable and start gatherd vault-gated path units
   ansible.builtin.systemd:
     name: "{{ item }}"
     enabled: true
     state: started
-    daemon_reload: true
   loop:
     - gatherd-vault.path
     - gatherd-async.path
+  # Path units trigger and deactivate when their condition is already met.
+  # Whether they're currently active is not meaningful idempotent state.
+  changed_when: false
 
 - name: Enable system services
   ansible.builtin.systemd:

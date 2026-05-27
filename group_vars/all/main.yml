@@ -39,10 +39,14 @@ web_apps:
     url: https://chat.deepseek.com
     comment: LLM
     codename: DeepSeek
+    # DDG has no icon for chat.deepseek.com; the apex domain works.
+    icon_url: https://icons.duckduckgo.com/ip3/deepseek.com.ico
   - name: Copilot
     url: https://copilot.microsoft.com
     comment: LLM
     codename: Copilot
+    # DDG has no icon for copilot.microsoft.com; pull directly from the site.
+    icon_url: https://copilot.microsoft.com/favicon.ico
   - name: Le Chat
     url: https://chat.mistral.ai
     comment: LLM

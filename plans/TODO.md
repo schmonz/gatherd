@@ -2,9 +2,58 @@
 
 - We never validated that `mbpfan` is doing useful things on applicable machines (such as MBA7,1)
 - Chromebook gets described as `Google Robo (rev3)`, want it to say `Lenovo Chromebook 100e`, not seeing any helpful strings in `dmidecode` output
+- Something in the playbooks needs golang and that's causing stuff to get dumped in `~schmonz/go`. Didn't we take steps to make that stuff go elsewhere? Why aren't they taking effect?
 - PIA systray icon has tooltip "update available", the right-click menu gives only "Quit", and if I log out and log back into Sway to push the VPN-login flow again, I do get prompted by 1Password to let it happen, but then I get a notification that PIA login failed
 - `jetbrains_authed` is inaccurate -- thinks I'm authed (and removes the post-setup instructions) when I'm not
-- Tailscale takes 2 minutes to shut down AND waiting for `umount.nfs4` also takes a minute or two of its own -- definitively not solved
+- **Slow shutdown** (~54s measured, reboot trigger → final unmount; was framed
+  as "Tailscale 2 min + umount.nfs4 a minute or two"). Traced via persistent
+  journal + verbose autofs logging. Three contributors, in order of cost:
+  - **tmux pane scope — ~30s (dominant).** The tmux server registers each pane
+    as its own systemd user scope; one pane held `user@1000.service` open ~30s
+    while every other user unit stopped in ~0.4s. Nothing to do with NFS/Tailscale.
+    *Unknown*: why ~30s (default user `TimeoutStopSec` is 90s, so either that
+    scope sets its own ~30s timeout — i.e. an interactive process ignoring
+    SIGTERM, easily bounded lower — or it did ~30s of real/NFS-blocked cleanup).
+    Confirm on a future shutdown whether the scope is SIGKILLed at the timeout.
+    Per-pane-scope registration is NOT in `~/.tmux.conf`; find its source first.
+    Note: the Claude Code session runs in a tmux pane, so it may be a contributor.
+  - **NFS umount — ~10s.** Verbose autofs shows `/net` + `/misc` unmount
+    instantly; the whole cost is the `code` nfs4 session/TCP teardown to the
+    server over Tailscale. Candidate fix: a shutdown-time force-unmount (mirror
+    `gatherd-unmount-nfs`), or investigate NFSv4 lease/delegation return.
+  - **tailscaled — ~10s.** Correctly capped (`TimeoutStopUSec=10s` drop-in
+    works), but wastes the full 10s retrying log uploads to `log.tailscale.com`
+    after the link is already down, then gets SIGKILLed. Candidate fix: suppress
+    the shutdown log-upload retries, or drop the stop timeout to ~5s.
+  - **Reframe**: "Tailscale 2 min" is no longer true (capped at 10s of wasted
+    log-flush). Biggest win is the tmux pane scope, not NFS or Tailscale.
+- **NFS mount slow to return after resume**: suspend itself is fixed
+  (`gatherd-unmount-nfs` force-unmounts before sleep so the freeze succeeds),
+  but after unlock the `~/trees` NFS mount takes ~1 min to come back. Network
+  and Tailscale recover in ~5s, so the delay is NOT reconnect time.
+  *Hypothesis* (unconfirmed): autofs's negative-mount cache. If something
+  touches `~/trees` in the few seconds after unlock — before Tailscale is up —
+  that mount attempt fails, and autofs then refuses to retry the `code` key for
+  `negative_timeout` (default 60s), which matches the symptom.
+  - **First, confirm the cause.** Verbose autofs logging is now on (takes
+    effect after an autofs restart / reboot). On the next resume cycle, read
+    `journalctl -u autofs`: a `code` mount *failure* right after unlock followed
+    by *success* ~60s later confirms the negative cache. If instead the minute
+    is NFSv4 lease/grace recovery, a stale lazy-unmount reference left by
+    `gatherd-unmount-nfs`, or DNS, neither fix below applies — investigate that.
+  - **(1) Lower autofs `negative_timeout`** (e.g. 10s) in `autofs.conf`. Bounds
+    the worst case: a too-early access still fails, but autofs retries sooner
+    instead of waiting out the full minute. Cheap; doesn't prevent the failed
+    attempt.
+  - **(2) Post-resume warm-up hook**: a `system-sleep` `post` hook that waits
+    for Tailscale connectivity, then triggers the `~/trees` mount so it's warm
+    before you touch it. Removes the delay in the common case.
+  - **Choosing**: (2) alone is not airtight — if you unlock-and-`cd` faster than
+    Tailscale reconnects (~5s), your own access poisons the negative cache
+    before the warm-up wins, and you still wait it out. (1) alone never prevents
+    the failed attempt, only caps the penalty. So if the cause is confirmed to
+    be the negative cache, do **both**: (2) to avoid the failed attempt, (1) to
+    bound any residual race.
 - Which Web Apps do I want?
     - iCloud: Drive, Find My Devices, Notes, Reminders, Maps
     - Other: Amazon, Duolingo, Reddit

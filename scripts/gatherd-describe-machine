@@ -11,20 +11,27 @@ vendor=$(awk '
                          { print $1;          exit }
 ' /sys/class/dmi/id/sys_vendor 2>/dev/null)
 
-model=$(fastfetch --structure Host --logo none --key-width 0 2>/dev/null \
-  | sed 's/^Host: //' \
-  | awk '{
-      before = $0
-      sub(/[[:space:]]*\(.*/, "", before)
-      if (before !~ /[a-z]/ && $0 ~ /\(/) {
-        sub(/^[^(]*\(/, "")
-        sub(/\).*$/, "")
-      } else {
-        sub(/ \([0-9][0-9.]*\)[[:space:]]*$/, "")
-      }
-      sub(/ W[0-9][A-Z0-9]*$/, "")
-      print
-    }')
+if [ "$vendor" = Apple ]; then
+  # fastfetch resolves Apple model codes to marketing names ("MacBook Air
+  # (11-inch, Early 2015)"); the bare DMI identifier (MacBookAir7,1) is what
+  # we want on the desktop.
+  model=$(cat /sys/class/dmi/id/product_name 2>/dev/null)
+else
+  model=$(fastfetch --structure Host --logo none --key-width 0 2>/dev/null \
+    | sed 's/^Host: //' \
+    | awk '{
+        before = $0
+        sub(/[[:space:]]*\(.*/, "", before)
+        if (before !~ /[a-z]/ && $0 ~ /\(/) {
+          sub(/^[^(]*\(/, "")
+          sub(/\).*$/, "")
+        } else {
+          sub(/ \([0-9][0-9.]*\)[[:space:]]*$/, "")
+        }
+        sub(/ W[0-9][A-Z0-9]*$/, "")
+        print
+      }')
+fi
 
 case "$model" in
   "$vendor "*|"$vendor,"*) echo "$model" ;;

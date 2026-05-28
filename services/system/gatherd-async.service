@@ -5,6 +5,8 @@ Wants=network-online.target nss-lookup.target
 ConditionPathExists=/usr/local/lib/gatherd/site-async.yml
 ConditionPathExists=/usr/local/lib/gatherd/.vault_pass
 ConditionPathExists=/etc/gatherd/complete
+StartLimitIntervalSec=300
+StartLimitBurst=2
 
 [Service]
 Type=oneshot

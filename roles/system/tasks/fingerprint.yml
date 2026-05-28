@@ -1,7 +1,8 @@
 ---
 # pam_fprintd.so ships with fprintd-clients-git (installed via python-validity
-# in the aur role, which runs after this play). Writing the PAM include now is
-# safe — PAM only loads modules at auth time, by which point aur will have run.
+# in the async play, after first login). Writing the PAM include now is safe:
+# PAM loads modules at auth time, and a missing module on a "sufficient" line
+# is skipped, so sudo still falls back to password until the async build lands.
 # Conservative scope: sudo only. Expand to system-auth (login, lock screen,
 # polkit) once we've confirmed the sensor works reliably here.
 - name: Enable fingerprint auth for sudo

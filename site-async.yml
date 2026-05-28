@@ -35,7 +35,10 @@
   become_user: "{{ target_user }}"
   any_errors_fatal: true
   environment:
-    PATH: "{{ target_home }}/.local/bin:{{ ansible_env.PATH }}"
+    # perlbin dirs are normally added by /etc/profile.d/perlbin.sh, but `su`
+    # (not a login shell) skips profile.d, so pod2man lands off PATH and AUR
+    # builds that need it (e.g. fprintd-clients-git) fail with "not found".
+    PATH: "{{ target_home }}/.local/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl:{{ ansible_env.PATH }}"
 
   vars_files:
     - vault/vault.yml

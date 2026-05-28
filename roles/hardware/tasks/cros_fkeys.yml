@@ -4,7 +4,7 @@
 - name: Clone cros-keyboard-map
   ansible.builtin.git:
     repo: https://github.com/WeirdTreeThing/cros-keyboard-map.git
-    dest: "{{ target_home }}/trees/cros-keyboard-map"
+    dest: "{{ target_home }}/.local/cros-keyboard-map"
     update: false
   become: true
   become_user: "{{ target_user }}"
@@ -21,6 +21,6 @@
     set -o pipefail
     echo "N" | ./install.sh
   args:
-    chdir: "{{ target_home }}/trees/cros-keyboard-map"
+    chdir: "{{ target_home }}/.local/cros-keyboard-map"
     executable: /bin/bash
   changed_when: true

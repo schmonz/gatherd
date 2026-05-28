@@ -2,7 +2,7 @@
 - name: Clone chromebook-linux-audio
   ansible.builtin.git:
     repo: https://github.com/WeirdTreeThing/chromebook-linux-audio.git
-    dest: "{{ target_home }}/trees/chromebook-linux-audio"
+    dest: "{{ target_home }}/.local/chromebook-linux-audio"
     update: false
   become: true
   become_user: "{{ target_user }}"
@@ -15,6 +15,6 @@
     echo "I UNDERSTAND THE RISK OF PERMANENTLY DAMAGING MY SPEAKERS" \
       | ./setup-audio --force-avs-install
   args:
-    chdir: "{{ target_home }}/trees/chromebook-linux-audio"
+    chdir: "{{ target_home }}/.local/chromebook-linux-audio"
     executable: /bin/bash
   changed_when: true

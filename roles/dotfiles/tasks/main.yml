@@ -2,19 +2,19 @@
 - name: Clone dotfiles
   ansible.builtin.git:
     repo: "{{ hardcoded_dotfiles_repo }}"
-    dest: "{{ target_home }}/.dotfiles"
+    dest: "{{ target_home }}/.local/dotfiles"
     version: HEAD
     update: false
 
 - name: Populate SSH authorized_keys from dotfiles
   ansible.posix.authorized_key:
     user: "{{ target_user }}"
-    key: "{{ lookup('file', target_home + '/.dotfiles/' + hardcoded_ssh_authorized_keys_dotfile) }}"
+    key: "{{ lookup('file', target_home + '/.local/dotfiles/' + hardcoded_ssh_authorized_keys_dotfile) }}"
     state: present
 
 - name: Symlink dotfiles
   ansible.builtin.file:
-    src: "{{ target_home }}/.dotfiles/{{ item.src }}"
+    src: "{{ target_home }}/.local/dotfiles/{{ item.src }}"
     dest: "{{ target_home }}/{{ item.dest }}"
     state: link
   loop:

@@ -1,0 +1,21 @@
+#!/bin/sh
+# systemd ExecCondition helper: decide whether a gatherd play should run.
+# Usage: gatherd-needs-run <sentinel-path>
+#
+# Exit 0  → run the unit (sentinel missing, or the deployed git HEAD has
+#           changed since the sentinel was written — e.g. after a git pull).
+# Exit 1  → skip the unit (sentinel records the current HEAD; nothing new to do).
+#
+# ExecCondition treats exit 1-254 as "skip, not failed", which is exactly the
+# semantics we want for an already-converged machine.
+set -eu
+
+sentinel="$1"
+gatherd_home=/usr/local/lib/gatherd
+
+[ -f "$sentinel" ] || exit 0
+
+head=$(git -C "$gatherd_home" rev-parse HEAD 2>/dev/null) || exit 0
+
+[ "$(head -n1 "$sentinel")" = "$head" ] && exit 1
+exit 0

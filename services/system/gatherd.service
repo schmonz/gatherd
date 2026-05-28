@@ -4,11 +4,11 @@ After=network-online.target nss-lookup.target systemd-user-sessions.service
 Before=greetd.service
 Wants=network-online.target nss-lookup.target
 ConditionPathExists=/usr/local/lib/gatherd/site.yml
-ConditionPathExists=!/etc/gatherd/complete
 
 [Service]
 Type=oneshot
 WorkingDirectory=/usr/local/lib/gatherd
+ExecCondition=/usr/local/lib/gatherd/scripts/gatherd-needs-run /etc/gatherd/complete
 ExecStartPre=ansible-galaxy collection install --requirements-file /usr/local/lib/gatherd/requirements.yml
 ExecStart=systemd-inhibit --what=sleep --who=gatherd --why="First-boot Ansible provisioning in progress" --mode=block \
     ansible-playbook /usr/local/lib/gatherd/site.yml

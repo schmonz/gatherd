@@ -27,7 +27,8 @@
           gatherd.service before login). Running it inside a live
           Sway session restarts services Sway depends on and will
           end the session. To re-run safely:
-            - Reboot. gatherd.service will re-run if /etc/gatherd/complete is gone.
+            - Reboot. gatherd.service re-runs if /etc/gatherd/complete is gone
+              or records a git HEAD other than the deployed tree's.
             - Or switch to a console TTY (Ctrl+Alt+F2), stop greetd, then run.
             - Or pass -e sway_guard_override=true if you know what you're doing
               (e.g. an idempotency test inside a VM that's already past first boot).
@@ -116,10 +117,18 @@
       become: true
       become_user: root
 
+    - name: Read deployed git HEAD  # noqa: command-instead-of-module
+      ansible.builtin.command: "git -C {{ setup_dir }} rev-parse HEAD"
+      register: _gatherd_head
+      changed_when: false
+      become: true
+
     - name: Mark setup complete
+      # Sentinel records the HEAD that ran to completion; gatherd-needs-run
+      # re-runs the play when HEAD later changes (e.g. after a git pull).
       ansible.builtin.copy:
         dest: /etc/gatherd/complete
-        content: ""
+        content: "{{ _gatherd_head.stdout }}\n"
         mode: '0644'
       become: true
       become_user: root

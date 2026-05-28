@@ -39,8 +39,15 @@
       ansible.builtin.include_tasks: roles/system/tasks/wifi.yml
 
   post_tasks:
+    - name: Read deployed git HEAD  # noqa: command-instead-of-module
+      ansible.builtin.command: "git -C {{ setup_dir }} rev-parse HEAD"
+      register: _gatherd_head
+      changed_when: false
+
     - name: Mark vault setup complete
-      ansible.builtin.file:
-        path: /etc/gatherd/vault-complete
-        state: touch
+      # Sentinel records the HEAD that ran to completion; gatherd-needs-run
+      # re-runs the play when HEAD later changes (e.g. after a git pull).
+      ansible.builtin.copy:
+        dest: /etc/gatherd/vault-complete
+        content: "{{ _gatherd_head.stdout }}\n"
         mode: '0644'

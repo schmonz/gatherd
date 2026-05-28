@@ -45,10 +45,19 @@
       ansible.builtin.include_tasks: roles/aur/tasks/slow.yml
 
   post_tasks:
+    - name: Read deployed git HEAD  # noqa: command-instead-of-module
+      ansible.builtin.command: "git -C {{ setup_dir }} rev-parse HEAD"
+      register: _gatherd_head
+      changed_when: false
+      become: true
+      become_user: root
+
     - name: Mark slow setup complete
-      ansible.builtin.file:
-        path: /etc/gatherd/async-complete
-        state: touch
+      # Sentinel records the HEAD that ran to completion; gatherd-needs-run
+      # re-runs the play when HEAD later changes (e.g. after a git pull).
+      ansible.builtin.copy:
+        dest: /etc/gatherd/async-complete
+        content: "{{ _gatherd_head.stdout }}\n"
         mode: '0644'
       become: true
       become_user: root

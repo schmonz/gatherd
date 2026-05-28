@@ -5,6 +5,12 @@
 
 - Set up VNC
 - JetBrains IDE settings, starting with font size
+- **Auto git pull on a cadence**: the sentinels now record the git HEAD that
+  ran to completion, and gatherd-needs-run re-runs a play when HEAD changes.
+  Add a timer (systemd) that periodically `git -C /usr/local/lib/gatherd pull`s
+  origin, so a pushed change converges every machine on its next reboot without
+  a manual pull. Decide: pull on boot, on a timer, or both; how to surface
+  failures; whether to auto-reboot or wait for the next natural one.
 - **Auto-etckeeper-commit per /etc-touching task**: today most /etc-writing tasks
   carry `notify: Etckeeper commit` and a few don't. Make the wiring automatic so
   a freshly written task doesn't have to remember. Candidates: a wrapper module,
@@ -39,7 +45,9 @@
   currently matches only Validity 138a:0097 (driven by `python-validity`).
   When we hit a different reader, extend the USB ID case statement and branch
   the install task (stock `fprintd` for libfprint-supported sensors,
-  `python-validity` for Validity 0097-family).
+  `python-validity` for Validity 0097-family). Furthermore, we don't have
+  explicit checking or control flow for enrollment: is it already done,
+  do we need to do it, do we need to _undo_ it first, etc.
 
 - **ThinkPad smart card reader**: investigate `pcscd` + `opensc`. T60 has a
   built-in reader; X270 (20HMS6VR00) has Alcor Micro AU9540 (058f:9540), a

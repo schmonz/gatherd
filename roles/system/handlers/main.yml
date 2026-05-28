@@ -29,6 +29,13 @@
     state: reloaded
   failed_when: false
 
+# Log level changes are only read at daemon start, not on SIGHUP reload.
+- name: Restart autofs
+  ansible.builtin.systemd:
+    name: autofs
+    state: restarted
+  failed_when: false
+
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true

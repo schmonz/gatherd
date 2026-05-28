@@ -87,6 +87,7 @@
           - autofs
           # password manager
           - 1password
+          - 1password-cli
           # web browsers
           - helium-browser-bin
           - captive-browser

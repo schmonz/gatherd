@@ -82,6 +82,7 @@ section_1password() {
         li 'Create a "login" keyring with no password'
         li 'Sign in to 1Password'
         li 'Lock, unlock, enter 2FA code'
+        li 'Settings → Developer → enable "Connect with 1Password CLI" (gatherd-prompt-pia depends on this)'
     fi
 }
 

@@ -1,0 +1,13 @@
+#!/bin/bash
+set -euo pipefail
+
+[[ "${1}" == "pre" ]] || exit 0
+
+# NetworkManager tears down the link before this hook runs, so any task stuck
+# in NFS I/O (e.g. git in the Tailscale-mounted ~/trees) is wedged in
+# uninterruptible sleep and refuses to freeze, hanging the suspend. umount -f
+# aborts the in-flight RPCs locally (no network needed) so those tasks get EIO
+# and become freezable; -l detaches the mount. autofs remounts on next access
+# after resume.
+awk '$3 ~ /^nfs/ { print $2 }' /proc/mounts \
+    | xargs -r -L1 umount -f -l 2>/dev/null || true

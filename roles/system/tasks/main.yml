@@ -335,6 +335,14 @@
     remote_src: true
   notify: Etckeeper commit
 
+- name: Install NFS abort sleep hook
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-unmount-nfs"
+    dest: /etc/systemd/system-sleep/gatherd-unmount-nfs
+    mode: '0755'
+    remote_src: true
+  notify: Etckeeper commit
+
 - name: Create /etc/systemd/system/systemd-suspend.service.d
   ansible.builtin.file:
     path: /etc/systemd/system/systemd-suspend.service.d

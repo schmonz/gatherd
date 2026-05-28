@@ -1,5 +1,7 @@
 # TODO
 
+- We never validated that `mbpfan` is doing useful things on applicable machines (such as MBA7,1)
+- Chromebook gets described as `Google Robo (rev3)`, want it to say `Lenovo Chromebook 100e`, not seeing any helpful strings in `dmidecode` output
 - PIA systray icon has tooltip "update available", the right-click menu gives only "Quit", and if I log out and log back into Sway to push the VPN-login flow again, I do get prompted by 1Password to let it happen, but then I get a notification that PIA login failed
 - `jetbrains_authed` is inaccurate -- thinks I'm authed (and removes the post-setup instructions) when I'm not
 - Tailscale takes 2 minutes to shut down AND waiting for `umount.nfs4` also takes a minute or two of its own -- definitively not solved

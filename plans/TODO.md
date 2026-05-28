@@ -1,9 +1,8 @@
 # TODO
 
-- We never validated that `mbpfan` is doing useful things on applicable machines (such as MBA7,1)
+- We do auto-join `LaPromNyack` WiFi (good!) but `captive-browser` doesn't pop up -- I have to open my regular browser manually and navigate to `whatsmyip.schmonz.com` manually in order to get the portal page and complete a working internet connection
 - Chromebook gets described as `Google Robo (rev3)`, want it to say `Lenovo Chromebook 100e`, not seeing any helpful strings in `dmidecode` output
 - Something in the playbooks needs golang and that's causing stuff to get dumped in `~schmonz/go`. Didn't we take steps to make that stuff go elsewhere? Why aren't they taking effect?
-- PIA systray icon has tooltip "update available", the right-click menu gives only "Quit", and if I log out and log back into Sway to push the VPN-login flow again, I do get prompted by 1Password to let it happen, but then I get a notification that PIA login failed
 - `jetbrains_authed` is inaccurate -- thinks I'm authed (and removes the post-setup instructions) when I'm not
 - **Slow shutdown** (~54s measured, reboot trigger → final unmount; was framed
   as "Tailscale 2 min + umount.nfs4 a minute or two"). Traced via persistent

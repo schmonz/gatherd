@@ -186,6 +186,7 @@ section_verify() {
     h 'Verify'
     li 'Font size: tile two foot terminals side by side and run `echo $COLUMNS` in each — should read ~80 (acceptably ~75-85), not far below'
     li 'Machine label: the desktop conky (bottom-right) shows the model — on Apple hardware the bare DMI identifier (e.g. Apple MacBookAir7,1), not a marketing name'
+    li 'PIA Quick Tour: on the first launch after a repave, pia-client opens to the login/connect screen, not the multi-step Quick Tour walkthrough'
     li 'PIA auto-login: after unlocking 1Password, the daemon logs in on its own (gatherd-prompt-pia) — click the tray icon, should show the connect screen, not a login prompt'
     li 'Tailscale shutdown: shut down — should complete in under 30 seconds with no "A stop job is running for Tailscale" delay'
     if not has_plenty_of_ram; then

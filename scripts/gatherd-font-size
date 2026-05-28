@@ -1,0 +1,43 @@
+#!/bin/sh
+# Emit the foot point size that yields ~80 columns in a two-up (half-width)
+# tiled layout on this machine's internal panel. All size-dependent desktop
+# config (waybar, conky, mako, fuzzel, sway titles) is derived from this number.
+#
+# Why read EDID instead of the current display mode: machine_facts runs before
+# greetd, with no compositor, so DRM `modes` files are often empty or list a
+# framebuffer fallback — on Macs the EFI/simpledrm -> i915 handoff reports a
+# non-native size, which sized fonts for the wrong resolution. EDID is read at
+# driver probe and carries the panel's true native timing.
+#
+# The internal panel is an eDP/LVDS/DSI/DPI connector. A valid EDID begins with
+# the fixed 8-byte header 00 ff ff ff ff ff ff 00; horizontal active pixels live
+# in the first detailed timing descriptor — low 8 bits at byte 56, high 4 bits
+# in the upper nibble of byte 58. (sysfs reports the edid size as 0 even when
+# populated, so validate the header rather than the file size.)
+#
+# Formula (foot ~96 DPI, JetBrains Mono ~0.8 px/pt cell, 80 cols * 0.8 = 64):
+# floor((width / 2 - padding) / 64), floored to a minimum of 8.
+
+# Fallback for a 1920-wide panel, used when no EDID is readable.
+DEFAULT_FONT_SIZE=14
+
+width=
+for d in /sys/class/drm/*-eDP-*/ /sys/class/drm/*-LVDS-*/ \
+         /sys/class/drm/*-DSI-*/ /sys/class/drm/*-DPI-*/; do
+    e="${d}edid"
+    [ -e "$e" ] || continue
+    [ "$(od -An -tx1 -N8 "$e" 2>/dev/null | tr -d ' \n')" = "00ffffffffffff00" ] || continue
+    lo=$(od -An -tu1 -j56 -N1 "$e" | tr -d ' ')
+    hi=$(od -An -tu1 -j58 -N1 "$e" | tr -d ' ')
+    width=$(( lo + 256 * (hi / 16) ))
+    break
+done
+
+if [ -z "$width" ] || [ "$width" -lt 640 ]; then
+    echo "$DEFAULT_FONT_SIZE"
+    exit 0
+fi
+
+size=$(( (width / 2 - 4) / 64 ))
+[ "$size" -lt 8 ] && size=8
+echo "$size"

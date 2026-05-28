@@ -319,27 +319,18 @@
     - _root_parent_uuid is not skipped
     - (_root_parent_uuid.stdout | default('')) | trim | length > 0
 
-- name: Read primary screen width from DRM  # noqa: risky-shell-pipe
-  ansible.builtin.shell: |
-    for f in /sys/class/drm/card*/card*-*/modes; do
-      head -1 "$f" 2>/dev/null
-    done | awk -Fx '/x/ { print $1; exit }'
-  register: _screen_width
+- name: Compute foot font size for this panel
+  # gatherd-font-size reads the panel's native resolution from EDID and applies
+  # the two-up 80-column formula. The pre-login environment has no compositor, so
+  # reading the live DRM mode is unreliable; see the script for the details.
+  ansible.builtin.command: "{{ setup_dir }}/scripts/gatherd-font-size"
+  register: _foot_font_size
   changed_when: false
-  failed_when: false
 
-- name: Set screen_width_px and foot_font_size facts
+- name: Set foot_font_size fact
   ansible.builtin.set_fact:
-    # Assumes foot renders at ~96 DPI effective (standard non-HiDPI Wayland).
-    # Formula: floor((screen_width/2 - foot_padding) / (80_cols * 0.8_px_per_pt))
-    # Verify after setup: open two tiled foot windows, check echo $COLUMNS ≈ 80.
-    screen_width_px: >-
-      {{ (_screen_width.stdout | int)
-         if ((_screen_width.stdout | default('')) | int) > 0
-         else 1920 }}
-    foot_font_size: >-
-      {{ [((screen_width_px | int // 2 - 4) // 64), 8] | max }}
-  when: (_screen_width.stdout | default('')) | int > 0
+    foot_font_size: "{{ _foot_font_size.stdout | int }}"
+  when: (_foot_font_size.stdout | default('')) | int > 0
 
 # Role defaults only apply within this role. This task promotes every has_* fact
 # to a host fact so later plays (system, desktop) can reference them without error.
@@ -368,7 +359,6 @@
     has_thinkpad_trackpoint: "{{ has_thinkpad_trackpoint }}"
     has_thinkpad_vantage_button: "{{ has_thinkpad_vantage_button }}"
     is_aarch64: "{{ is_aarch64 }}"
-    screen_width_px: "{{ screen_width_px }}"
     foot_font_size: "{{ foot_font_size }}"
     timeshift_backup_device_uuid: "{{ timeshift_backup_device_uuid }}"
     timeshift_parent_device_uuid: "{{ timeshift_parent_device_uuid }}"

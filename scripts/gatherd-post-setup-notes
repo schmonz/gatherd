@@ -184,9 +184,7 @@ section_verify() {
     # Never auto-done: user manages this section manually
     section_present 'Verify' && return
     h 'Verify'
-    li 'PIA: on sway login, only the tray icon appears — no Quick Tour screen pops up'
     li 'PIA auto-login: after unlocking 1Password, the daemon logs in on its own (gatherd-prompt-pia) — click the tray icon, should show the connect screen, not a login prompt'
-    li 'JetBrains Toolbox: click the tray icon — main app list shows directly, no user agreement dialog'
     li 'Tailscale shutdown: shut down — should complete in under 30 seconds with no "A stop job is running for Tailscale" delay'
     if not has_plenty_of_ram; then
         li 'On low-RAM machines: Helium → Settings → Performance — Memory Saver should be Maximum'
@@ -202,7 +200,6 @@ section_verify() {
     li 'WiFi + captive portal: at LaPromNyack, see captive-portal browser, join'
     li 'WiFi unmanaged-network nudge: hand-join any new network, log out and back in — an "Unmanaged WiFi" section listing it should appear in this file'
     li 'iCloud: run `rclone lsd icloud:` — should list top-level folders without error'
-    li 'Timeshift: run `grep backup_device_uuid /etc/timeshift/timeshift.json` — should show a non-empty UUID (open the GUI and click Finish if not)'
 }
 
 # ---------------------------------------------------------------------------

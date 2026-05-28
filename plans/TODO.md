@@ -1,9 +1,12 @@
 # TODO
 
+- PIA systray icon has tooltip "update available", the right-click menu gives only "Quit", and if I log out and log back into Sway to push the VPN-login flow again, I do get prompted by 1Password to let it happen, but then I get a notification that PIA login failed
+- `jetbrains_authed` is inaccurate -- thinks I'm authed (and removes the post-setup instructions) when I'm not
+- Tailscale takes 2 minutes to shut down AND waiting for `umount.nfs4` also takes a minute or two of its own -- definitively not solved
 - Which Web Apps do I want?
-    - iCloud: Drive, Notes, Reminders
-
-- Set up VNC
+    - iCloud: Drive, Find My Devices, Notes, Reminders, Maps
+    - Other: Amazon, Duolingo, Reddit
+- Set up VNC (see `VNC.md`)
 - JetBrains IDE settings, starting with font size
 - **Auto git pull on a cadence**: the sentinels now record the git HEAD that
   ran to completion, and gatherd-needs-run re-runs a play when HEAD changes.

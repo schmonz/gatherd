@@ -6,6 +6,18 @@
 
 - Set up VNC
 - JetBrains IDE settings, starting with font size
+- **Auto-etckeeper-commit per /etc-touching task**: today most /etc-writing tasks
+  carry `notify: Etckeeper commit` and a few don't. Make the wiring automatic so
+  a freshly written task doesn't have to remember. Candidates: a wrapper module,
+  an `import_tasks` shim, or a post-play `meta: flush_handlers` + global path-watch
+  scheme. End state: any task that writes under `/etc` results in an etckeeper
+  commit, with no per-task boilerplate.
+- **Script GUI app setup**: many manual first-run steps (1Password CLI toggle,
+  JetBrains IDE prefs, Zoom 2FA, web app sign-ins) live behind GUI-only paths.
+  Investigate driving them programmatically — candidates: `ydotool`/`wtype` for
+  Wayland keystrokes, accessibility APIs (AT-SPI), `dogtail`-style tools, Electron
+  apps' DevTools protocols, app-specific URL schemes. Goal: shrink the manual
+  steps in `gatherd-post-setup-notes` toward zero.
 
 ## Hardware
 

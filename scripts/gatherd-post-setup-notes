@@ -185,6 +185,7 @@ section_verify() {
     section_present 'Verify' && return
     h 'Verify'
     li 'PIA: on sway login, only the tray icon appears — no Quick Tour screen pops up'
+    li 'PIA auto-login: after unlocking 1Password, the daemon logs in on its own (gatherd-prompt-pia) — click the tray icon, should show the connect screen, not a login prompt'
     li 'JetBrains Toolbox: click the tray icon — main app list shows directly, no user agreement dialog'
     li 'Tailscale shutdown: shut down — should complete in under 30 seconds with no "A stop job is running for Tailscale" delay'
     if not has_plenty_of_ram; then

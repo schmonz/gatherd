@@ -1,0 +1,33 @@
+#!/bin/sh
+# Logs the PIA daemon in using credentials from 1Password.
+# Sway autostart — runs on every login. No-op once the daemon is logged in.
+
+_op_item="Private Internet Access (VPN)"
+_op_vault="Private"
+_helper=/usr/local/lib/gatherd/scripts/gatherd-pia-login
+
+[ -x /opt/piavpn/bin/piactl ] || exit 0
+command -v op >/dev/null 2>&1 || exit 0
+
+# Cheap probe: helper outputs "already" without touching credentials.
+case "$(printf '' | sudo -n "$_helper" 2>/dev/null || true)" in
+    already) exit 0 ;;
+esac
+
+# Wait up to 5 minutes for 1Password to serve the credential. `op whoami` is
+# not a usable readiness check under desktop-app integration (it only reports
+# an explicit `op signin` session), so poll the actual item read instead — it
+# succeeds once the app is running, unlocked, and CLI access is authorized.
+_deadline=$(( $(date +%s) + 300 ))
+until _u=$(op item get "$_op_item" --vault "$_op_vault" --field username 2>/dev/null); do
+    [ "$(date +%s)" -lt "$_deadline" ] || exit 0
+    sleep 5
+done
+
+_p=$(op item get "$_op_item" --vault "$_op_vault" --field password --reveal 2>/dev/null) || exit 0
+
+case "$(printf '%s\n%s\n' "$_u" "$_p" | sudo -n "$_helper" 2>&1)" in
+    logged-in) notify-send "PIA" "Logged in" ;;
+    already)   ;;
+    *)         notify-send "PIA" "Login failed" ;;
+esac

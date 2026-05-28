@@ -227,6 +227,14 @@
     validate: visudo -cf %s
   notify: Etckeeper commit
 
+- name: Allow target_user to invoke the PIA login helper as root
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/gatherd-pia-login
+    content: "{{ target_user }} ALL=(root) NOPASSWD: /usr/local/lib/gatherd/scripts/gatherd-pia-login\n"
+    mode: '0440'
+    validate: visudo -cf %s
+  notify: Etckeeper commit
+
 - name: Flush handlers
   ansible.builtin.meta: flush_handlers
 

@@ -41,34 +41,6 @@
       become: true
       become_user: root
 
-    - name: Check if already logged in to PIA
-      ansible.builtin.command: >
-        python3 -c "
-        import json, sys
-        try:
-            d = json.load(open('/opt/piavpn/etc/account.json'))
-            sys.exit(0 if d.get('loggedIn') else 1)
-        except:
-            sys.exit(1)"
-      register: _pia_logged_in
-      changed_when: false
-      failed_when: false
-      become: true
-      become_user: root
-
-    - name: Log in to PIA
-      # piactl login produces no parseable output; `when:` already ensures this
-      # only runs when the daemon is not logged in, so if it runs, it changed.
-      ansible.builtin.shell: |
-        tmpfile=$(mktemp)
-        chmod 600 "$tmpfile"
-        printf '%s\n%s\n' '{{ pia_username }}' '{{ pia_password }}' > "$tmpfile"
-        /opt/piavpn/bin/piactl login "$tmpfile"
-        rm -f "$tmpfile"
-      when: _pia_logged_in.rc != 0
-      changed_when: true
-      no_log: true
-
     - name: Wait for PIA daemon to write settings.json
       ansible.builtin.wait_for:
         path: /opt/piavpn/etc/settings.json

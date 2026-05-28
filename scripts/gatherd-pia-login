@@ -1,0 +1,26 @@
+#!/bin/sh
+# Sudo-gated PIA daemon login helper. Reads username and password from
+# stdin (two newline-separated lines). Outputs one of:
+#   already    — daemon already logged in, no-op
+#   logged-in  — login succeeded
+#   failed     — login attempt failed
+set -eu
+
+[ -x /opt/piavpn/bin/piactl ] || { echo failed; exit 1; }
+
+if grep -q '"loggedIn":true' /opt/piavpn/etc/account.json 2>/dev/null; then
+    echo already
+    exit 0
+fi
+
+tmpfile=$(mktemp)
+chmod 600 "$tmpfile"
+trap 'rm -f "$tmpfile"' EXIT
+cat > "$tmpfile"
+
+if /opt/piavpn/bin/piactl login "$tmpfile" >/dev/null 2>&1; then
+    echo logged-in
+else
+    echo failed
+    exit 1
+fi

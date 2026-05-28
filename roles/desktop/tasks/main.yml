@@ -646,6 +646,13 @@
     mode: '0755'
     remote_src: true
 
+- name: Install gatherd-prompt-pia script
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-prompt-pia"
+    dest: "{{ target_home }}/.local/bin/gatherd-prompt-pia"
+    mode: '0755'
+    remote_src: true
+
 - name: Remove sway-install.sh stray gparted desktop entry
   ansible.builtin.file:
     path: "{{ target_home }}/.local/share/applications/gparted.desktop"
@@ -700,6 +707,7 @@
     - gatherd-prompt-tailscale
     - gatherd-prompt-postsetup
     - gatherd-prompt-vault
+    - gatherd-prompt-pia
 
 - name: Add systray app autostart entries
   ansible.builtin.lineinfile:

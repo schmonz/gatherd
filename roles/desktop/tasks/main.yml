@@ -179,7 +179,7 @@
 
 - name: Configure xed font size for 80-col two-up layout
   ansible.builtin.shell: |
-    font="JetBrains Mono 10"
+    font="JetBrains Mono {{ foot_font_size }}"
     cur=$(dbus-run-session gsettings get org.x.editor.preferences.editor editor-font 2>/dev/null)
     use=$(dbus-run-session gsettings get org.x.editor.preferences.editor use-default-font 2>/dev/null)
     if [ "$cur" = "'$font'" ] && [ "$use" = "false" ]; then
@@ -318,7 +318,8 @@
           out_to_x = false,
           alignment = 'bottom_right',
           gap_x = 20,
-          gap_y = {{ 20 + (foot_font_size | int * 8 // 3) }},
+          -- bottom margin in foot-heights: 2 (≈two lines of base) + 2.5 to clear a terminal's tmux status bar
+          gap_y = {{ ((foot_font_size | int) * 2 + (foot_font_size | int) * 2.5) | round | int }},
 
           own_window = true,
           own_window_type = 'desktop',

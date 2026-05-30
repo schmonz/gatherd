@@ -178,7 +178,7 @@
 - name: Flush handlers
   ansible.builtin.meta: flush_handlers
 
-- name: Configure user-session PATH
+- name: Configure user-session environment
   ansible.builtin.include_tasks: user_path.yml
 
 - name: Create /etc/1password directory

@@ -1,21 +1,32 @@
 ---
-- name: Add ~/.local/bin to user-session PATH
-  # profile.d is sourced by the login shell that greetd starts before exec'ing
-  # sway, so this reaches foot and any process launched from the desktop.
-  # environment.d would only reach systemd user services, not sway itself.
-  ansible.builtin.copy:
-    dest: /etc/profile.d/gatherd-local-bin.sh
-    content: "export PATH=\"${HOME}/.local/bin:${PATH}\"\n"
-    mode: '0644'
+# greetd launches sway directly with no login shell, so /etc/profile.d is never
+# sourced for the desktop session. pam_env runs in greetd's PAM session stack
+# (via system-login) before sway is exec'd, so sway and every process it spawns
+# — terminals, swayidle, autostarted apps — inherit these. It also fires for
+# console and SSH logins, so it covers the login shells profile.d used to.
+- name: Set user-session PATH and Go workspace via pam_env
+  ansible.builtin.blockinfile:
+    path: /etc/security/pam_env.conf
+    # PATH base is set before the prepend so an unset PATH can never collapse to
+    # a bare "~/.local/bin:" that would drop /usr/bin from the session.
+    block: |
+      PATH    DEFAULT=/usr/local/sbin:/usr/local/bin:/usr/bin
+      PATH    OVERRIDE=@{HOME}/.local/bin:${PATH}
+      GOPATH  DEFAULT=@{HOME}/.local/share/go
+      GOBIN   DEFAULT=@{HOME}/.local/bin
+    marker: "# {mark} ANSIBLE MANAGED BLOCK: gatherd user env"
   notify: Etckeeper commit
 
-- name: Keep Go workspace out of home directory
-  ansible.builtin.copy:
-    dest: /etc/profile.d/gatherd-go.sh
-    content: |
-      export GOPATH="${HOME}/.local/share/go"
-      export GOBIN="${HOME}/.local/bin"
-    mode: '0644'
+- name: Remove obsolete profile.d PATH file
+  ansible.builtin.file:
+    path: /etc/profile.d/gatherd-local-bin.sh
+    state: absent
+  notify: Etckeeper commit
+
+- name: Remove obsolete profile.d Go file
+  ansible.builtin.file:
+    path: /etc/profile.d/gatherd-go.sh
+    state: absent
   notify: Etckeeper commit
 
 - name: Remove obsolete environment.d PATH file

@@ -461,18 +461,6 @@
     state: absent
   notify: Etckeeper commit
 
-- name: Configure greetd Sway autologin
-  # bash --login sources /etc/profile.d/* before exec'ing sway, so environment
-  # set there (PATH, GOBIN, etc.) is available to sway and all child processes.
-  ansible.builtin.blockinfile:
-    path: /etc/greetd/greetd.conf
-    block: |
-      [initial_session]
-      command = "bash --login -c 'exec sway'"
-      user = "{{ target_user }}"
-    marker: "# {mark} ANSIBLE MANAGED BLOCK"
-  notify: Etckeeper commit
-
 - name: Flush handlers
   ansible.builtin.meta: flush_handlers
 

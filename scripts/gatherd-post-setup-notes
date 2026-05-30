@@ -186,6 +186,7 @@ section_verify() {
     h 'Verify'
     li 'PIA Quick Tour: on the first launch after a repave, pia-client opens to the login/connect screen, not the multi-step Quick Tour walkthrough'
     li 'Tailscale shutdown: shut down — should complete in under 30 seconds with no "A stop job is running for Tailscale" delay'
+    li 'Autologin still works: after a repave, boot straight to the Sway desktop without a greetd login prompt (upstream Sway CE honors the installer autologin pref, so we no longer write an [initial_session] stanza ourselves)'
     has_resume && li 'Suspend over NFS: with a shell sitting in ~/trees (the Tailscale NFS mount), close the lid, wait, then reopen — should wake to the lock screen, not hang on a black screen'
     if is_thinkpad; then
         li 'ThinkVantage button (T60): press blue ThinkVantage button — should open a terminal'

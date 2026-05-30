@@ -61,12 +61,6 @@ icloud_configured()     { rclone listremotes 2>/dev/null | grep -q '^icloud:'; }
 claude_desktop_authed() { find "$HOME/.config/Claude" -name '*.json' 2>/dev/null | grep -q .; }
 claude_code_authed()    { [ -f "$HOME/.claude/.credentials.json" ] || [ -f "$HOME/.claude/credentials" ]; }
 
-jetbrains_authed() {
-    find "$HOME/.local/share/JetBrains/Toolbox" \
-        -not -name '.storage.json' -not -name '.appState.json' \
-        -name '*.json' 2>/dev/null | grep -q .
-}
-
 # ---------------------------------------------------------------------------
 # Section handlers
 # Pattern: if done → prune; else if absent → add; else → leave alone
@@ -137,13 +131,12 @@ section_zoom() {
 }
 
 section_jetbrains() {
-    if jetbrains_authed; then
-        section_present 'JetBrains Toolbox' && section_remove 'JetBrains Toolbox'
-    else
-        section_present 'JetBrains Toolbox' && return
-        h 'JetBrains Toolbox'
-        li 'Log in to your JetBrains account by clicking the tray icon'
-    fi
+    # Never auto-done: account-login state isn't reliably detectable. Toolbox
+    # autostarts and writes assorted .json by merely running, so any file-based
+    # heuristic false-positives and prunes this before you've actually logged in.
+    section_present 'JetBrains Toolbox' && return
+    h 'JetBrains Toolbox'
+    li 'Log in to your JetBrains account by clicking the tray icon'
 }
 
 section_unmanaged_wifi() {

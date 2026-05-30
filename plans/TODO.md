@@ -2,7 +2,13 @@
 
 - We do auto-join `LaPromNyack` WiFi (good!) but `captive-browser` doesn't pop up -- I have to open my regular browser manually and navigate to `whatsmyip.schmonz.com` manually in order to get the portal page and complete a working internet connection
 - Chromebook gets described as `Google Robo (rev3)`, want it to say `Lenovo Chromebook 100e`, not seeing any helpful strings in `dmidecode` output
-- `jetbrains_authed` is inaccurate -- thinks I'm authed (and removes the post-setup instructions) when I'm not
+- **Auto-detect JetBrains account login**: `section_jetbrains` is now "never
+  auto-done" (the old `jetbrains_authed` blocklist false-positived because
+  Toolbox autostarts and writes assorted `.json` just by running, before any
+  login). To prune the reminder automatically again, find an allowlist signal:
+  on a live machine, `find ~/.local/share/JetBrains/Toolbox` (and check the
+  keyring) before vs after signing into the JetBrains account, diff, and key
+  detection on whatever appears only when authed. Don't reintroduce a blocklist.
 - **Slow shutdown** (~54s measured, reboot trigger → final unmount; was framed
   as "Tailscale 2 min + umount.nfs4 a minute or two"). Traced via persistent
   journal + verbose autofs logging. Three contributors, in order of cost:

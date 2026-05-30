@@ -110,31 +110,6 @@
 - **ThinkPad docking**: investigate `dockd` or udev rules for dock/undock events
   (display reconfiguration, power profile switch).
 
-## Electron app UI scaling
-
-Five Electron apps are installed. Their UI may be fine at default scale on 1080p,
-but if they ever look too small, here's how to scale each:
-
-- **Slack** (`slack-electron`, system `electron39`) and **Teams**
-  (`teams-for-linux-electron`, system `electron41`): both wrapper scripts fall back
-  to `~/.config/electron-flags.conf`. Add `--force-device-scale-factor=1.4` there.
-  Teams also reads its own app-specific conf
-  (`~/.config/teams-for-linux-electron-flags.conf`) which avoids the double-application
-  that happens when using `electron-flags.conf` (Teams reads it, then `electron41` reads
-  it again).
-
-- **Signal**: has `~/.config/signal-desktop-flags.conf` support built into its launcher.
-
-- **Claude**: runs native Wayland automatically (no flags.conf hook). Options: local
-  desktop override at `~/.local/share/applications/claude.desktop`, or a wrapper at
-  `~/.local/bin/claude-desktop`.
-
-- **1Password**: add the flag to its `gatherd-systray` autostart entry in sway config.
-
-Ansible hook: write `~/.config/electron-flags.conf` (covers Slack + Teams) and
-`~/.config/signal-desktop-flags.conf` from the desktop role, using
-`--force-device-scale-factor={{ foot_font_size | float / 10.0 }}`.
-
 ## Multi-display
 
 - **Detection**: probe connected outputs, set a fact (e.g. `has_multiple_displays`) so tasks can condition on it

@@ -67,6 +67,10 @@
   any_errors_fatal: true
   environment:
     PATH: "{{ target_home }}/.local/bin:{{ ansible_env.PATH }}"
+    # su skips profile.d, so set the Go workspace here too; otherwise AUR
+    # builds that compile Go leave their module cache in ~/go.
+    GOPATH: "{{ target_home }}/.local/share/go"
+    GOBIN: "{{ target_home }}/.local/bin"
 
   roles:
     - dotfiles

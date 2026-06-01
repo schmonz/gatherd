@@ -203,6 +203,9 @@
 - Which Web Apps do I want?
     - iCloud: Drive, Find My Devices, Notes, Reminders, Maps
     - Other: Amazon, Duolingo, Reddit
+- **Web app icons not hi-res enough**: some web apps' icons look blurry/pixelated
+  in the Mod-Shift-D application menu. Audit each web app's icon, find higher-
+  resolution sources, and install them so they render crisply at the menu's size.
 - Set up VNC (see `VNC.md`)
 - JetBrains IDE settings, starting with font size
 - **Auto git pull on a cadence**: the sentinels now record the git HEAD that

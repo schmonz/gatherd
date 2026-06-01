@@ -8,14 +8,22 @@ nfs_server: ap-juicer.taile54b91.ts.net
 hardcoded_dotfiles_repo: "https://github.com/schmonz/dotfiles.git"
 hardcoded_ssh_authorized_keys_dotfile: ssh-authorized-keys
 # wifi_networks is defined entirely in vault — SSIDs are personal data, not just PSKs.
-# Desktop wallpaper + gtklock background, fetched at provision time
-# (roles/desktop/tasks/wallpaper.yml). Public images but me-specific, so the URLs
-# sit with the other hardcoded_* placeholders. Two variants — same composition,
-# dark-blue vs pink sky — so the wallpaper can follow the GTK light/dark scheme;
-# the lock screen always uses the dark one. An empty URL skips the fetch and
-# swaybg falls back to a solid color.
+# Desktop wallpaper + gtklock background + GRUB menu background. Public images but
+# me-specific, so the URLs sit with the other hardcoded_* placeholders. Two variants
+# — same composition, dark-blue vs pink sky — so the wallpaper can follow the GTK
+# light/dark scheme; the lock screen and GRUB always use the dark one. An empty URL
+# skips the fetch and swaybg falls back to a solid color.
+#
+# Fetched once into a system cache (roles/system/tasks/wallpaper_cache.yml) so the
+# dark image isn't pulled twice; both consumers read from there — GRUB at boot from
+# the cache path, the desktop/lock screen from local copies in the user's home.
+# Cache files keep a .png extension because GRUB's 00_header picks its image loader
+# by extension.
 hardcoded_wallpaper_dark_url: "https://raw.githubusercontent.com/dharmx/walls/main/minimal/a_blue_sky_over_a_mountain_range.png"
 hardcoded_wallpaper_light_url: "https://raw.githubusercontent.com/dharmx/walls/main/minimal/a_blue_and_pink_sky_over_a_mountain_range.png"
+wallpaper_cache_dir: "{{ setup_dir }}/backgrounds"
+wallpaper_cache_dark: "{{ wallpaper_cache_dir }}/wallpaper-dark.png"
+wallpaper_cache_light: "{{ wallpaper_cache_dir }}/wallpaper-light.png"
 wallpaper_dir: "{{ target_home }}/.local/share/backgrounds"
 wallpaper_dark_path: "{{ wallpaper_dir }}/wallpaper-dark"
 wallpaper_light_path: "{{ wallpaper_dir }}/wallpaper-light"

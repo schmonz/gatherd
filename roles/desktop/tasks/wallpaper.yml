@@ -1,9 +1,10 @@
 ---
-# Desktop wallpaper + gtklock background. Images are fetched from a configured
-# URL (personal content, not carried in this repo) into the user's data dir,
-# replacing the EndeavourOS azote leftover (~/.azotebg swaybg'ing a baked-in
-# SpaceStation PNG). A launcher picks the dark or light variant by the current
-# GTK color scheme, so a future darkman hook can re-run it on light/dark switch.
+# Desktop wallpaper + gtklock background. Images are copied from the system cache
+# (populated once by roles/system/tasks/wallpaper_cache.yml; personal content, not
+# carried in this repo) into the user's data dir, replacing the EndeavourOS azote
+# leftover (~/.azotebg swaybg'ing a baked-in SpaceStation PNG). A launcher picks the
+# dark or light variant by the current GTK color scheme, so a future darkman hook can
+# re-run it on light/dark switch.
 
 - name: Create wallpaper directory
   ansible.builtin.file:
@@ -11,15 +12,16 @@
     state: directory
     mode: '0755'
 
-- name: Fetch wallpaper images
-  ansible.builtin.get_url:
-    url: "{{ item.url }}"
+- name: Install wallpaper images from the system cache
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
     dest: "{{ item.dest }}"
     mode: '0644'
+    remote_src: true
   loop:
-    - { url: "{{ hardcoded_wallpaper_dark_url }}", dest: "{{ wallpaper_dark_path }}" }
-    - { url: "{{ hardcoded_wallpaper_light_url }}", dest: "{{ wallpaper_light_path }}" }
-  when: item.url | length > 0
+    - { src: "{{ wallpaper_cache_dark }}", dest: "{{ wallpaper_dark_path }}" }
+    - { src: "{{ wallpaper_cache_light }}", dest: "{{ wallpaper_light_path }}" }
+  when: item.src is exists
   loop_control:
     label: "{{ item.dest }}"
 

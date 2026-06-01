@@ -36,6 +36,7 @@ collapse_blanks() {
 is_thinkpad()     { grep -qi 'lenovo' /sys/class/dmi/id/board_vendor 2>/dev/null; }
 has_ir_receiver() { ls /dev/lirc* /sys/class/rc/rc* >/dev/null 2>&1; }
 has_resume()      { [ "$(systemctl is-enabled suspend.target 2>/dev/null)" != "masked" ]; }
+has_grub()        { [ -f /etc/default/grub ]; }
 
 # ---------------------------------------------------------------------------
 # App state detection
@@ -185,6 +186,7 @@ section_verify() {
     li 'Unqualified gatherd scripts: in a fresh terminal, run `gatherd-describe-machine` (or any gatherd-* script) by bare name — should run without a full path, confirming ~/.local/bin is on the session PATH'
     li 'Go workspace: run `go env GOPATH` — should print ~/.local/share/go, and `ls ~/go` should report no such directory (Go never fell back to creating it)'
     li 'Wallpaper + lock screen: the desktop shows the blue layered-mountains wallpaper (not the EndeavourOS space station), and locking (Super+F1) shows the same image behind the purple unlock form (not the EndeavourOS astronaut)'
+    has_grub && li 'GRUB background: reboot — the boot menu shows the same blue layered-mountains image (not the EndeavourOS splash) behind the menu entries'
     li '1Password SSH agent: after enabling "Use the SSH agent", run `ssh -T git@github.com` — should authenticate as schmonz after a 1Password approval prompt, with no private key on disk (`ls ~/.ssh` shows only config, known_hosts, authorized_keys)'
     has_resume && li 'Suspend over NFS: with a shell sitting in ~/trees (the Tailscale NFS mount), close the lid, wait, then reopen — should wake to the lock screen, not hang on a black screen'
     if is_thinkpad; then

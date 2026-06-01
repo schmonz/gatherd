@@ -41,6 +41,9 @@
     state: present
   when: has_ir_receiver
 
+- name: Cache wallpaper images for GRUB and the desktop
+  ansible.builtin.include_tasks: wallpaper_cache.yml
+
 - name: Install packages
   community.general.pacman:
     name:

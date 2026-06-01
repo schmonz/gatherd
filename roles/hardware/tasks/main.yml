@@ -33,6 +33,10 @@
       ansible.builtin.import_tasks: phantom_display.yml
       when: has_phantom_second_display
 
+    - name: Import GRUB background tasks
+      ansible.builtin.import_tasks: grub_background.yml
+      when: has_grub
+
     - name: Import zswap tasks
       ansible.builtin.import_tasks: zswap.yml
       when: not has_plenty_of_ram

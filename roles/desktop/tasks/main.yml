@@ -8,7 +8,6 @@
     - .local/bin
     - .config/arch-update
     - .config/systemd/user/timers.target.wants
-    - .config/systemd/user/default.target.wants
     - .config/gtklock
     - .config/environment.d
     - .config/sway/config.d
@@ -17,7 +16,7 @@
     - .config/chromium/Default
     - .config/vesktop
     - .local/share/org.localsend.localsend_app
-    - .cache/captive-browser
+    - .cache/captive-browser/Default
 
 - name: Enable system dark mode
   # Without this, the default ('default') leaves GTK, Flutter, and other apps guessing.
@@ -357,25 +356,6 @@
     src: /usr/lib/systemd/user/arch-update.timer
     state: link
 
-- name: Install gatherd user service units
-  # systemd-specific; will need a different mechanism on Artix/s6
-  ansible.builtin.copy:
-    src: "{{ setup_dir }}/services/user/{{ item }}"
-    dest: "{{ target_home }}/.config/systemd/user/{{ item }}"
-    mode: '0644'
-    remote_src: true
-  loop:
-    - gatherd-prompt-captiveportal.service
-
-- name: Enable gatherd user services
-  # systemd-specific; will need a different mechanism on Artix/s6
-  ansible.builtin.file:
-    path: "{{ target_home }}/.config/systemd/user/default.target.wants/{{ item }}"
-    src: "{{ target_home }}/.config/systemd/user/{{ item }}"
-    state: link
-  loop:
-    - gatherd-prompt-captiveportal.service
-
 - name: Configure captive-browser to use Ungoogled Chromium
   ansible.builtin.copy:
     dest: "{{ target_home }}/.config/captive-browser.toml"
@@ -387,13 +367,29 @@
         --user-data-dir="$HOME/.cache/captive-browser" \
         --proxy-server="socks5://$PROXY" \
         --no-first-run \
-        --disable-features=DnsOverHttps,HttpsUpgrades \
+        --no-default-browser-check \
+        --disable-extensions \
+        --disable-background-networking \
+        --disable-component-update \
+        --disable-sync \
+        --disable-features=DnsOverHttps,HttpsUpgrades,HttpsFirstBalancedMode,HttpsFirstModeV2,HttpsFirstModeIncognito \
         http://whatsmyip.schmonz.com
       """
 
       dhcp-dns = "nmcli -g IP4.DNS dev show $(nmcli -t -f DEVICE,TYPE,STATE dev | awk -F: '/wifi:connected/{print $1; exit}') | cut -d, -f1"
 
       socks5-addr = "localhost:1666"
+
+- name: Pre-seed captive-browser profile to skip first-run and HTTPS-First interstitial
+  # captive-browser uses its own helium profile (.cache/captive-browser), separate
+  # from the pre-seeded main one. Left unconfigured it did slow first-run/services
+  # work behind the portal and showed an HTTPS-First "site is not secure"
+  # interstitial on the HTTP portal URL. force: false so helium owns the file after.
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.cache/captive-browser/Default/Preferences"
+    content: '{"browser":{"check_default_browser":false},"helium":{"completed_onboarding":true,"services":{"schema_version":1,"user_consented":true}},"https_only_mode_enabled":false}'
+    force: false
+    mode: '0600'
 
 - name: Install gatherd-systray script
   ansible.builtin.copy:
@@ -690,20 +686,13 @@
     regexp: "^exec .*gatherd-show-slow-progress"
     line: "exec sh -c '[ -f /etc/gatherd/async-complete ] && exit 0; exec foot -e {{ target_home }}/.local/bin/gatherd-show-slow-progress'"
 
-- name: Remove autostart entries now managed as systemd user services
-  ansible.builtin.lineinfile:
-    path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
-    regexp: "^exec (?:.*/)?{{ item }}$"
-    state: absent
-  loop:
-    - gatherd-prompt-captiveportal
-
 - name: Add gatherd script autostart entries
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
     regexp: "^exec (?:.*/)?{{ item }}$"
     line: "exec {{ target_home }}/.local/bin/{{ item }}"
   loop:
+    - gatherd-prompt-captiveportal
     - gatherd-prompt-1password
     - gatherd-prompt-tailscale
     - gatherd-prompt-postsetup

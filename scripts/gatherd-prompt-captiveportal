@@ -1,9 +1,31 @@
 #!/bin/sh
-# Watches NM connectivity state; launches captive-browser on portal detection.
-LC_ALL=C nmcli monitor 2>/dev/null | while IFS= read -r line; do
-    case "$line" in
-        *[Cc]onnectivity*[Pp]ortal*)
-            pgrep -x captive-browser >/dev/null || captive-browser &
-            ;;
-    esac
+# Watches NM connectivity; launches captive-browser on portal detection.
+# Runs from sway autostart, not a systemd --user service: the GUI needs the
+# graphical session env (WAYLAND_DISPLAY/SWAYSOCK), which a user unit lacks, so
+# the browser it spawned never had a display to open on — the original bug.
+#
+# Event-driven via `nmcli monitor` (NOT a poll loop — polling would respawn
+# nmcli every couple seconds and block CPU idle, bad on battery). The catch:
+# nmcli's piped stdout is block-buffered, so a lone "Connectivity is now
+# 'portal'" line could sit unflushed for ~100s before the read loop saw it
+# (observed at LaPromNyack). `stdbuf -oL` forces line buffering so each event is
+# delivered the moment nmcli prints it.
+#
+# Self-restarting (replaces systemd Restart=always): respawns nmcli monitor if
+# it exits. captive-browser's output is logged — hitting a portal is a rare,
+# hard-to-stage event, so without a log there's nothing to diagnose afterward.
+log="${XDG_CACHE_HOME:-$HOME/.cache}/captive-browser.log"
+while :; do
+    LC_ALL=C stdbuf -oL nmcli monitor 2>/dev/null | while IFS= read -r line; do
+        case "$line" in
+            *[Cc]onnectivity*[Pp]ortal*)
+                pgrep -x captive-browser >/dev/null || {
+                    printf '\n===== portal detected %s; launching captive-browser =====\n' \
+                        "$(date '+%F %T')" >>"$log"
+                    captive-browser >>"$log" 2>&1 &
+                }
+                ;;
+        esac
+    done
+    sleep 1
 done

@@ -60,7 +60,44 @@
   of any single install and keeps `authorized_keys`/known-hosts from accumulating
   dead keys.
 
-- We do auto-join `LaPromNyack` WiFi (good!) but `captive-browser` doesn't pop up -- I have to open my regular browser manually and navigate to `whatsmyip.schmonz.com` manually in order to get the portal page and complete a working internet connection
+- **Captive portal auto-launch — corrected status (2026-06-01, after real-usage
+  testing at LaPromNyack; force re-capture with a temporary random MAC:
+  `nmcli connection modify --temporary LaPromNyack 802-11-wireless.cloned-mac-address random` then down/up — resets on reboot, and note `networking off/on` also regenerates the MAC):**
+  - **DONE** — moved the watcher off the systemd `--user` service (its env had no
+    `WAYLAND_DISPLAY`/`SWAYSOCK`, so the GUI it spawned had no display — the original
+    "never pops" bug) onto sway autostart, which inherits the session env.
+  - **FIXED — HTTPS-First "site is not secure" modal.** `captive-browser.toml` now
+    disables `HttpsUpgrades,HttpsFirstBalancedMode,HttpsFirstModeV2,HttpsFirstModeIncognito`
+    and the captive profile seeds `https_only_mode_enabled=false`. Confirmed: the portal
+    page renders directly, no interstitial.
+  - **APPLIED but UNVERIFIED — nmcli monitor buffering fix.** The worst delay (~100s) was
+    `nmcli monitor`'s piped stdout block-buffering: a lone "Connectivity is now 'portal'"
+    line sat in the 4KB buffer until a later event flushed it. Fix: `stdbuf -oL nmcli monitor`.
+    NOT proven — the flap test produced >4KB and flushed regardless, so it didn't isolate
+    stdbuf. Confirm on the next real portal; the watcher now timestamps detection into
+    `~/.cache/captive-browser.log`.
+  - **INEFFECTIVE — `--disable-extensions`.** Log still shows helium loading ublock
+    (`managed_storage.json`); cold start unchanged. Drop it or find the real lever.
+  - **Latency breakdown (measured, join → portal page ~70s):** join → NM `portal` ~3-5s;
+    `portal` → watcher launch ~0s *if stdbuf works* (was ~100s); captive-browser
+    "Obtaining DHCP DNS" → proxy ready **~24s** (mystery wait, browser-agnostic —
+    investigate); proxy ready → portal page renders **~44s**, which is NOT helium cold
+    start (plain helium window = 2.9s, captive-profile copy = 2.6s) — it's navigation
+    through the SOCKS5 proxy on the captured net (hypothesis: the proxy became ready the
+    instant helium launched, so helium hit a dead proxy and backed off ~40s). NOT yet
+    measured: window-map vs page-render timing in the captive case.
+  - **Netsurf (deferred):** could replace helium for a much faster launch, falling back to
+    manually opening Helium when a portal page is too tricky for Netsurf. Uncertain win:
+    the bottleneck is the proxy/navigation path, not browser launch (helium is 3s), so it
+    only helps if the 44s is Chromium-specific (proxy-retry backoff / HTTPS attempts); the
+    24s DHCP-DNS step is browser-agnostic and remains. Netsurf must honor a SOCKS5 proxy
+    (looks like it has proxy options — confirm).
+  - **Next steps:** (1) confirm stdbuf on the next real portal via the log; (2) chase the
+    24s "Obtaining DHCP DNS"; (3) measure window-map vs page-render; (4) start the SOCKS
+    proxy *before* launching the browser (or add browser-side retry) to kill the ~44s;
+    (5) **auto-close the captive-browser window once connectivity returns to `full`**;
+    (6) evaluate Netsurf. Re-verify by the visible window + page, confirmed by a human, not
+    by pgrep.
 - Chromebook gets described as `Google Robo (rev3)`, want it to say `Lenovo Chromebook 100e`, not seeing any helpful strings in `dmidecode` output
 - **Auto-detect JetBrains account login**: `section_jetbrains` is now "never
   auto-done" (the old `jetbrains_authed` blocklist false-positived because

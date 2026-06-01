@@ -2,6 +2,34 @@
 
 > Plan for a fresh agent. Self-contained. Read "Diagnosis status" before writing any code.
 
+## Status (2026-06-01) — café trip resolved the open questions; live tracker is plans/TODO.md
+
+This plan is largely **executed**. The facts below supersede the Phase 1/Phase 2 framing
+further down (kept as historical record):
+
+- **Phase 1 DONE.** Watcher moved off the systemd `--user` service onto sway autostart. The
+  original "never pops" root cause: the user-service env had no `WAYLAND_DISPLAY`/`SWAYSOCK`,
+  so the Wayland GUI it spawned had no display. Autostart inherits the session env.
+- **Phase 2 question ANSWERED — no trigger-condition change needed.** At the café,
+  `nmcli networking connectivity` = **`portal`**, so the existing `*Connectivity*Portal*`
+  match was right all along. The failure was never the match condition.
+- **The real remaining problem is latency, not the trigger** (measured join→portal-page ~70s):
+  - **nmcli monitor buffering (~100s, the worst offender).** `nmcli monitor`'s piped stdout
+    block-buffers, so a lone "Connectivity is now 'portal'" line sat unflushed until a later
+    event filled the 4KB buffer. Fixed with `stdbuf -oL nmcli monitor` — **applied but NOT yet
+    verified** (the flap test flooded >4KB and flushed regardless, so it didn't isolate the
+    fix; confirm on the next real portal — the watcher now logs detection time to
+    `~/.cache/captive-browser.log`).
+  - **~24s captive-browser "Obtaining DHCP DNS"** (mystery, browser-agnostic) **+ ~44s
+    navigation through the SOCKS5 proxy on the captured net.** NOT helium cold-start — plain
+    helium windows in ~2.9s. Still open.
+- **HTTPS-First "site is not secure" modal — FIXED:** `captive-browser.toml` now disables
+  `HttpsUpgrades,HttpsFirstBalancedMode,HttpsFirstModeV2,HttpsFirstModeIncognito` and the
+  captive profile seeds `https_only_mode_enabled=false`.
+- **`gatherd-debug-captiveportal` recreated** on local disk (still not versioned).
+- **Authoritative live status + next steps now live in `plans/TODO.md`** ("Captive portal
+  auto-launch — corrected status"). The sections below are the original plan.
+
 ## Problem
 
 On captive-portal wifi (e.g. `LaPromNyack`), `captive-browser` does **not** auto-launch.

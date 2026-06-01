@@ -20,18 +20,23 @@
   have everything else derive from it. End state: supply one thing you know, run
   gatherd, and the machine reconstitutes its own credentials with no secret files
   copied around by hand.
-- **Wire SSH/git to the 1Password SSH agent**: the 1Password desktop app ships an
-  SSH agent that keeps private keys in the vault and signs in-app with per-use
-  approval — the key never touches disk. Configure `~/.ssh/config` with
-  `IdentityAgent ~/.1password/agent.sock` (plus `SSH_AUTH_SOCK` via `/etc/profile.d`
-  and an `~/.config/1Password/ssh/agent.toml` for which vaults to offer), and
-  enable Settings → Developer → "Use the SSH agent" in the app (GUI state —
-  overlaps the "Script GUI app setup" item). Public keys still go to
-  `authorized_keys`/GitHub; only the private side moves into 1Password. Also
-  covers git SSH commit signing, which pairs with the managed `.gitconfig`.
-  Boundary: the agent is interactive and needs the unlocked desktop app, so it
-  serves the *user's* SSH/git only — any credential gatherd needs during its own
-  root-run provisioning stays on the bootstrap path above, not the agent.
+- **Git SSH commit signing via the 1Password agent**: agent *auth* for git/ssh is
+  wired (`roles/desktop/tasks/ssh-agent.yml` sets `IdentityAgent` for github.com;
+  the "Use the SSH agent" GUI toggle is a documented post-setup step). Still to do:
+  turn on SSH *commit signing* with the same agent-held key — set `gpg.format=ssh`,
+  `user.signingkey` to the public key, and `commit.gpgsign=true` in the managed
+  `.gitconfig`, and register the key as a GitHub *signing* key (separate from the
+  auth key). Boundary unchanged: the agent needs the unlocked desktop app, so it
+  serves the *user's* git/ssh only; gatherd's own root-run provisioning stays on
+  the bootstrap path above, not the agent.
+- **Optionally pre-populate `~/.ssh/known_hosts`** (default stays trust-on-first-use):
+  for hosts we hit often (GitHub, the NAS `ap-juicer`, Tailscale nodes), seed
+  known_hosts so first connections don't prompt. Must survive key rotation — derive
+  the keys from an authenticated source *each run*, never a static pin (a stale
+  pinned key makes ssh refuse the rotated one until the repo is fixed): GitHub
+  publishes current keys at `https://api.github.com/meta` over TLS; for our own
+  hosts, read their `/etc/ssh/*.pub` during provisioning or carry them in the vault.
+  Opt-in convenience, not hardening — TOFU is fine by default.
 - **Materialize file-based secrets via the `op` CLI**: for secrets that must exist
   as real files on disk (a tool that reads a token from a path, a config that
   can't talk to an agent), use the already-installed 1Password CLI to `op read`

@@ -1,0 +1,22 @@
+---
+# Route the user's git/ssh to GitHub through the 1Password SSH agent: the
+# private key lives in the vault and is signed for in-app per use, never on
+# disk. Only this file-based wiring is automated — enabling the agent is a GUI
+# toggle (Settings → Developer → "Use the SSH agent") that 1Password
+# HMAC-protects against external edits, so it stays a manual post-setup step.
+
+- name: Ensure the user's .ssh directory exists
+  ansible.builtin.file:
+    path: "{{ target_home }}/.ssh"
+    state: directory
+    mode: '0700'
+
+- name: Point github.com at the 1Password SSH agent
+  ansible.builtin.blockinfile:
+    path: "{{ target_home }}/.ssh/config"
+    create: true
+    mode: '0600'
+    marker: "# {mark} ANSIBLE MANAGED BLOCK: 1Password SSH agent"
+    block: |
+      Host github.com
+          IdentityAgent ~/.1password/agent.sock

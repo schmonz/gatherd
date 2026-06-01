@@ -619,6 +619,9 @@
     mode: '0644'
   loop: "{{ web_apps }}"
 
+- name: Wire git/ssh to the 1Password SSH agent
+  ansible.builtin.import_tasks: ssh-agent.yml
+
 - name: Install gatherd-prompt-1password script
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-prompt-1password"

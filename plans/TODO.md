@@ -1,11 +1,15 @@
 # TODO
 
+- arch-update: can running the update be less interactive? lots of reading and
+  agreeing. Dunno if I want full automatic but fewer interactions for sure
 - Automate preparing a local package mirror on a USB stick (such as Ventoy),
   for quicker bootstrapping on terrible/absent network
 - Adjust the plan for migrating to Arch: can't count on Ethernet when traveling.
   We have to handle WiFi drivers during install.
 - Custom background and lockscreen images: suggest genres, then images.
   (Right now we have only dark mode, but it will auto-switch at some point.)
+- need an email app. remember I'm the guy that loved MacSOUP. Also gonna want
+  to preconfigure it with (explicitly hardwired for now) servers, other settings
 
 ## Secrets
 
@@ -128,7 +132,47 @@
     the shutdown log-upload retries, or drop the stop timeout to ~5s.
   - **Reframe**: "Tailscale 2 min" is no longer true (capped at 10s of wasted
     log-flush). Biggest win is the tmux pane scope, not NFS or Tailscale.
-- **NFS mount slow to return after resume**: suspend itself is fixed
+- **NFS over the WAN → migrate to Syncthing (decided 2026-06-01).** Relying on the
+  autofs NFS-over-Tailscale mount for code edits is fragile by design: NFS is a LAN
+  protocol, and roaming / sleep / captive-portal / Tailscale-bounce events wedge it.
+  *Exhibit A:* a Tailscale bounce + café→home roam left the `soft` mount EIO-wedged for
+  10+ min; needed `sudo umount -f -l` + `sudo systemctl restart autofs`, and it still
+  wouldn't remount with ap-juicer at 4ms (NFSv4 server-side lease/state) — only a reboot
+  cleared it.
+  - **Decision:** run Syncthing natively (local disk) on the NAS and every machine,
+    peer-to-peer over Tailscale. Edits always target a local copy (fast, offline-tolerant,
+    never WAN-blocked); changes propagate in seconds when connected. Every tree is a
+    Syncthing folder on the NAS (always-on hub/introducer = central store + repave
+    source); each machine subscribes to the subset it wants, cold trees on demand. Remove
+    NFS + autofs once proven. Keep SSHFS only as a manual poke tool (its no-sudo
+    `fusermount -u` recovery is why it wins for that). Harden NAS Syncthing: GUI on
+    localhost/Tailscale only, global discovery + relaying off, device IDs pinned to static
+    Tailscale addresses.
+  - **Caveats:** (1) conflicts, not last-write-wins → `.sync-conflict-*` files; one machine
+    at a time per tree, git is the real conflict layer. (2) "immediate" = a few seconds.
+    (3) `.stignore` build junk; don't run git on two machines while a live `.git` syncs
+    (corruption) — one-at-a-time or use git remotes. (4) repave ordering: gatherd arrives
+    via git bootstrap, *then* installs Syncthing, *then* trees sync down (no instant
+    mount-everything).
+  - **Migration (parallel run; NFS stays as instant rollback until proven):** A) gatherd
+    installs+hardens Syncthing on NAS + machines, NAS shares the existing `/export/code`
+    trees as folders, NFS untouched. B) validate behavior for a window — edit via the
+    local copies; confirm propagation and the exact roam/offline→reconnect case NFS failed
+    at, plus `.stignore`, local git/grep/IDE speed, a deliberate conflict. C) validate
+    repave/bootstrap (riskiest unknown) on a VM or next real repave. D) cut over: local
+    copies primary, stop mounting NFS for daily work. E) decommission NFS + autofs from
+    gatherd; SSHFS stays as the manual tool.
+  - **Considered & rejected:** hardened NFS (soft→hard + auto-remount watchdog) keeps the
+    model but is still a stateful live mount with no offline edit — its auto-remount
+    watchdog is worth keeping only as an optional A–C interim safety net. AFS — purpose-
+    built but heavy (Kerberos cell, OpenAFS kernel module lags Arch) and weak at
+    disconnected *writes* (the roaming case). SSHFS-as-substrate — better mount than NFS
+    but still live / no-offline + slow for code; demoted to manual tool. Stacking Syncthing
+    on a network mount — anti-pattern (loses inotify → heavy rescans; reinherits the mount
+    fragility); Syncthing must run on local disk on every node incl. the NAS.
+- **NFS mount slow to return after resume** *(superseded by the Syncthing migration above
+  once it reaches Phase E; the autofs `negative_timeout` tuning below stays useful as an
+  A–C interim safety net)*: suspend itself is fixed
   (`gatherd-unmount-nfs` force-unmounts before sleep so the freeze succeeds),
   but after unlock the `~/trees` NFS mount takes ~1 min to come back. Network
   and Tailscale recover in ~5s, so the delay is NOT reconnect time.

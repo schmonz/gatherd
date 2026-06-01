@@ -171,3 +171,43 @@
   at an out-of-repo path; network-fetched config in `postinstall`. Add an
   early `assert` listing every required key so missing config fails fast
   instead of silently skipping tasks.
+
+## Secrets
+
+- **Single-credential first-run bootstrap**: a repave currently needs secrets
+  supplied by several different paths — the Ansible vault password dropped as a
+  plaintext `.vault_pass` file (watched by `gatherd-vault.path`), an interactive
+  1Password sign-in (login keyring + CLI toggle, see `section_1password`), and
+  per-service web logins. Private SSH keys aren't managed at all; only the public
+  `authorized_keys` come from the dotfiles repo. Collapse this toward **one
+  memorized credential that unlocks the rest**: decide what the root secret is
+  (1Password master password? a passphrase that decrypts an in-repo store?) and
+  have everything else derive from it. End state: supply one thing you know, run
+  gatherd, and the machine reconstitutes its own credentials with no secret files
+  copied around by hand.
+- **Fetch private credentials from 1Password**: the 1Password CLI is already
+  installed and scripts depend on it (`gatherd-prompt-pia`). Once signed in,
+  gatherd could pull private SSH keys, API tokens, and other per-account secrets
+  via `op` and install them, instead of leaving them as manual post-setup steps.
+  This makes the 1Password master password the only carried secret for the
+  credential half. Decide which items live in 1Password vs the vault, and a
+  deterministic naming/lookup scheme so the fetch is scriptable.
+- **Don't leave the vault password on disk**: `.vault_pass` sits in plaintext at
+  `/usr/local/lib/gatherd/.vault_pass` for the life of the machine (the `.path`
+  units only need it to *exist*). Investigate supplying it without a persistent
+  plaintext artifact — prompt once and cache in the kernel keyring, pass it as a
+  systemd credential, or derive it from a hardware token — then remove the file.
+  Keeps a long-lived secret out of the filesystem after first run.
+- **Hardware-token-backed unlock (FIDO2)**: fits the existing smart-card and
+  fingerprint threads. Support FIDO2 `sk-` SSH keys, and consider a hardware key
+  as a second factor for the first-run bootstrap, so that neither possession of
+  the disk nor knowledge of a single passphrase is sufficient on its own to
+  reconstitute credentials. Probe for a connected key in `machine_facts`
+  (`has_fido2_key`) and branch key generation/enrollment accordingly.
+- **Rotate / revoke credentials per install**: treat each install's secrets as
+  disposable. A machine that's repaved or retired should have its SSH keys and
+  per-machine tokens cheaply revocable and reissuable rather than long-lived. Add
+  a play (or documented step) that reissues this machine's keys on first run and
+  revokes the prior ones from wherever they were trusted. Bounds the blast radius
+  of any single install and keeps `authorized_keys`/known-hosts from accumulating
+  dead keys.

@@ -6,8 +6,6 @@
   for quicker bootstrapping on terrible/absent network
 - Adjust the plan for migrating to Arch: can't count on Ethernet when traveling.
   We have to handle WiFi drivers during install.
-- Custom background and lockscreen images: suggest genres, then images.
-  (Right now we have only dark mode, but it will auto-switch at some point.)
 - need an email app. remember I'm the guy that loved MacSOUP. Also gonna want
   to preconfigure it with (explicitly hardwired for now) servers, other settings
 

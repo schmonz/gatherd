@@ -11,6 +11,7 @@
     - .config/gtklock
     - .config/environment.d
     - .config/sway/config.d
+    - .config/sway/scripts
     - .local/share/applications/kde4
     - .config/net.imput.helium/Default
     - .config/chromium/Default
@@ -41,6 +42,9 @@
     src: gtklock-config.ini.j2
     dest: "{{ target_home }}/.config/gtklock/config.ini"
     mode: '0644'
+
+- name: Configure desktop wallpaper and lock-screen background
+  ansible.builtin.import_tasks: wallpaper.yml
 
 - name: Remove stock swayidle entries superseded by our configuration
   ansible.builtin.lineinfile:

@@ -183,6 +183,7 @@ section_verify() {
     li 'Autologin still works: after a repave, boot straight to the Sway desktop without a greetd login prompt (upstream Sway CE honors the installer autologin pref, so we no longer write an [initial_session] stanza ourselves)'
     li 'Unqualified gatherd scripts: in a fresh terminal, run `gatherd-describe-machine` (or any gatherd-* script) by bare name — should run without a full path, confirming ~/.local/bin is on the session PATH'
     li 'Go workspace: run `go env GOPATH` — should print ~/.local/share/go, and `ls ~/go` should report no such directory (Go never fell back to creating it)'
+    li 'Wallpaper + lock screen: the desktop shows the blue layered-mountains wallpaper (not the EndeavourOS space station), and locking (Super+F1) shows the same image behind the purple unlock form (not the EndeavourOS astronaut)'
     has_resume && li 'Suspend over NFS: with a shell sitting in ~/trees (the Tailscale NFS mount), close the lid, wait, then reopen — should wake to the lock screen, not hang on a black screen'
     if is_thinkpad; then
         li 'ThinkVantage button (T60): press blue ThinkVantage button — should open a terminal'

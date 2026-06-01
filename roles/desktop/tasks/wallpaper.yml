@@ -1,0 +1,70 @@
+---
+# Desktop wallpaper + gtklock background. Images are fetched from a configured
+# URL (personal content, not carried in this repo) into the user's data dir,
+# replacing the EndeavourOS azote leftover (~/.azotebg swaybg'ing a baked-in
+# SpaceStation PNG). A launcher picks the dark or light variant by the current
+# GTK color scheme, so a future darkman hook can re-run it on light/dark switch.
+
+- name: Create wallpaper directory
+  ansible.builtin.file:
+    path: "{{ wallpaper_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Fetch wallpaper images
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ item.dest }}"
+    mode: '0644'
+  loop:
+    - { url: "{{ hardcoded_wallpaper_dark_url }}", dest: "{{ wallpaper_dark_path }}" }
+    - { url: "{{ hardcoded_wallpaper_light_url }}", dest: "{{ wallpaper_light_path }}" }
+  when: item.url | length > 0
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Install wallpaper launcher
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.config/sway/scripts/gatherd-set-wallpaper"
+    mode: '0755'
+    content: |
+      #!/bin/bash
+      # Managed by gatherd (roles/desktop/tasks/wallpaper.yml). Sets the Sway
+      # desktop wallpaper to match the current GTK color scheme; a darkman hook
+      # can re-run it on light/dark switch. Falls back to a solid color when no
+      # image is present.
+      pkill -x swaybg 2>/dev/null
+      dir="$HOME/.local/share/backgrounds"
+      case "$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null)" in
+          *light*) img="$dir/wallpaper-light" ;;
+          *)       img="$dir/wallpaper-dark" ;;
+      esac
+      [ -f "$img" ] || img="$dir/wallpaper-dark"
+      if [ -f "$img" ]; then
+          exec swaybg -i "$img" -m fill
+      else
+          exec swaybg -c '#282a36'
+      fi
+
+- name: Point Sway at the wallpaper launcher
+  ansible.builtin.replace:
+    path: "{{ target_home }}/.config/sway/config.d/theme"
+    regexp: '^exec ~/\.azotebg$'
+    replace: 'exec ~/.config/sway/scripts/gatherd-set-wallpaper'
+
+- name: Set gtklock lock-screen background (overrides via CSS)
+  # gtklock auto-loads ~/.config/gtklock/style.css; its window background-image
+  # beats the -b/background config key, so the lock background lives here.
+  ansible.builtin.template:
+    src: gtklock-style.css.j2
+    dest: "{{ target_home }}/.config/gtklock/style.css"
+    mode: '0644'
+
+- name: Remove EndeavourOS wallpaper leftovers
+  ansible.builtin.file:
+    path: "{{ target_home }}/{{ item }}"
+    state: absent
+  loop:
+    - .azotebg
+    - .config/sway/EndeavourOS_SpaceStation__3840x2160.png
+    - .config/gtklock/EndeavourOS_Astronaut_SpaceWalk.png

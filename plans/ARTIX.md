@@ -41,12 +41,65 @@ Files: `roles/desktop/tasks/main.yml`
 
 ---
 
-### Step 2 — Handle Broadcom `wl` driver
-*EOS live install detects Broadcom wifi and offers to install the out-of-tree driver. Vanilla
-Arch won't do this, so gatherd must detect and install it, and the bootstrap must handle the
-live-environment chicken-and-egg problem.*
+### Step 2 — Bring up WiFi during bootstrap (no ethernet assumption)
+*The original plan assumed ethernet for the live-environment `pacstrap`. That breaks the
+travel case the whole machine is built for: the only link may be WiFi. Bootstrap must connect
+over WiFi, and the installed system must come up on WiFi **before** gatherd's first package
+download. Broadcom's out-of-tree `wl` is a sub-case of this, not the whole story — most cards
+just work; the plan has to make the common case automatic and the awkward case possible.*
 
-**Post-install (Ansible side):**
+**Three places to get online, each solved separately:**
+
+**1. Live ISO — before `pacstrap`/`archinstall`.**
+The Arch ISO ships `iwd`; `iwctl` connects scriptably, so for any in-kernel-driver card
+(the common case, see table) this is the whole job:
+```sh
+iwctl --passphrase "$WIFI_PSK" station wlan0 connect "$WIFI_SSID"
+```
+Creds can't come from the Ansible vault yet (not decryptable this early — the
+single-credential-bootstrap and vault-on-disk items in TODADO bear on this), so `bootstrap.sh`
+takes `WIFI_SSID`/`WIFI_PSK` as env vars or prompts, mirroring its existing headless/prompt
+fallback. A **captive portal** in the live environment is out of scope for bootstrap (it needs
+a browser — see the captive-portal saga in TODO); assume an open or PSK network here, or
+tether. Verify connectivity (`ping`/DNS) before proceeding so a portal/no-link fails fast with
+a clear message instead of a cryptic `pacstrap` error.
+
+**2. Installed system, first boot — before gatherd installs packages.**
+gatherd needs DNS + network for its very first package tasks, and its own `wifi.yml` runs far
+too late to bootstrap connectivity for itself. So the `arch-chroot` block must seed **one**
+working connection from the same bootstrap creds and enable the manager:
+```sh
+# write /etc/NetworkManager/system-connections/<ssid>.nmconnection (mode 0600), then:
+systemctl enable NetworkManager
+```
+This is the minimum to reach a first boot that's already online; gatherd then writes the full
+`wifi_networks` set on top. (If the installed system uses iwd rather than NetworkManager,
+seed `/var/lib/iwd/<ssid>.psk` instead — pick one manager and be consistent with `wifi.yml`.)
+
+**3. Post-first-boot — steady state.**
+Already handled: `roles/system/tasks/wifi.yml` writes every known network from the vault.
+
+**Driver classes — what the ISO can drive vs what needs help:**
+
+| Class | Examples | On Arch ISO? | Action |
+|---|---|---|---|
+| In-kernel | Intel `iwlwifi`, Atheros `ath9k/10k/11k`, MediaTek `mt76`, most Realtek `rtw88/89` | Yes (firmware in `linux-firmware`) | None — `iwctl` just works |
+| Out-of-tree DKMS | Broadcom `wl`, some Realtek USB (`rtl8821au` etc.) | **No** | Chicken-and-egg — see below |
+
+**Out-of-tree driver chicken-and-egg (Broadcom `wl` and friends).**
+The card can't reach the network to fetch the driver the network needs. Options, in order of
+preference:
+1. **Stage the driver on the boot USB.** The Ventoy/USB-mirror TODO ("Automate preparing a
+   local package mirror on a USB stick") is the natural carrier: drop `broadcom-wl-dkms` (plus
+   `dkms` + kernel headers, or a prebuilt `broadcom-wl` matching the ISO kernel) on the stick;
+   `bootstrap.sh` `pacman -U`s it from the USB before any network step, blacklists conflicts,
+   `modprobe wl`. Solves travel cleanly with no custom ISO.
+2. **Custom Arch ISO** with the driver baked in — most robust, but reintroduces the ISO
+   maintenance burden we left EOS to escape.
+3. **Tether** (USB phone / USB-ethernet) for bootstrap only — a documented manual fallback,
+   not automation.
+
+**Post-install Broadcom driver (Ansible side — for the installed system, unchanged):**
 
 - `roles/machine_facts/tasks/main.yml`: add `has_broadcom_wifi` probe using `lspci -n`.
   Broadcom wifi PCI IDs include `14e4:4311`, `14e4:4312`, `14e4:4313`, `14e4:4315`,
@@ -66,27 +119,13 @@ live-environment chicken-and-egg problem.*
     when: has_broadcom_wifi
   ```
 
-**During bootstrap (live environment):**
-
-The Arch ISO does not ship the `wl` module. If the target machine has only Broadcom wifi
-(no ethernet), the bootstrap script cannot reach the network to run `pacstrap`.
-
-Options in order of preference:
-1. **Use ethernet for bootstrap** — document this as a requirement in `bootstrap.sh` and
-   README; the Ansible role handles wifi after first boot.
-2. **Auto-detect and load `wl` in `bootstrap.sh`** — before any network operations, probe
-   `lspci -n` for Broadcom PCI IDs, and if found: install `broadcom-wl` (available in
-   `archlinux-keyring` / AUR, or carry it on a second USB), blacklist conflicting modules,
-   run `modprobe wl`. This is fragile on the live ISO but avoids the ethernet requirement.
-3. **Use a custom Arch ISO** with `broadcom-wl` pre-loaded — most robust but requires
-   maintaining an ISO build.
-
-Option 1 is the starting point; document the constraint clearly. Option 2 can be added
-later if needed.
-
-**Test:** On a machine with a Broadcom wifi card (no ethernet), run `bootstrap.sh` via
-ethernet, reboot, confirm wifi is working in the Sway session (NetworkManager / `wl`
-module loaded, no conflicting modules).
+**Test (common case):** On an Intel/Atheros laptop with **no ethernet**, boot the Arch ISO,
+run `bootstrap.sh` with `WIFI_SSID`/`WIFI_PSK` set; confirm it connects via `iwctl`, `pacstrap`
+runs over WiFi, and first boot comes up online (gatherd installs packages with no ethernet ever
+attached).
+**Test (Broadcom case):** Same on a Broadcom-only laptop with the driver staged on the USB;
+confirm `wl` loads from the USB before any network step, the rest proceeds identically, and
+WiFi works in the Sway session (`wl` loaded, no conflicting modules).
 
 ---
 

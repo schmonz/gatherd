@@ -4,8 +4,6 @@
   agreeing. Dunno if I want full automatic but fewer interactions for sure
 - Automate preparing a local package mirror on a USB stick (such as Ventoy),
   for quicker bootstrapping on terrible/absent network
-- Adjust the plan for migrating to Arch: can't count on Ethernet when traveling.
-  We have to handle WiFi drivers during install.
 - need an email app. remember I'm the guy that loved MacSOUP. Also gonna want
   to preconfigure it with (explicitly hardwired for now) servers, other settings
 

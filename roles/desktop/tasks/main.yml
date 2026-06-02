@@ -7,6 +7,7 @@
   loop:
     - .local/bin
     - .config/arch-update
+    - .config/yay
     - .config/systemd/user/timers.target.wants
     - .config/gtklock
     - .config/environment.d
@@ -345,6 +346,35 @@
     content: |
       AURHelper=yay
       NoFlatpak
+    mode: '0644'
+
+- name: Configure yay to cut arch-update's interactive churn
+  # arch-update has no NoConfirm option of its own; it shells out to `pacman -Syu`
+  # then `yay -Syu`. On an AUR-heavy box yay's per-package diff/clean/edit menus and
+  # one proceed prompt per package are the bulk of the "reading and agreeing", so we
+  # tame the helper instead. batchinstall collapses all AUR packages into a single
+  # pacman transaction (one proceed prompt, not one each); sudoloop keeps the sudo
+  # timestamp warm so long builds don't re-prompt for the password. useask stays off
+  # on purpose: provider/replacement conflicts still ask, so judgment is preserved.
+  # The repo `pacman -Syu` proceed prompt is unavoidable (no supported hook to pass
+  # --noconfirm, and pacman.conf has no assume-yes directive) and stays as one keypress.
+  # Partial config: yay merges these over its defaults and only rewrites the file on
+  # --save, which arch-update never passes, so this stays idempotent.
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.config/yay/config.json"
+    content: |
+      {
+        "cleanmenu": false,
+        "diffmenu": false,
+        "editmenu": false,
+        "answerclean": "None",
+        "answerdiff": "None",
+        "answeredit": "None",
+        "removemake": "yes",
+        "cleanAfter": true,
+        "sudoloop": true,
+        "batchinstall": true
+      }
     mode: '0644'
 
 - name: Configure xdg-terminal-exec to use foot

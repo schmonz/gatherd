@@ -118,3 +118,16 @@
     state: started
   become: true
   become_user: root
+
+# Daily-driver dev tree lives on the NFS mount; log mount/expire/failure events
+# so resume-time and shutdown-time NFS behaviour is observable in the journal.
+# Done here, not in the system play's nfs_client.yml, because autofs.conf ships
+# with the autofs AUR package installed just above and does not exist earlier.
+- name: Set autofs logging to verbose
+  ansible.builtin.lineinfile:
+    path: /etc/autofs/autofs.conf
+    regexp: '^#?\s*logging\s*='
+    line: 'logging = verbose'
+  become: true
+  become_user: root
+  notify: Restart autofs

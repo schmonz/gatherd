@@ -29,16 +29,10 @@
     - Reload autofs
     - Etckeeper commit
 
-# Daily-driver dev tree lives on this mount; log mount/expire/failure events
-# so resume-time and shutdown-time NFS behaviour is observable in the journal.
-- name: Set autofs logging to verbose
-  ansible.builtin.lineinfile:
-    path: /etc/autofs/autofs.conf
-    regexp: '^#?\s*logging\s*='
-    line: 'logging = verbose'
-  notify:
-    - Restart autofs
-    - Etckeeper commit
+# Note: verbose autofs logging is set in the aur role, after the autofs AUR
+# package (and its /etc/autofs/autofs.conf) is installed — patching it here, in
+# the system play, would fail on a fresh repave because the file doesn't exist
+# yet.
 
 - name: Create ~/.autofs-mounts
   ansible.builtin.file:

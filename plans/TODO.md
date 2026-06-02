@@ -1,5 +1,45 @@
 # TODO
 
+## From repave 2026-06-01 (work down in order)
+
+### Bugs — broke or degraded the run
+- **gatherd-async hits the systemd start-limit on first boot**: first user session
+  showed `gatherd-async.service: Start request repeated too quickly` →
+  `start-limit-hit` → "Failed to start gatherd background package installation."
+  It restarted too many times too fast and got rate-limited, so the async slow
+  packages never ran. Find why it's restart-looping (likely a dependency or a
+  precondition that isn't met yet at that point in boot) and fix the unit so it
+  either waits or doesn't thrash.
+- **Stray terminal pops briefly on login**: a terminal window flashes open for an
+  instant during the first user session — suspected to be the async run launching a
+  terminal it didn't need. If there's no work to do, don't pop a window at all.
+- **Tailscale `--set-operator` race**: first session, the systray reads
+  `no permission to manage tailscale`; by a later session it's fine. Looks like
+  `--set-operator` lands after the systray/session already came up. Sequence it so
+  the operator is set before the user session needs it.
+
+### Post-setup notes correctness
+- **Helium/rclone conditional is backwards**: the post-setup notes instruct an
+  icloud.com login under Helium, gated by `icloud_configured`. That conditional
+  should instead gate the **`rclone config`** notes — the icloud.com login step
+  shouldn't be there. Rewire `icloud_configured` to control the rclone section.
+- **Re-author the lost rclone setup notes**: the handwritten rclone setup notes got
+  eaten and are gone. Reconstruct them (and fold into the `icloud_configured`/rclone
+  section above so they're managed, not handwritten).
+
+### greetd / theming
+- **greetd background image**: greetd shows its own background image — override it
+  with ours (same wallpaper as desktop + GRUB, per the recent GRUB-background work).
+
+### New conveniences wanted
+- **chsh to zsh**: make zsh the login shell as part of provisioning.
+- **Install mattwynne/yaks non-interactively**: want it installed without
+  `curl | bash` and without interactive prompts. Find/derive a scriptable install
+  path (clone + run a documented installer step, or package it) for gatherd to drive.
+- a cooler tmux status bar
+
+---
+
 - arch-update: can running the update be less interactive? lots of reading and
   agreeing. Dunno if I want full automatic but fewer interactions for sure
 - Automate preparing a local package mirror on a USB stick (such as Ventoy),

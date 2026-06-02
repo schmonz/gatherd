@@ -1,0 +1,9 @@
+---
+# Log level changes are only read at daemon start, not on SIGHUP reload.
+- name: Restart autofs
+  ansible.builtin.systemd:
+    name: autofs
+    state: restarted
+  failed_when: false
+  become: true
+  become_user: root

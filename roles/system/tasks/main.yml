@@ -414,6 +414,11 @@
     name: "{{ item }}"
     enabled: true
     state: started
+    # Both units are ordered After=gatherd.service. Since this task runs from
+    # inside gatherd.service, a blocking start deadlocks: systemd holds the start
+    # job until gatherd.service finishes activating, but gatherd.service cannot
+    # finish until this task returns. Enqueue the job without waiting on it.
+    no_block: true
   loop:
     - gatherd-vault.service
     - gatherd-async.service

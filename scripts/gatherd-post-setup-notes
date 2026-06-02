@@ -222,7 +222,6 @@ section_verify() {
     h 'Verify'
     li 'PIA Quick Tour: on the first launch after a repave, pia-client opens to the login/connect screen, not the multi-step Quick Tour walkthrough (nor the "What'\''s New" dialog). Confirm `grep lastUsedVersion ~/.config/privateinternetaccess/clientsettings.json` matches `/opt/piavpn/bin/piactl --version`'
     li 'PIA: am I actually able to get online with it?'
-    li 'arch-update streamlining: run `arch-update` with AUR updates pending — yay shows NO per-package diff/clean/edit menus and asks to proceed ONCE for all AUR packages (batched), not once each; long builds do not re-prompt for the sudo password. The repo step still shows pacman'\''s single `Proceed? [Y/n]` (unavoidable). Confirm `~/.config/yay/config.json` has diffmenu/cleanmenu false and batchinstall/sudoloop true'
     li 'Tailscale shutdown: shut down — should complete in under 30 seconds with no "A stop job is running for Tailscale" delay'
     li 'autofs verbose logging: after a fresh repave, gatherd.service finished without erroring on a missing autofs.conf, and `grep "^logging" /etc/autofs/autofs.conf` shows `logging = verbose`'
     li 'greetd login background: log out (or reboot) — the regreet login screen shows our wallpaper, not the EndeavourOS default splash.'

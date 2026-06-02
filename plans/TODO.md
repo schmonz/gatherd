@@ -16,6 +16,8 @@
 
 ---
 
+- arch-update: can running the update be less interactive? lots of reading and
+  agreeing. Dunno if I want full automatic but fewer interactions for sure
 - Automate preparing a local package mirror on a USB stick (such as Ventoy),
   for quicker bootstrapping on terrible/absent network
 - **Travel-repave behind a captive portal**: if repaving while on a captive-portal

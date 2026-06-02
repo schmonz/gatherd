@@ -222,6 +222,7 @@ section_verify() {
     li 'PIA: am I actually able to get online with it?'
     li 'Tailscale shutdown: shut down — should complete in under 30 seconds with no "A stop job is running for Tailscale" delay'
     li 'autofs verbose logging: after a fresh repave, gatherd.service finished without erroring on a missing autofs.conf, and `grep "^logging" /etc/autofs/autofs.conf` shows `logging = verbose`'
+    li 'greetd login background: log out (or reboot) — the regreet login screen shows our wallpaper, not the EndeavourOS default splash.'
     li 'gatherd async/vault services: `systemctl is-failed gatherd-async.service gatherd-vault.service` shows neither failed (the old path-unit start-limit loop is gone), the slow AUR packages installed, and `/etc/gatherd/async-complete` exists. Dropping `.vault_pass` should run them the same session with no reboot.'
     li 'Slow-progress terminal: during a fresh repave (async still running) first login pops a terminal showing live package-install progress; on later logins, once `/etc/gatherd/async-complete` exists, NO terminal flashes on screen.'
     has_resume && li 'Suspend over NFS: with a shell sitting in ~/trees (the Tailscale NFS mount), close the lid, wait, then reopen — should wake to the lock screen, not hang on a black screen'

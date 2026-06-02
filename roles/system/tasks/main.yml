@@ -486,6 +486,19 @@
     state: absent
   notify: Etckeeper commit
 
+# Replace the EndeavourOS default behind the regreet login greeter with our own
+# wallpaper — the same dark image GRUB and the lock screen use. regreet runs as
+# the unprivileged 'greeter' user, so it reads the world-readable system cache
+# (not the per-user copy). regreet re-reads its config at each greeter launch,
+# so no service restart is needed.
+- name: Point the regreet login greeter at our wallpaper
+  ansible.builtin.lineinfile:
+    path: /etc/greetd/regreet.toml
+    regexp: '^path\s*='
+    line: 'path = "{{ wallpaper_cache_dark }}"'
+  when: hardcoded_wallpaper_dark_url | length > 0
+  notify: Etckeeper commit
+
 - name: Flush handlers
   ansible.builtin.meta: flush_handlers
 

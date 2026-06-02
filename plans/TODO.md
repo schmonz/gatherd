@@ -7,10 +7,6 @@
   eaten and are gone. Reconstruct them (and fold into the `icloud_configured`/rclone
   section above so they're managed, not handwritten).
 
-### greetd / theming
-- **greetd background image**: greetd shows its own background image — override it
-  with ours (same wallpaper as desktop + GRUB, per the recent GRUB-background work).
-
 ### New conveniences wanted
 - **chsh to zsh**: make zsh the login shell as part of provisioning.
 - **Install mattwynne/yaks non-interactively**: want it installed without

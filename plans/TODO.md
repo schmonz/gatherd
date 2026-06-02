@@ -103,7 +103,10 @@
     (5) **auto-close the captive-browser window once connectivity returns to `full`**;
     (6) evaluate Netsurf. Re-verify by the visible window + page, confirmed by a human, not
     by pgrep.
-- Chromebook gets described as `Google Robo (rev3)`, want it to say `Lenovo Chromebook 100e`, not seeing any helpful strings in `dmidecode` output
+- Chromebook gets described as `Google Robo (rev3)`, want it to say `Lenovo Chromebook 100e`, not seeing any helpful strings in `dmidecode` output.
+  Lead: https://github.com/MrChromebox/scripts likely maps the Chrome OS board
+  codename (e.g. `robo`) to its marketing name — mine that mapping (or the device
+  it reads it from) so the machine-description script can resolve `Lenovo Chromebook 100e`.
 - **Auto-detect JetBrains account login**: `section_jetbrains` is now "never
   auto-done" (the old `jetbrains_authed` blocklist false-positived because
   Toolbox autostarts and writes assorted `.json` just by running, before any

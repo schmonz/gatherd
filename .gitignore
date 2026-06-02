@@ -1,3 +1,4 @@
 .ansible/
 ._*
 .vault_pass
+.yaks

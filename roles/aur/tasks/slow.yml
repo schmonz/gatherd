@@ -46,38 +46,40 @@
         state: present
       when: has_fingerprint_reader
 
-    - name: Suppress PIA Quick Tour before the daemon's first start
-      # PIA shows the Quick Tour while sessionCount == 0. pia-client autostarts
-      # on every Sway login, so if it connects during the window between the
-      # daemon's first start and a post-start fix it catches sessionCount 0 and
-      # shows the tour. Writing the count before the daemon ever starts means its
-      # IPC reports a suppressed state from the first moment any client connects;
-      # the daemon fills the remaining settings with defaults on start. Guard
-      # against JSONDecodeError in case an earlier daemon run left a partial write.
+    - name: Suppress the PIA Quick Tour and What's New dialog on first launch
+      # The Quick Tour is a *client* decision, not the daemon's. pia-client shows it
+      # when ClientState.firstRunFlag is set, which happens when ClientSettings
+      # .lastUsedVersion is empty at startup. That value lives in the per-user
+      # ~/.config/privateinternetaccess/clientsettings.json, NOT the daemon's
+      # /opt/piavpn/etc/settings.json. Seed it before pia-client first launches (the
+      # always block below) so a fresh repave skips onboarding. Use the *exact*
+      # installed version: an empty value triggers the Tour, a non-empty-but-mismatched
+      # one triggers the separate "What's New" dialog, so only the exact version
+      # suppresses both. Runs as target_user (the file must be user-owned). Guard against
+      # JSONDecodeError in case a prior client run left a partial write.
       ansible.builtin.shell: |
-        python3 - <<'PYEOF'
-        import json, os
-        path = '/opt/piavpn/etc/settings.json'
+        ver=$(/opt/piavpn/bin/piactl --version)
+        python3 - "$ver" <<'PYEOF'
+        import json, os, sys
+        ver = sys.argv[1].strip()
+        path = '{{ target_home }}/.config/privateinternetaccess/clientsettings.json'
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             d = json.load(open(path))
         except (FileNotFoundError, json.JSONDecodeError):
             d = {}
-        if d.get('sessionCount', 0) == 0:
-            d['sessionCount'] = 1
-            d['successfulSessionCount'] = 1
+        if d.get('lastUsedVersion') != ver:
+            d['lastUsedVersion'] = ver
             with open(path, 'w') as f:
-                json.dump(d, f)
+                json.dump(d, f, indent=2)
             print('changed')
         else:
             print('ok')
         PYEOF
       args:
         executable: /bin/bash
-      register: _pia_session
-      changed_when: _pia_session.stdout == 'changed'
-      become: true
-      become_user: root
+      register: _pia_tour
+      changed_when: _pia_tour.stdout == 'changed'
 
     - name: Enable and start PIA daemon
       ansible.builtin.systemd:

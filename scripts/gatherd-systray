@@ -1,15 +1,17 @@
 #!/bin/sh
 set -e
 
-main() {
-    pidfile="$XDG_RUNTIME_DIR/gatherd-systray-$(basename "$1").pid"
-    [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null && exit 0
-    until busctl --user status org.kde.StatusNotifierWatcher >/dev/null 2>&1; do
-        sleep 1
-    done
-    "$@" &
-    echo $! > "$pidfile"
-}
+# Wait for a StatusNotifierWatcher to exist before launching the tray app —
+# without a host to register against, the icon silently never appears.
+#
+# No dedup guard here: gatherd-session-helpers launches each tray app exactly
+# once per session and reaps it on logout, so the old per-app pidfile (which
+# deduped by relying on the app surviving logout — the very leak we removed)
+# is unnecessary, and its kill -0 check could false-positive on a reused PID
+# and drop an icon. We just exec the app so it stays in the supervisor's
+# process group and gets torn down with the rest of the cohort.
+until busctl --user status org.kde.StatusNotifierWatcher >/dev/null 2>&1; do
+    sleep 1
+done
 
-main "$@"
-exit $?
+exec "$@"

@@ -1,11 +1,28 @@
 #!/bin/sh
-# Type=oneshot RemainAfterExit=no services never sit in ActiveState=active
-# long enough for `systemctl is-active` to catch them — they're in
-# `activating` for the duration of ExecStart. Drive the wait off the
-# completion marker site-async.yml writes, with is-failed as the
-# escape hatch.
+# Show the gatherd-async slow-package install progress in a terminal — but only
+# while an install is genuinely in progress. Decide *before* opening any window,
+# so nothing flashes on screen on later logins once async has finished.
+#
+# Run from sway autostart WITHOUT a terminal wrapper:
+#     exec gatherd-show-slow-progress
+# The outer instance gates, then re-execs itself inside foot only when there is
+# work to show; the inner instance (env flag set) skips the gate and displays.
 
-[ -f /etc/gatherd/async-complete ] && exit 0
+if [ -z "${GATHERD_SLOW_PROGRESS_TERM:-}" ]; then
+    # Already finished: nothing to show.
+    [ -f /etc/gatherd/async-complete ] && exit 0
+
+    # Nothing live to watch. gatherd-async.service is Type=simple, so it is
+    # ActiveState=active for the whole run — is-active is a reliable
+    # work-in-progress signal. (It used to be a Type=oneshot stuck in
+    # 'activating', which is why opening the terminal unconditionally flashed.)
+    systemctl is-active --quiet gatherd-async.service || exit 0
+
+    # Decision made — only now open the terminal, and keep it open (it shows a
+    # result and waits for Enter) rather than letting it vanish if the run
+    # happens to finish in the same instant.
+    exec foot -e env GATHERD_SLOW_PROGRESS_TERM=1 "$0"
+fi
 
 printf '\033]0;Package Installation\007'
 echo "Installing remaining packages..."

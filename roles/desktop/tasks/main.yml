@@ -687,11 +687,14 @@
     - gatherd-systray-jetbrains
     - gatherd-wait-sni
 
-- name: Add show-slow-progress autostart in foot terminal
+- name: Add show-slow-progress autostart
+  # The script gates and opens its own terminal only when an install is actually
+  # in progress, so it must NOT be wrapped in a terminal here — that's what made
+  # it flash a window on logins after async had finished.
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
     regexp: "^exec .*gatherd-show-slow-progress"
-    line: "exec sh -c '[ -f /etc/gatherd/async-complete ] && exit 0; exec foot -e {{ target_home }}/.local/bin/gatherd-show-slow-progress'"
+    line: "exec {{ target_home }}/.local/bin/gatherd-show-slow-progress"
 
 - name: Add gatherd script autostart entries
   ansible.builtin.lineinfile:

@@ -3,9 +3,6 @@
 ## From repave 2026-06-01 (work down in order)
 
 ### Bugs — broke or degraded the run
-- **Stray terminal pops briefly on login**: a terminal window flashes open for an
-  instant during the first user session — suspected to be the async run launching a
-  terminal it didn't need. If there's no work to do, don't pop a window at all.
 - **Tailscale `--set-operator` race**: first session, the systray reads
   `no permission to manage tailscale`; by a later session it's fine. Looks like
   `--set-operator` lands after the systray/session already came up. Sequence it so

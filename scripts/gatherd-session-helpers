@@ -1,0 +1,63 @@
+#!/bin/sh
+# Session-lifetime supervisor for gatherd's sway-autostart helpers.
+#
+# Why this exists: sway does not reap its autostart `exec` children, and nothing
+# below it kills them on logout either — systemd-logind ships KillUserProcesses=no
+# (the distro default), and seatd (what a minimal Artix/s6 sway uses) has no
+# session lifecycle at all. So every helper we autostart outlives the session as
+# an orphan, and a fresh copy stacks on the next login (observed: three
+# captive-portal watchers, three conkys). Fixing it here, in the session layer,
+# keeps it init-agnostic — depends only on sway + POSIX sh, so it ports to
+# Artix/s6 (seatd or elogind) unchanged. See plans/TODO.md "Session teardown" for
+# the full rationale and the rejected alternatives (KillUserProcesses=yes, the
+# systemd graphical-session.target/uwsm approach).
+#
+# Mechanism: become a process-group leader, launch the cohort as our children,
+# then block until sway's IPC connection closes. That wait is event-driven, not a
+# poll: `swaymsg subscribe` returns on the `shutdown` event for a clean exit, and
+# on a crash the socket just closes (EOF) and it returns anyway. On wakeup we
+# signal the whole process group, so the helpers and their grandchildren (the
+# watcher's nmcli monitor, any captive-browser, etc.) all go down together.
+
+# Re-exec once under setsid so we lead our own process group and the group-signal
+# below reaches the whole cohort. The env guard prevents an infinite re-exec.
+if [ -z "$GATHERD_SUPERVISOR" ]; then
+    GATHERD_SUPERVISOR=1 exec setsid -w "$0" "$@"
+fi
+
+bin="$HOME/.local/bin"
+run() { sh -c "$1" & }
+
+# The cohort: long-running session helpers gatherd autostarts. One-shots and
+# things with their own lifecycle (swayidle, gatherd-show-slow-progress) stay as
+# plain sway `exec` lines and are intentionally not listed here.
+run "conky"
+run "$bin/gatherd-prompt-captiveportal"
+run "$bin/gatherd-prompt-1password"
+run "$bin/gatherd-prompt-tailscale"
+run "$bin/gatherd-prompt-postsetup"
+run "$bin/gatherd-prompt-vault"
+run "$bin/gatherd-prompt-pia"
+run "env XDG_CURRENT_DESKTOP=GNOME $bin/gatherd-systray 1password --silent"
+run "$bin/gatherd-systray localsend --hidden"
+run "$bin/gatherd-systray tailscale systray"
+run "$bin/gatherd-systray jetbrains-toolbox --minimize"
+run "$bin/gatherd-systray vesktop --start-minimized"
+run "$bin/gatherd-systray /opt/piavpn/bin/pia-client --quiet"
+run "$bin/gatherd-systray arch-update --tray"
+
+# If we can't reach sway's IPC we have no way to detect session end; launching the
+# cohort then exiting just reverts to the old (leaky but functional) behavior,
+# which is far safer than tearing the cohort down the instant it started.
+swaymsg -t get_version >/dev/null 2>&1 || exit 0
+
+# Block until sway goes away, then take the cohort down with us. Ignore the TERM
+# we send to our own group so we outlive it long enough to KILL any straggler.
+swaymsg -m -t subscribe '["shutdown"]' >/dev/null 2>&1
+
+trap '' TERM
+kill -TERM -- "-$$" 2>/dev/null
+sleep 2
+for p in $(pgrep -g "$$" | grep -vx "$$"); do
+    kill -KILL "$p" 2>/dev/null
+done

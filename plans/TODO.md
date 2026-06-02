@@ -20,8 +20,76 @@
   agreeing. Dunno if I want full automatic but fewer interactions for sure
 - Automate preparing a local package mirror on a USB stick (such as Ventoy),
   for quicker bootstrapping on terrible/absent network
+- **Travel-repave behind a captive portal**: if repaving while on a captive-portal
+  network, is there a bootstrap problem that stops the playbooks from completing
+  (the portal not yet cleared when gatherd starts pulling packages/AUR)? Determine
+  whether it actually blocks, and either way figure out how much of what a repave
+  needs can ride along on a USB stick (ties into the package-mirror item above) to
+  speed things up and survive a hostile/absent network.
 - need an email app. remember I'm the guy that loved MacSOUP. Also gonna want
   to preconfigure it with (explicitly hardwired for now) servers, other settings
+
+## Session teardown
+
+- **Logout strands the whole autostart cohort (discovered 2026-06-02).** Logging out
+  does not clean up; every login stacks another full set of orphaned daemons.
+  - **Mechanism (two compounding causes):** (1) `KillUserProcesses=no` — the systemd
+    default (confirmed: commented out in `/etc/systemd/logind.conf`), so logind never
+    kills your processes on logout. (2) sway does not reap its autostart `exec`
+    children. So when sway exits, the entire autostart cohort keeps running, orphaned,
+    pinning the old `session-N.scope` in state `closing` **forever** (the scope can't
+    finish closing while processes remain). Each fresh login then stacks a new cohort.
+  - **Evidence:** found three stranded tty1 logins (sessions 1, 5, 8). Session 1 (13h
+    old, `closing`) still held conky, `op daemon`, tailscale systray, jetbrainsd;
+    session 5 (`closing`) held conky + tmux. Hence three captive-portal watchers, three
+    conkys, etc. The captive-portal watcher was just the most visible symptom; this is a
+    general teardown leak affecting *every* sway-autostart helper.
+  - **Symptoms it causes:** duplicate daemons accumulate across logins (e.g. multiple
+    captive-portal watchers racing the `pgrep` guard to launch captive-browser; multiple
+    conkys/systrays); old sessions never drain; wasted memory; confusing process lists.
+  - **Decision (revised 2026-06-02 after researching the Artix/s6 future): fix it in the
+    session layer, init-agnostically — NOT via `KillUserProcesses`.** The reasoning:
+    `KillUserProcesses` is a systemd-logind / elogind feature, but sway tries **seatd
+    first**, and a minimal Artix/s6 sway box typically runs **seatd, which has no session
+    lifecycle at all** — no session scope, no `closing` state, no `KillUserProcesses`
+    knob. So a logind drop-in would be a no-op there and the leak would reappear as plain
+    orphans reparented to PID 1. Worse, even on the elogind path elogind has a known bug
+    of *ignoring* `KillUserProcesses` (elogind issue #53). So that knob is doubly
+    unreliable for our target. The portable root cause is the same everywhere: **sway
+    autostart children outlive sway because nothing reaps them.**
+  - **Chosen fix — a single session-lifetime supervisor (POSIX sh, sway-only deps):**
+    one script started from sway autostart that (a) becomes its own process-group leader
+    (`setsid`), (b) launches the whole helper cohort (conky, waybar, systrays, the
+    gatherd-prompt-* scripts, the captive-portal watcher, …) as its children, (c) polls
+    the Wayland socket (`$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY`) and, when it disappears (sway
+    gone), `kill`s its whole process group and exits. Depends only on sway + POSIX sh +
+    the Wayland socket — identical behavior on systemd+logind, systemd+seatd, s6+seatd,
+    s6+elogind. Replaces the current N independent `exec ~/.local/bin/<helper>` lines in
+    `roles/desktop/tasks/main.yml` with one `exec <supervisor>`.
+    - **Bonus: dodges the tmux tradeoff entirely.** tmux is not in the sway-autostart
+      cohort (it's started from a terminal), so it stays outside the supervisor and keeps
+      surviving logout — no `enable-linger` or user-manager gymnastics, unlike the
+      rejected `KillUserProcesses=yes` route.
+    - Don't add per-helper restart-on-crash to the supervisor; keep it launch-then-reap.
+      The captive-portal watcher already self-restarts its own `nmcli monitor`.
+  - **Rejected — `KillUserProcesses=yes` logind drop-in:** not portable to seatd-based
+    s6 (and elogind may ignore it); would also kill detached tmux unless we add linger.
+  - **Rejected — systemd `graphical-session.target` + `systemctl --user
+    import-environment` (the uwsm approach):** clean on systemd but heavily systemd-coupled,
+    same Artix problem.
+  - **IMPLEMENTED 2026-06-02 — awaiting logout/login validation.** Added
+    `scripts/gatherd-session-helpers` (the supervisor above), installed by the `desktop`
+    role; the autostart tasks in `roles/desktop/tasks/main.yml` now drop the per-helper
+    `exec` lines (conky, `gatherd-prompt-*`, `gatherd-systray *`) and write a single
+    `exec gatherd-session-helpers`. Hand-applied to the live machine too, so it activates
+    on the next login. Validate per the new `section_verify` item: log out/in, confirm no
+    session stuck `closing`, the cohort doesn't stack, and a supervisor session drains on
+    logout. **Not yet exercised through a real logout** (the running session predates the
+    change). Delete this item once validated.
+  - **Out of scope (note for later):** the supervisor adopts only gatherd's own cohort.
+    EndeavourOS default autostart helpers (nm-applet, mako, cliphist watchers, …) and the
+    `swayidle` block still `exec` directly from sway, so on systemd they'll keep the
+    session scope from fully draining until they're folded in or handled separately.
 
 ## Secrets
 
@@ -82,44 +150,36 @@
   of any single install and keeps `authorized_keys`/known-hosts from accumulating
   dead keys.
 
-- **Captive portal auto-launch — corrected status (2026-06-01, after real-usage
-  testing at LaPromNyack; force re-capture with a temporary random MAC:
-  `nmcli connection modify --temporary LaPromNyack 802-11-wireless.cloned-mac-address random` then down/up — resets on reboot, and note `networking off/on` also regenerates the MAC):**
-  - **DONE** — moved the watcher off the systemd `--user` service (its env had no
-    `WAYLAND_DISPLAY`/`SWAYSOCK`, so the GUI it spawned had no display — the original
-    "never pops" bug) onto sway autostart, which inherits the session env.
-  - **FIXED — HTTPS-First "site is not secure" modal.** `captive-browser.toml` now
-    disables `HttpsUpgrades,HttpsFirstBalancedMode,HttpsFirstModeV2,HttpsFirstModeIncognito`
-    and the captive profile seeds `https_only_mode_enabled=false`. Confirmed: the portal
-    page renders directly, no interstitial.
-  - **APPLIED but UNVERIFIED — nmcli monitor buffering fix.** The worst delay (~100s) was
-    `nmcli monitor`'s piped stdout block-buffering: a lone "Connectivity is now 'portal'"
-    line sat in the 4KB buffer until a later event flushed it. Fix: `stdbuf -oL nmcli monitor`.
-    NOT proven — the flap test produced >4KB and flushed regardless, so it didn't isolate
-    stdbuf. Confirm on the next real portal; the watcher now timestamps detection into
-    `~/.cache/captive-browser.log`.
-  - **INEFFECTIVE — `--disable-extensions`.** Log still shows helium loading ublock
-    (`managed_storage.json`); cold start unchanged. Drop it or find the real lever.
-  - **Latency breakdown (measured, join → portal page ~70s):** join → NM `portal` ~3-5s;
-    `portal` → watcher launch ~0s *if stdbuf works* (was ~100s); captive-browser
-    "Obtaining DHCP DNS" → proxy ready **~24s** (mystery wait, browser-agnostic —
-    investigate); proxy ready → portal page renders **~44s**, which is NOT helium cold
-    start (plain helium window = 2.9s, captive-profile copy = 2.6s) — it's navigation
-    through the SOCKS5 proxy on the captured net (hypothesis: the proxy became ready the
-    instant helium launched, so helium hit a dead proxy and backed off ~40s). NOT yet
-    measured: window-map vs page-render timing in the captive case.
-  - **Netsurf (deferred):** could replace helium for a much faster launch, falling back to
-    manually opening Helium when a portal page is too tricky for Netsurf. Uncertain win:
-    the bottleneck is the proxy/navigation path, not browser launch (helium is 3s), so it
-    only helps if the 44s is Chromium-specific (proxy-retry backoff / HTTPS attempts); the
-    24s DHCP-DNS step is browser-agnostic and remains. Netsurf must honor a SOCKS5 proxy
-    (looks like it has proxy options — confirm).
-  - **Next steps:** (1) confirm stdbuf on the next real portal via the log; (2) chase the
-    24s "Obtaining DHCP DNS"; (3) measure window-map vs page-render; (4) start the SOCKS
-    proxy *before* launching the browser (or add browser-side retry) to kill the ~44s;
-    (5) **auto-close the captive-browser window once connectivity returns to `full`**;
-    (6) evaluate Netsurf. Re-verify by the visible window + page, confirmed by a human, not
-    by pgrep.
+- **Captive portal auto-launch — VALIDATED 2026-06-02 (two real portal hits at
+  LaPromNyack); one item left open below.** The auto-launch fast path works and
+  reproduces: from link-up to portal page on screen ≈ 4–5s, confirmed by a human.
+  - Watcher on sway autostart (not a `--user` service), HTTPS-First modal fix, and the
+    `stdbuf -oL nmcli monitor` buffering fix are all confirmed working; detection fires
+    ~2s after link-up and launch is instant. The old latency suspects (~24s "Obtaining
+    DHCP DNS", ~44s proxy backoff) did NOT recur on either hit — proxy ready the same
+    second, page reachable ~2s after launch. Treat them as one-offs, not standing bugs.
+    Netsurf swap is moot (launch was never the bottleneck).
+  - **IMPLEMENTED but UNVALIDATED — auto-close the captive-browser window once
+    connectivity returns to `full`.** captive-browser does NOT self-close; the user had to
+    close the window by hand after authing (confirmed 2026-06-02). The watcher now handles
+    it: `scripts/gatherd-prompt-captiveportal` matches a `*Connectivity*Full*` line from
+    `nmcli monitor` and runs `swaymsg '[app_id="captive-browser"] kill'` (guarded by
+    `pgrep -x captive-browser`), which makes captive-browser shut down cleanly. **Not yet
+    proven at a real portal** — the validation runs (MAC-reset) all ended with the human
+    closing the window manually, so the `full`-triggered close has never actually fired.
+    Next portal: complete auth and confirm the window vanishes on its own (watch
+    `~/.cache/captive-browser.log` for the "connectivity full … closing" line). Delete
+    once validated.
+  - **Cosmetic, log-only (won't-fix unless they start mattering):** two noise lines in
+    `~/.cache/captive-browser.log`, neither user-visible — the ublock
+    `managed_storage.json` parse error (also proves `--disable-extensions` in the toml is
+    ineffective; ublock still loads) and `services.helium.imput.net` SSL handshake
+    failures (helium phoning home through the portal proxy pre-auth).
+  - **Re-test recipe:** force a fresh portal with a temporary random MAC —
+    `nmcli connection modify --temporary LaPromNyack 802-11-wireless.cloned-mac-address random`
+    then `nmcli connection down LaPromNyack && nmcli connection up LaPromNyack` (resets on
+    reboot; `networking off/on` also regenerates the MAC). Verify by the visible window +
+    page, confirmed by a human, not by pgrep.
 - Chromebook gets described as `Google Robo (rev3)`, want it to say `Lenovo Chromebook 100e`, not seeing any helpful strings in `dmidecode` output.
   Lead: https://github.com/MrChromebox/scripts likely maps the Chrome OS board
   codename (e.g. `robo`) to its marketing name — mine that mapping (or the device
@@ -226,6 +286,14 @@
 - **Web app icons not hi-res enough**: some web apps' icons look blurry/pixelated
   in the Mod-Shift-D application menu. Audit each web app's icon, find higher-
   resolution sources, and install them so they render crisply at the menu's size.
+- **App menu needs horizontal scrolling**: the detailed app menu almost fills the
+  screen and needs a little left-right scrolling to see everything — likely a side
+  effect of font-size scaling (see the Scaling item). Figure out whether tuning the
+  menu geometry/font or the scaling fixes it so nothing is clipped.
+- **App menu missing icons for some shipped apps**: the short app-menu list is
+  missing icons for Text Editor and a few others that shipped with the system
+  (distinct from the blurry web-app icons above — these are absent, not low-res).
+  Find why their `.desktop`/icon-theme lookup fails and fix it.
 - Set up VNC (see `VNC.md`)
 - JetBrains IDE settings, starting with font size
 - **Auto git pull on a cadence**: the sentinels now record the git HEAD that

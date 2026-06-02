@@ -402,6 +402,13 @@
     mode: '0755'
     remote_src: true
 
+- name: Install gatherd-session-helpers supervisor script
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-session-helpers"
+    dest: "{{ target_home }}/.local/bin/gatherd-session-helpers"
+    mode: '0755'
+    remote_src: true
+
 - name: Install gatherd-prompt-captiveportal script
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-prompt-captiveportal"
@@ -668,11 +675,6 @@
     regexp: 'gnome-keyring-daemon --unlock'
     state: absent
 
-- name: Add conky autostart entry
-  ansible.builtin.lineinfile:
-    path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
-    line: "exec conky"
-
 - name: Remove obsolete systray autostart entries
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
@@ -696,36 +698,23 @@
     regexp: "^exec .*gatherd-show-slow-progress"
     line: "exec {{ target_home }}/.local/bin/gatherd-show-slow-progress"
 
-- name: Add gatherd script autostart entries
+- name: Remove per-helper autostart entries now launched by the session supervisor
+  # gatherd-session-helpers launches conky, the gatherd-prompt-* watchers, and the
+  # gatherd-systray apps as its own children so it can tear the whole cohort down
+  # when sway exits (see scripts/gatherd-session-helpers). Drop their standalone
+  # `exec` lines so sway doesn't also launch them directly — that would double them
+  # and re-leak the duplicates on logout, which is the bug we're fixing.
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
-    regexp: "^exec (?:.*/)?{{ item }}$"
-    line: "exec {{ target_home }}/.local/bin/{{ item }}"
+    regexp: "{{ item }}"
+    state: absent
   loop:
-    - gatherd-prompt-captiveportal
-    - gatherd-prompt-1password
-    - gatherd-prompt-tailscale
-    - gatherd-prompt-postsetup
-    - gatherd-prompt-vault
-    - gatherd-prompt-pia
+    - '^exec conky$'
+    - '^exec (?:.*/)?gatherd-prompt-(captiveportal|1password|tailscale|postsetup|vault|pia)$'
+    - '^exec .*gatherd-systray '
 
-- name: Add systray app autostart entries
+- name: Add the session-helper supervisor autostart entry
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
-    regexp: "{{ item.regexp }}"
-    line: "{{ item.line }}"
-  loop:
-    - regexp: "^exec .*gatherd-systray 1password"
-      line: "exec env XDG_CURRENT_DESKTOP=GNOME {{ target_home }}/.local/bin/gatherd-systray 1password --silent"
-    - regexp: "^exec .*gatherd-systray localsend"
-      line: "exec {{ target_home }}/.local/bin/gatherd-systray localsend --hidden"
-    - regexp: "^exec .*gatherd-systray tailscale"
-      line: "exec {{ target_home }}/.local/bin/gatherd-systray tailscale systray"
-    - regexp: "^exec .*gatherd-systray jetbrains-toolbox"
-      line: "exec {{ target_home }}/.local/bin/gatherd-systray jetbrains-toolbox --minimize"
-    - regexp: "^exec .*gatherd-systray vesktop"
-      line: "exec {{ target_home }}/.local/bin/gatherd-systray vesktop --start-minimized"
-    - regexp: "^exec .*gatherd-systray.*/pia-client"
-      line: "exec {{ target_home }}/.local/bin/gatherd-systray /opt/piavpn/bin/pia-client --quiet"
-    - regexp: "^exec .*gatherd-systray arch-update"
-      line: "exec {{ target_home }}/.local/bin/gatherd-systray arch-update --tray"
+    regexp: "^exec .*gatherd-session-helpers$"
+    line: "exec {{ target_home }}/.local/bin/gatherd-session-helpers"

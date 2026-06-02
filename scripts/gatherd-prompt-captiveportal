@@ -25,6 +25,17 @@ while :; do
                     captive-browser >>"$log" 2>&1 &
                 }
                 ;;
+            *[Cc]onnectivity*[Ff]ull*)
+                # Authenticated — close the portal window so it's not left in the
+                # way. Target the window by app_id (not the helium process name,
+                # which the user's main browser shares); closing it makes helium
+                # exit, which makes the captive-browser wrapper shut down cleanly.
+                pgrep -x captive-browser >/dev/null && {
+                    printf '===== connectivity full %s; closing captive-browser =====\n' \
+                        "$(date '+%F %T')" >>"$log"
+                    swaymsg '[app_id="captive-browser"] kill' >>"$log" 2>&1
+                }
+                ;;
         esac
     done
     sleep 1

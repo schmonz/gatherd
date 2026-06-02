@@ -1,16 +1,8 @@
 ---
-- name: Grant NOPASSWD ALL for slow AUR installs
-  # Broader than the sync aur role's NOPASSWD: /usr/bin/pacman. Reason: yay runs
-  # here with sudoloop=true from ~/.config/yay/config.json (set by the desktop
-  # role, which runs after the sync aur role), so it fires `sudo -v` to keep the
-  # credential cache warm. Inside gatherd-async.service there is no TTY, so
-  # PAM's conversation fails and faillock locks the user out of sudo. A
-  # command-scoped NOPASSWD does not cover `sudo -v` (it validates credentials
-  # generally, not a specific binary), so the scope has to be ALL. Revoked in
-  # the always block below.
+- name: Grant NOPASSWD pacman for slow AUR installs
   ansible.builtin.lineinfile:
     path: /etc/sudoers
-    line: "{{ target_user }} ALL=(ALL) NOPASSWD: ALL"
+    line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
     validate: visudo -cf %s
   become: true
   become_user: root
@@ -124,10 +116,10 @@
           swaymsg exec "$HOME/.local/bin/gatherd-systray /opt/piavpn/bin/pia-client --quiet"
       changed_when: false
 
-    - name: Revoke NOPASSWD ALL after slow AUR installs
+    - name: Revoke NOPASSWD pacman after slow AUR installs
       ansible.builtin.lineinfile:
         path: /etc/sudoers
-        line: "{{ target_user }} ALL=(ALL) NOPASSWD: ALL"
+        line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
         state: absent
         validate: visudo -cf %s
       become: true

@@ -1,9 +1,0 @@
-[Unit]
-Description=Watch for gatherd vault password to start async work
-
-[Path]
-PathExists=/usr/local/lib/gatherd/.vault_pass
-Unit=gatherd-async.service
-
-[Install]
-WantedBy=multi-user.target

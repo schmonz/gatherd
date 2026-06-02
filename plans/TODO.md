@@ -3,13 +3,6 @@
 ## From repave 2026-06-01 (work down in order)
 
 ### Bugs — broke or degraded the run
-- **gatherd-async hits the systemd start-limit on first boot**: first user session
-  showed `gatherd-async.service: Start request repeated too quickly` →
-  `start-limit-hit` → "Failed to start gatherd background package installation."
-  It restarted too many times too fast and got rate-limited, so the async slow
-  packages never ran. Find why it's restart-looping (likely a dependency or a
-  precondition that isn't met yet at that point in boot) and fix the unit so it
-  either waits or doesn't thrash.
 - **Stray terminal pops briefly on login**: a terminal window flashes open for an
   instant during the first user session — suspected to be the async run launching a
   terminal it didn't need. If there's no work to do, don't pop a window at all.
@@ -51,7 +44,8 @@
 
 - **Single-credential first-run bootstrap**: a repave currently needs secrets
   supplied by several different paths — the Ansible vault password dropped as a
-  plaintext `.vault_pass` file (watched by `gatherd-vault.path`), an interactive
+  plaintext `.vault_pass` file (awaited by the `gatherd-vault`/`gatherd-async`
+  services), an interactive
   1Password sign-in (login keyring + CLI toggle, see `section_1password`), and
   per-service web logins. Private SSH keys aren't managed at all; only the public
   `authorized_keys` come from the dotfiles repo. Collapse this toward **one

@@ -1,9 +1,0 @@
-[Unit]
-Description=Watch for gatherd vault password
-
-[Path]
-PathExists=/usr/local/lib/gatherd/.vault_pass
-Unit=gatherd-vault.service
-
-[Install]
-WantedBy=multi-user.target

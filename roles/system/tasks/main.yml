@@ -380,24 +380,46 @@
     state: link
   loop:
     - gatherd-vault.service
-    - gatherd-vault.path
     - gatherd-async.service
+  notify: Reload systemd
+
+# Predecessor of the await-and-run services: a path unit watching .vault_pass
+# re-fired the oneshot after every run and looped it into the start limit,
+# leaving both units 'failed'. Remove the stale links on upgraded machines.
+- name: Remove obsolete gatherd path units
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - gatherd-vault.path
+    - gatherd-async.path
+  failed_when: false
+  changed_when: false
+
+- name: Delete obsolete gatherd path unit links
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop:
+    - gatherd-vault.path
     - gatherd-async.path
   notify: Reload systemd
 
 - name: Flush handlers
   ansible.builtin.meta: flush_handlers
 
-- name: Enable and start gatherd vault-gated path units
+- name: Enable and start gatherd vault-gated services
   ansible.builtin.systemd:
     name: "{{ item }}"
     enabled: true
     state: started
   loop:
-    - gatherd-vault.path
-    - gatherd-async.path
-  # Path units trigger and deactivate when their condition is already met.
-  # Whether they're currently active is not meaningful idempotent state.
+    - gatherd-vault.service
+    - gatherd-async.service
+  # Started now so a fresh repave runs them this boot the moment .vault_pass
+  # appears — each blocks waiting for it, so 'started' is not meaningful
+  # idempotent state.
   changed_when: false
 
 - name: Enable system services

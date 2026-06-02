@@ -2,18 +2,13 @@
 Description=gatherd vault-protected configuration
 After=network-online.target nss-lookup.target gatherd.service
 Wants=network-online.target nss-lookup.target
-ConditionPathExists=/usr/local/lib/gatherd/site-vault.yml
-ConditionPathExists=/usr/local/lib/gatherd/.vault_pass
-ConditionPathExists=/etc/gatherd/complete
 
 [Service]
-Type=oneshot
-WorkingDirectory=/usr/local/lib/gatherd
-ExecCondition=/usr/local/lib/gatherd/scripts/gatherd-needs-run /etc/gatherd/vault-complete
-ExecStartPre=ansible-galaxy collection install --requirements-file /usr/local/lib/gatherd/requirements.yml
-ExecStart=systemd-inhibit --what=sleep --who=gatherd-vault --why="Vault-protected configuration in progress" --mode=block \
-    ansible-playbook --vault-password-file=/usr/local/lib/gatherd/.vault_pass /usr/local/lib/gatherd/site-vault.yml
-RemainAfterExit=no
+# See gatherd-async.service for why this is Type=simple with all the logic in
+# the script: started once at boot, it waits for the vault password to appear
+# and runs site-vault.yml when it does — no path watcher, no start-limit loop.
+Type=simple
+ExecStart=/usr/local/lib/gatherd/scripts/gatherd-await-and-run /etc/gatherd/vault-complete /usr/local/lib/gatherd/site-vault.yml
 StandardOutput=journal+console
 StandardError=journal+console
 

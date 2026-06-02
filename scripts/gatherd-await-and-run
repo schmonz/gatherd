@@ -1,0 +1,48 @@
+#!/bin/sh
+# gatherd-await-and-run — wait for a gatherd play's preconditions, then run it once.
+#
+# Started once at boot by the init system, this blocks until the first-boot
+# gatherd run has finished and the vault password file exists, then runs the
+# given playbook. The waiting happens inside this one process, so there is no
+# file-watch / path unit to re-fire after the play finishes — which is what
+# used to loop a oneshot into systemd's start limit and leave it 'failed'.
+#
+# Keeping the logic here (POSIX sh, no init-specific bits) is also what makes
+# the eventual Artix port cheap: a runit/s6/OpenRC run script only has to exec
+# this; nothing below depends on systemd.
+#
+# Usage: gatherd-await-and-run <sentinel> <playbook>
+set -eu
+
+sentinel="$1"
+playbook="$2"
+
+gatherd_home=/usr/local/lib/gatherd
+vault_pass="$gatherd_home/.vault_pass"
+complete=/etc/gatherd/complete
+
+# Nothing to do if this play isn't deployed (e.g. no site-vault.yml).
+[ -f "$playbook" ] || exit 0
+
+# Block until the first-boot run has finished and the vault password is present.
+# Polling (rather than inotify) keeps this dependency-free and identical across
+# inits; 2s latency is irrelevant for setup work.
+while ! { [ -f "$complete" ] && [ -f "$vault_pass" ]; }; do
+    sleep 2
+done
+
+# Skip if this play already converged at the deployed git HEAD.
+"$gatherd_home/scripts/gatherd-needs-run" "$sentinel" || exit 0
+
+# ansible resolves ansible.cfg from the working directory.
+cd "$gatherd_home"
+
+ansible-galaxy collection install --requirements-file "$gatherd_home/requirements.yml"
+
+# Hold off sleep during the long package run when the tooling is available
+# (elogind ships systemd-inhibit on Artix too), but tolerate its absence.
+if command -v systemd-inhibit >/dev/null 2>&1; then
+    exec systemd-inhibit --what=sleep --who=gatherd --why="gatherd background work in progress" --mode=block \
+        ansible-playbook --vault-password-file="$vault_pass" "$playbook"
+fi
+exec ansible-playbook --vault-password-file="$vault_pass" "$playbook"

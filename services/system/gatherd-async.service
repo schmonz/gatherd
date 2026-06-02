@@ -2,20 +2,16 @@
 Description=gatherd background package installation
 After=network-online.target nss-lookup.target gatherd.service
 Wants=network-online.target nss-lookup.target
-ConditionPathExists=/usr/local/lib/gatherd/site-async.yml
-ConditionPathExists=/usr/local/lib/gatherd/.vault_pass
-ConditionPathExists=/etc/gatherd/complete
-StartLimitIntervalSec=300
-StartLimitBurst=2
 
 [Service]
-Type=oneshot
-WorkingDirectory=/usr/local/lib/gatherd
-ExecCondition=/usr/local/lib/gatherd/scripts/gatherd-needs-run /etc/gatherd/async-complete
-ExecStartPre=ansible-galaxy collection install --requirements-file /usr/local/lib/gatherd/requirements.yml
-ExecStart=systemd-inhibit --what=sleep --who=gatherd-async --why="Background package installation in progress" --mode=block \
-    ansible-playbook --vault-password-file=/usr/local/lib/gatherd/.vault_pass /usr/local/lib/gatherd/site-async.yml
-RemainAfterExit=no
+# Type=simple, not oneshot: the script blocks waiting for the vault password to
+# appear, so the unit stays cleanly "active (running)" while it waits rather
+# than "activating" against a start timeout. It runs once per boot — there is no
+# path watcher to re-fire it, so no start-limit loop. The wait, the needs-run
+# check, the galaxy install and the sleep inhibit all live in the script, which
+# keeps this unit portable to non-systemd inits.
+Type=simple
+ExecStart=/usr/local/lib/gatherd/scripts/gatherd-await-and-run /etc/gatherd/async-complete /usr/local/lib/gatherd/site-async.yml
 StandardOutput=journal+console
 StandardError=journal+console
 

@@ -2,12 +2,6 @@
 
 ## From repave 2026-06-01 (work down in order)
 
-### Bugs — broke or degraded the run
-- **Tailscale `--set-operator` race**: first session, the systray reads
-  `no permission to manage tailscale`; by a later session it's fine. Looks like
-  `--set-operator` lands after the systray/session already came up. Sequence it so
-  the operator is set before the user session needs it.
-
 ### Post-setup notes correctness
 - **Helium/rclone conditional is backwards**: the post-setup notes instruct an
   icloud.com login under Helium, gated by `icloud_configured`. That conditional

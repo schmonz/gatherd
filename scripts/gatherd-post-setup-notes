@@ -1,8 +1,10 @@
 #!/bin/sh
 # Manages ~/.config/gatherd-post-setup.md as a living document:
-#   - removes sections where detection says "done"
 #   - appends sections that are needed but not yet present
-#   - never rewrites or touches sections that already exist
+#   - when detection says a step is done, removes ONLY the boilerplate lines this
+#     script itself generated, leaving anything you added by hand (and dropping a
+#     now-empty header). Write freely under any section — your notes are never
+#     pruned, with no markers or special formatting to remember.
 # Safe to run at any time; gatherd-prompt-postsetup calls it at each login.
 
 OUTPUT="$HOME/.config/gatherd-post-setup.md"
@@ -16,11 +18,40 @@ li() { printf -- '- %s\n' "$1" >> "$OUTPUT"; }
 
 section_present() { grep -q "^# $1\$" "$OUTPUT" 2>/dev/null; }
 
+# Wipe an entire section, header through the next header — blunt, and only safe
+# for the fully-derived Unmanaged WiFi list (regenerated each run, never
+# hand-edited). For any section you might annotate, use prune_section instead.
 section_remove() {
     awk -v hdr="# $1" '
         $0 == hdr { skip=1; next }
         skip && /^# /  { skip=0 }
         !skip { print }
+    ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+}
+
+# Remove only the boilerplate bullets this script generated for a section
+# (passed as arguments), leaving any lines you added by hand. If nothing of
+# yours remains under the header, drop the header too. This is how "done" steps
+# get pruned without ever eating your own notes.
+prune_section() {
+    _name=$1
+    shift
+    section_present "$_name" || return
+    PRUNE_BULLETS=$(printf '%s\n' "$@") \
+    awk -v hdr="# $_name" '
+        BEGIN {
+            n = split(ENVIRON["PRUNE_BULLETS"], a, "\n")
+            for (i = 1; i <= n; i++) if (a[i] != "") own["- " a[i]] = 1
+        }
+        function flush(   i) {
+            if (nonblank) { print hdr; for (i = 1; i <= bn; i++) print body[i] }
+            bn = 0; nonblank = 0
+        }
+        $0 == hdr      { inseg = 1; bn = 0; nonblank = 0; next }
+        inseg && /^# / { flush(); inseg = 0; print; next }
+        inseg          { if ($0 in own) next; body[++bn] = $0; if ($0 != "") nonblank = 1; next }
+                       { print }
+        END            { if (inseg) flush() }
     ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
 }
 
@@ -68,28 +99,32 @@ claude_code_authed()    { [ -f "$HOME/.claude/.credentials.json" ] || [ -f "$HOM
 # ---------------------------------------------------------------------------
 
 section_1password() {
+    set -- \
+        'Open seahorse' \
+        'Create a "login" keyring with no password' \
+        'Sign in to 1Password' \
+        'Lock, unlock, enter 2FA code' \
+        'Settings → Developer → enable "Connect with 1Password CLI" (gatherd-prompt-pia depends on this)' \
+        'Settings → Developer → enable "Use the SSH agent" (git/ssh auth via the vault-held key; ~/.ssh/config already points github.com at the agent)'
     if onepassword_keyring_ok; then
-        section_present '1Password' && section_remove '1Password'
+        prune_section '1Password' "$@"
     else
         section_present '1Password' && return
         h '1Password'
-        li 'Open seahorse'
-        li 'Create a "login" keyring with no password'
-        li 'Sign in to 1Password'
-        li 'Lock, unlock, enter 2FA code'
-        li 'Settings → Developer → enable "Connect with 1Password CLI" (gatherd-prompt-pia depends on this)'
-        li 'Settings → Developer → enable "Use the SSH agent" (git/ssh auth via the vault-held key; ~/.ssh/config already points github.com at the agent)'
+        for b in "$@"; do li "$b"; done
     fi
 }
 
 section_helium() {
+    b_ext='Install 1Password browser extension'
+    b_ts='Log into Tailscale admin console'
     if helium_1p_extension_ok && tailscale_connected; then
-        section_present 'Helium' && section_remove 'Helium'
+        prune_section 'Helium' "$b_ext" "$b_ts"
     else
         section_present 'Helium' && return
         h 'Helium'
-        helium_1p_extension_ok || li 'Install 1Password browser extension'
-        tailscale_connected    || li 'Log into Tailscale admin console'
+        helium_1p_extension_ok || li "$b_ext"
+        tailscale_connected    || li "$b_ts"
     fi
 }
 
@@ -103,23 +138,26 @@ section_tailscale() {
 }
 
 section_icloud() {
+    set -- 'Run `rclone config` and follow prompts to add a remote named `icloud`; complete 2FA when prompted'
     if icloud_configured; then
-        section_present 'iCloud' && section_remove 'iCloud'
+        prune_section 'iCloud' "$@"
     else
         section_present 'iCloud' && return
         h 'iCloud'
-        li 'Run `rclone config` and follow prompts to add a remote named `icloud`; complete 2FA when prompted'
+        for b in "$@"; do li "$b"; done
     fi
 }
 
 section_claude() {
+    b_desktop='Desktop: log in via the app'
+    b_code='Code: run `claude` in a terminal'
     if claude_desktop_authed && claude_code_authed; then
-        section_present 'Claude' && section_remove 'Claude'
+        prune_section 'Claude' "$b_desktop" "$b_code"
     else
         section_present 'Claude' && return
         h 'Claude'
-        claude_desktop_authed || li 'Desktop: log in via the app'
-        claude_code_authed    || li 'Code: run `claude` in a terminal'
+        claude_desktop_authed || li "$b_desktop"
+        claude_code_authed    || li "$b_code"
     fi
 }
 
@@ -164,13 +202,15 @@ section_unmanaged_wifi() {
 }
 
 section_vault() {
+    set -- \
+        'Enter vault password when prompted — WiFi and other secrets will configure in the background' \
+        'Run `journalctl -u gatherd-vault.service` to check progress'
     if [ -f /etc/gatherd/vault-complete ]; then
-        section_present 'Vault' && section_remove 'Vault'
+        prune_section 'Vault' "$@"
     else
         section_present 'Vault' && return
         h 'Vault'
-        li 'Enter vault password when prompted — WiFi and other secrets will configure in the background'
-        li 'Run `journalctl -u gatherd-vault.service` to check progress'
+        for b in "$@"; do li "$b"; done
     fi
 }
 

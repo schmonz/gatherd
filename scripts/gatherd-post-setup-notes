@@ -64,7 +64,8 @@ collapse_blanks() {
 # Hardware detection
 # ---------------------------------------------------------------------------
 
-is_thinkpad()     { grep -qi 'lenovo' /sys/class/dmi/id/board_vendor 2>/dev/null; }
+is_thinkpad()     { grep -qi 'thinkpad' /sys/class/dmi/id/product_version 2>/dev/null \
+                        || grep -qiE 'lenovo|ibm' /sys/class/dmi/id/board_vendor 2>/dev/null; }
 is_chromebook()   { grep -qi 'google' /sys/class/dmi/id/sys_vendor 2>/dev/null; }
 has_ir_receiver() { ls /dev/lirc* /sys/class/rc/rc* >/dev/null 2>&1; }
 has_resume()      { [ "$(systemctl is-enabled suspend.target 2>/dev/null)" != "masked" ]; }

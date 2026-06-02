@@ -65,6 +65,7 @@ collapse_blanks() {
 # ---------------------------------------------------------------------------
 
 is_thinkpad()     { grep -qi 'lenovo' /sys/class/dmi/id/board_vendor 2>/dev/null; }
+is_chromebook()   { grep -qi 'google' /sys/class/dmi/id/sys_vendor 2>/dev/null; }
 has_ir_receiver() { ls /dev/lirc* /sys/class/rc/rc* >/dev/null 2>&1; }
 has_resume()      { [ "$(systemctl is-enabled suspend.target 2>/dev/null)" != "masked" ]; }
 has_grub()        { [ -f /etc/default/grub ]; }
@@ -236,6 +237,7 @@ section_verify() {
     fi
     li 'Session teardown: log out and log back in. The previous session should NOT linger — `loginctl list-sessions` shows no extra `seat0`/`tty1` session stuck in state `closing`, and the helper cohort does not stack: `pgrep -c gatherd-session-helpers` stays 1 (not climbing per login) and `pgrep -af gatherd-prompt-captiveportal` shows a single watcher. Then log out of a supervisor session and confirm conky/systrays/watchers from it are gone (no orphans reparented to PID 1).'
     li 'WiFi + captive portal: at a portal network, the captive-browser window should pop on its own within a few seconds of joining, floating in the right spot, already on the portal page with no "site is not secure" warning. To re-test at an already-authed network, force a fresh portal with a temporary random MAC: `nmcli connection modify --temporary <CONN> 802-11-wireless.cloned-mac-address random` then `nmcli connection down <CONN> && nmcli connection up <CONN>` (resets on reboot).'
+    is_chromebook && li 'Chromebook machine label: conky'"'"'s top-right machine name shows the OEM marketing name reordered to `Vendor Chromebook Model` (e.g. `Lenovo Chromebook 100e`), not the board codename (`Google Robo (rev3)`). `gatherd-describe-machine` reads it from `/sys/firmware/vpd/ro/model_name`; confirm `cat /sys/firmware/vpd/ro/model_name` is non-empty.'
     li 'WiFi unmanaged-network nudge: hand-join any new network, log out and back in — an "Unmanaged WiFi" section listing it should appear in this file'
 }
 

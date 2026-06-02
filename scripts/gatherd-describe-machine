@@ -11,6 +11,23 @@ vendor=$(awk '
                          { print $1;          exit }
 ' /sys/class/dmi/id/sys_vendor 2>/dev/null)
 
+if [ "$vendor" = Google ]; then
+  # Chromebooks: DMI product_name is only the board codename ("Robo"), which is
+  # whitelabeled across multiple OEM brands and can't be mapped 1:1 to a product.
+  # The OEM marketing name is written per-unit into the coreboot RO VPD region at
+  # the factory; it's authoritative for this exact device and already vendor-
+  # prefixed ("Lenovo 100e Chromebook"). Preserved by MrChromebox firmware.
+  model=$(tr -d '\0' </sys/firmware/vpd/ro/model_name 2>/dev/null)
+  if [ -n "$model" ]; then
+    # Prefer "Vendor Chromebook Model" word order ("Lenovo Chromebook 100e")
+    # over the VPD's "Vendor Model Chromebook" ("Lenovo 100e Chromebook"). Only
+    # reorders when the name ends in "Chromebook", so names that already carry it
+    # mid-string ("Acer Chromebook 11") pass through untouched.
+    echo "$model" | sed 's/^\([^ ]*\) \(.*\) Chromebook$/\1 Chromebook \2/'
+    exit 0
+  fi
+fi
+
 if [ "$vendor" = Apple ]; then
   # fastfetch resolves Apple model codes to marketing names ("MacBook Air
   # (11-inch, Early 2015)"); the bare DMI identifier (MacBookAir7,1) is what

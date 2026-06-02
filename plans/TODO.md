@@ -3,10 +3,6 @@
 ## From repave 2026-06-01 (work down in order)
 
 ### Post-setup notes correctness
-- **Helium/rclone conditional is backwards**: the post-setup notes instruct an
-  icloud.com login under Helium, gated by `icloud_configured`. That conditional
-  should instead gate the **`rclone config`** notes — the icloud.com login step
-  shouldn't be there. Rewire `icloud_configured` to control the rclone section.
 - **Re-author the lost rclone setup notes**: the handwritten rclone setup notes got
   eaten and are gone. Reconstruct them (and fold into the `icloud_configured`/rclone
   section above so they're managed, not handwritten).

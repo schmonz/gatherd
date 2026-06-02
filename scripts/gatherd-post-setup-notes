@@ -83,14 +83,13 @@ section_1password() {
 }
 
 section_helium() {
-    if helium_1p_extension_ok && tailscale_connected && icloud_configured; then
+    if helium_1p_extension_ok && tailscale_connected; then
         section_present 'Helium' && section_remove 'Helium'
     else
         section_present 'Helium' && return
         h 'Helium'
         helium_1p_extension_ok || li 'Install 1Password browser extension'
         tailscale_connected    || li 'Log into Tailscale admin console'
-        icloud_configured      || li 'Log into iCloud (needed for rclone; see iCloud section)'
     fi
 }
 

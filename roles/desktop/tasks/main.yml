@@ -409,6 +409,13 @@
     mode: '0755'
     remote_src: true
 
+- name: Install gatherd-session-leftovers diagnostic script
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-session-leftovers"
+    dest: "{{ target_home }}/.local/bin/gatherd-session-leftovers"
+    mode: '0755'
+    remote_src: true
+
 - name: Install gatherd-prompt-captiveportal script
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-prompt-captiveportal"

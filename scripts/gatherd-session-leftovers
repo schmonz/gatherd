@@ -1,0 +1,93 @@
+#!/bin/sh
+# gatherd-session-leftovers — list this user's processes that outlived an
+# earlier login and are still running.
+#
+# Surviving logout is not itself a bug: singleton per-user daemons (op's caching
+# daemon, jetbrainsd, ssh-agent, pipewire) are reused across logins by design.
+# The real smell is DUPLICATES — the same command surviving more than once means
+# a per-session helper is stacking instead of being reaped. Those are listed
+# first, under STACKED.
+#
+# How "belongs to an earlier session" is decided: a process is from this session
+# only if it started at/after the current compositor (sway). Anything older that
+# we still own — minus the persistent per-user service supervisor — predates this
+# login. This anchors on the live sway, NOT on where the script is run from, so
+# it stays correct even when run from inside a tmux server that detached from an
+# earlier session (where an ancestry walk would mistake the whole GUI for leftovers).
+#
+# Init-agnostic by design: reads only /proc and ps, never logind/loginctl, so it
+# reports the same thing under systemd and under Artix + s6.
+
+uid=$(id -u)
+
+# Anchor: the most recently started sway = the current graphical session.
+set -- $(ps -o pid=,etimes= -C sway 2>/dev/null | sort -k2 -n | head -1)
+sway_et=${2:-}
+if [ -z "$sway_et" ]; then
+    echo "No running sway found — can't identify the current session. Run this from your desktop."
+    exit 0
+fi
+
+# Emit "pid age" for each leftover. Only numeric ps fields drive the logic, so a
+# comm containing spaces (e.g. "tmux: server") can't desync the parse.
+leftovers=$(ps -eo pid=,ppid=,uid=,etimes=,comm= 2>/dev/null | awk -v me="$uid" -v cut="$sway_et" '
+{
+    p=$1; pp=$2; u=$3; e=$4;
+    cm=$5; for (i=6;i<=NF;i++) cm=cm" "$i;
+    ppid[p]=pp; owner[p]=u; et[p]=e; comm[p]=cm; kids[pp]=kids[pp]" "p; all[p]=1;
+}
+END {
+    # Mark the per-user service supervisor tree as persistent infrastructure, not
+    # a leftover (systemd --user today; an s6/runit user tree on Artix).
+    top=0;
+    for (p in all)
+        if (owner[p]==me && ppid[p]==1 && comm[p] ~ /^(systemd|s6-svscan|svscan|runsvdir|runsv|s6-supervise|dinit|perpd)$/) {
+            infra[p]=1; stack[++top]=p;
+        }
+    while (top>0) {
+        c=stack[top--]; n=split(kids[c], ch, " ");
+        for (j=1;j<=n;j++) if (!infra[ch[j]]) { infra[ch[j]]=1; stack[++top]=ch[j]; }
+    }
+    for (p in all) {
+        if (owner[p]!=me || infra[p]) continue;
+        if (et[p]+0 <= cut+0) continue;     # started at/after sway = this session
+        e=et[p]+0; d=int(e/86400); h=int(e%86400/3600); mn=int(e%3600/60); s=e%60;
+        if (d) age=sprintf("%dd%02dh", d, h);
+        else if (h) age=sprintf("%dh%02dm", h, mn);
+        else age=sprintf("%dm%02ds", mn, s);
+        print p, age;
+    }
+}')
+
+if [ -z "$leftovers" ]; then
+    echo "No leftover processes from earlier sessions."
+    exit 0
+fi
+
+# Build "pid<TAB>age<TAB>cmdline" rows; cmdline read from /proc so spaces are safe.
+rows=$(echo "$leftovers" | while read -r p age; do
+    cmd=$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | sed 's/ *$//')
+    [ -n "$cmd" ] || cmd="($(cat "/proc/$p/comm" 2>/dev/null))"
+    printf '%s\t%s\t%s\n' "$p" "$age" "$cmd"
+done)
+
+# A command line that appears more than once = a per-session helper stacking.
+dups=$(printf '%s\n' "$rows" | cut -f3- | sort | uniq -d)
+
+if [ -n "$dups" ]; then
+    echo "STACKED — same command survived multiple logins (likely a teardown leak):"
+    printf '%s\n' "$dups" | while IFS= read -r cmd; do
+        cnt=$(printf '%s\n' "$rows" | cut -f3- | grep -Fxc -- "$cmd")
+        printf '  %sx  %s\n' "$cnt" "$cmd"
+    done
+    echo
+fi
+
+echo "Cross-session survivors (started before the current sway):"
+printf '  %-8s %-8s %s\n' PID AGE COMMAND
+printf '%s\n' "$rows" | while IFS="$(printf '\t')" read -r p age cmd; do
+    printf '  %-8s %-8s %s\n' "$p" "$age" "$cmd"
+done
+echo
+echo "Singletons (op daemon, jetbrainsd, ssh-agent, …) are reused per-user daemons,"
+echo "normally fine to leave. Act on the STACKED list."

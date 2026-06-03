@@ -150,36 +150,6 @@
   of any single install and keeps `authorized_keys`/known-hosts from accumulating
   dead keys.
 
-- **Captive portal auto-launch — VALIDATED 2026-06-02 (two real portal hits at
-  LaPromNyack); one item left open below.** The auto-launch fast path works and
-  reproduces: from link-up to portal page on screen ≈ 4–5s, confirmed by a human.
-  - Watcher on sway autostart (not a `--user` service), HTTPS-First modal fix, and the
-    `stdbuf -oL nmcli monitor` buffering fix are all confirmed working; detection fires
-    ~2s after link-up and launch is instant. The old latency suspects (~24s "Obtaining
-    DHCP DNS", ~44s proxy backoff) did NOT recur on either hit — proxy ready the same
-    second, page reachable ~2s after launch. Treat them as one-offs, not standing bugs.
-    Netsurf swap is moot (launch was never the bottleneck).
-  - **IMPLEMENTED but UNVALIDATED — auto-close the captive-browser window once
-    connectivity returns to `full`.** captive-browser does NOT self-close; the user had to
-    close the window by hand after authing (confirmed 2026-06-02). The watcher now handles
-    it: `scripts/gatherd-prompt-captiveportal` matches a `*Connectivity*Full*` line from
-    `nmcli monitor` and runs `swaymsg '[app_id="captive-browser"] kill'` (guarded by
-    `pgrep -x captive-browser`), which makes captive-browser shut down cleanly. **Not yet
-    proven at a real portal** — the validation runs (MAC-reset) all ended with the human
-    closing the window manually, so the `full`-triggered close has never actually fired.
-    Next portal: complete auth and confirm the window vanishes on its own (watch
-    `~/.cache/captive-browser.log` for the "connectivity full … closing" line). Delete
-    once validated.
-  - **Cosmetic, log-only (won't-fix unless they start mattering):** two noise lines in
-    `~/.cache/captive-browser.log`, neither user-visible — the ublock
-    `managed_storage.json` parse error (also proves `--disable-extensions` in the toml is
-    ineffective; ublock still loads) and `services.helium.imput.net` SSL handshake
-    failures (helium phoning home through the portal proxy pre-auth).
-  - **Re-test recipe:** force a fresh portal with a temporary random MAC —
-    `nmcli connection modify --temporary LaPromNyack 802-11-wireless.cloned-mac-address random`
-    then `nmcli connection down LaPromNyack && nmcli connection up LaPromNyack` (resets on
-    reboot; `networking off/on` also regenerates the MAC). Verify by the visible window +
-    page, confirmed by a human, not by pgrep.
 - **Auto-detect JetBrains account login**: `section_jetbrains` is now "never
   auto-done" (the old `jetbrains_authed` blocklist false-positived because
   Toolbox autostarts and writes assorted `.json` just by running, before any

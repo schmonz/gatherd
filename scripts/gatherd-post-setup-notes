@@ -221,9 +221,7 @@ section_verify() {
     section_present 'Verify' && return
     h 'Verify'
     li 'PIA Quick Tour: on the first launch after a repave, pia-client opens to the login/connect screen, not the multi-step Quick Tour walkthrough (nor the "What'\''s New" dialog). Confirm `grep lastUsedVersion ~/.config/privateinternetaccess/clientsettings.json` matches `/opt/piavpn/bin/piactl --version`'
-    li 'PIA: am I actually able to get online with it?'
     li 'Tailscale shutdown: shut down — should complete in under 30 seconds with no "A stop job is running for Tailscale" delay'
-    li 'gatherd async/vault services: `systemctl is-failed gatherd-async.service gatherd-vault.service` shows neither failed (the old path-unit start-limit loop is gone), the slow AUR packages installed, and `/etc/gatherd/async-complete` exists. Dropping `.vault_pass` should run them the same session with no reboot.'
     li 'LocalSend startup flash: log out and back in, watching the screen — no LocalSend window should flash up before it settles into the tray. `gatherd-intercept-localsend-flash` (launched from the supervisor just before localsend) stashes the startup surface to scratchpad until LocalSend withdraws it via `--hidden`. If a brief flash returns, confirm the interceptor is installed and still listed in `gatherd-session-helpers`.'
     if is_thinkpad; then
         li 'ThinkVantage button (T60): press blue ThinkVantage button — should open a terminal'
@@ -233,7 +231,6 @@ section_verify() {
         li 'IR receiver: run `ir-keytable` — confirm device listed with a keymap loaded'
         li 'IR receiver: run `ir-keytable -t -s rc0` and press remote buttons — should show scancode + keycode per press'
     fi
-    li 'WiFi unmanaged-network nudge: hand-join any new network, log out and back in — an "Unmanaged WiFi" section listing it should appear in this file'
 }
 
 # ---------------------------------------------------------------------------

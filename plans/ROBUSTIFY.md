@@ -53,6 +53,34 @@ session is broken." Confirm this on a deliberately-broken boot before assuming t
 mechanism; it changes nothing about the plan (the fixes are robust to either reading)
 but it tells us where the pain actually comes from.
 
+## Current state on `main` (2026-06-03)
+
+A snapshot so a fresh agent knows what already exists vs. what this plan still builds:
+
+- **CORE side is still the monolith.** `gatherd.service` is `Type=oneshot`, runs
+  `systemd-inhibit … ansible-playbook site.yml` synchronously, with the galaxy install in
+  `ExecStartPre`, `ExecCondition=gatherd-needs-run /etc/gatherd/complete`, and
+  `Before=greetd.service`. `site.yml` is the three-play monolith under
+  `any_errors_fatal: true`. **Phase 0 and the Diagnosis above apply unchanged.**
+- **REST side already has the target portable shape.** `gatherd-async.service` is
+  `Type=simple` → `gatherd-await-and-run /etc/gatherd/async-complete site-async.yml`.
+  `gatherd-await-and-run` already bundles, in POSIX sh, the wait, the `gatherd-needs-run`
+  check, the `ansible-galaxy` install, and the `systemd-inhibit` — and its comment states
+  this keeps the unit "portable to non-systemd inits." That is exactly the
+  fail-open-wrapper pattern; **Phase 0 brings CORE to the parity REST already has.**
+- **`site-async.yml` exists** with three plays (detect → `roles/system/tasks/slow.yml`
+  → `roles/aur/tasks/slow.yml`) and writes the `async-complete` sentinel. Phase 2's REST
+  work expands those includes and repoints them; it does **not** build new plumbing.
+- **Package lists are still inline** in the tasks. `group_vars/all/main.yml` already
+  holds list-shaped config (`web_apps`, wallpaper paths) — the precedent location for
+  Phase 1's `*_packages` vars.
+- **`CAPTIVE-PORTAL.md` Phase 1 is executed**: the connectivity watcher runs from sway
+  autostart with an internal self-restart loop (off the old systemd user service).
+  Phase 3 reuses that connectivity logic.
+- Both `site.yml` and `site-async.yml` still carry `any_errors_fatal: true`. For the REST
+  tier, Phase 2 should drop it so one failed package doesn't abort the remainder of a
+  post-login convergence.
+
 ## Target state
 
 Three structural moves, each independently valuable:
@@ -123,7 +151,9 @@ done and verified, fold its check into `section_verify` in
 before any restructuring, and establishes the portable wrapper pattern the core will
 reuse.*
 
-- Add `scripts/gatherd-run-core` (POSIX sh, mirrors `gatherd-await-and-run`'s shape):
+- Add `scripts/gatherd-run-core` (POSIX sh, mirrors `gatherd-await-and-run`'s shape —
+  which already does the needs-run check, the galaxy install, and the inhibit, so model
+  on it):
   1. `ansible-playbook --syntax-check <playbook>` first; on failure, record the error
      to a failure marker and `exit 0` **without attempting the run** — a syntax error
      can then never even try to brick the machine.
@@ -131,8 +161,10 @@ reuse.*
      so a hang can't wedge boot, force any vault via `--vault-password-file`.
   3. Record outcome (success / failure / timeout + a log path) to
      `/etc/gatherd/last-run` (or similar). **Always `exit 0`.**
-- Point `gatherd.service`'s `ExecStart` at the wrapper instead of bare
-  `ansible-playbook`. Keep `Before=greetd.service`.
+- Repoint `gatherd.service` at the wrapper: `ExecStart=gatherd-run-core site.yml`,
+  absorbing the galaxy install (today's `ExecStartPre`) and the `systemd-inhibit`
+  (today's `ExecStart`) into the script — exactly as `gatherd-await-and-run` already
+  does for the async unit. Keep `Before=greetd.service`. The unit gets thin and portable.
 - Surface failures at login: have a `gatherd-prompt-*` script read the failure marker
   and show "setup failed at X — log here, re-run with Y" (notification + a
   post-setup-notes line). This is the complaint-#2 fix.
@@ -149,10 +181,11 @@ comes up. A clean run is unchanged (`/etc/gatherd/complete` written, no re-run).
 *Pure refactor, no behavior change. Prerequisite for both the split and the offline
 builder.*
 
-- Lift the inline package lists out of the tasks into vars (`group_vars/all/` or role
-  `vars/`): e.g. `core_packages`, `rest_packages`, `aur_packages`, `aur_slow_packages`.
-  Tasks install `{{ rest_packages }}` etc. The offline builder (Phase 4) downloads the
-  same lists. No drift.
+- Lift the inline package lists out of the tasks into vars, in `group_vars/all/main.yml`
+  alongside the existing `web_apps`/wallpaper config (or role `vars/`): e.g.
+  `core_packages`, `rest_packages`, `aur_packages`, `aur_slow_packages`. Tasks install
+  `{{ rest_packages }}` etc. The offline builder (Phase 4) downloads the same lists. No
+  drift.
 
 **Test:** Full idempotent run reports zero changes vs. before the refactor; `ansible-lint`
 clean.
@@ -165,8 +198,12 @@ clean.
   "tiny task files" convention). `dotfiles`-clone, `aur`, and `hardware` become
   entirely REST; system `/etc` essentials and desktop config templates are CORE.
 - Create `site-core.yml` (local-only; the three plays trimmed to CORE includes). Fold
-  the REST includes into `site-async.yml` (which already runs the `slow.yml` files).
-- Wire `gatherd.service` → `gatherd-run-core site-core.yml` (Phase 0 wrapper). REST
+  the REST includes into the existing `site-async.yml` (whose three plays already pull
+  in `roles/system/tasks/slow.yml` and `roles/aur/tasks/slow.yml` and write the
+  `async-complete` sentinel — expand and repoint, don't replumb). Drop
+  `any_errors_fatal: true` from the REST plays so one failed package doesn't abort the
+  rest of a post-login convergence.
+- Re-aim the Phase 0 wrapper at the core playbook: `gatherd-run-core site-core.yml`. REST
   stays on the existing `gatherd-async.service` / `gatherd-await-and-run`.
 - Two sentinels: `/etc/gatherd/core-complete` + `/etc/gatherd/async-complete`
   (`gatherd-needs-run` already takes the sentinel path as an arg).
@@ -246,7 +283,11 @@ The whole plan is built to port (consistent with `ARTIX.md` and the existing
   `ExecStart=gatherd-run-core …`; s6 run script `exec gatherd-run-core …`. The
   always-`exit 0` keeps greetd-gating safe under both systemd ordering and s6-rc
   dependencies (a failed oneshot blocks dependents in both — so never fail at the init
-  level; record real status in a marker file instead).
+  level; record real status in a marker file instead). This is not hypothetical:
+  `gatherd-async.service` + `gatherd-await-and-run` already do exactly this on `main`
+  (POSIX sh holding the wait, needs-run check, galaxy install, and inhibit), with a unit
+  comment stating the goal is non-systemd portability. Phase 0 generalizes that proven
+  pattern to the CORE service.
 - **CORE local-only** means the gate is short and can't hang on network, so "block
   greetd briefly" is cheap and safe on either init; `Before=greetd.service` becomes an
   s6-rc dependency.

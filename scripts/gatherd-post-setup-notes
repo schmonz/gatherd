@@ -223,11 +223,8 @@ section_verify() {
     li 'PIA Quick Tour: on the first launch after a repave, pia-client opens to the login/connect screen, not the multi-step Quick Tour walkthrough (nor the "What'\''s New" dialog). Confirm `grep lastUsedVersion ~/.config/privateinternetaccess/clientsettings.json` matches `/opt/piavpn/bin/piactl --version`'
     li 'PIA: am I actually able to get online with it?'
     li 'Tailscale shutdown: shut down — should complete in under 30 seconds with no "A stop job is running for Tailscale" delay'
-    li 'autofs verbose logging: after a fresh repave, gatherd.service finished without erroring on a missing autofs.conf, and `grep "^logging" /etc/autofs/autofs.conf` shows `logging = verbose`'
-    li 'greetd login background: log out (or reboot) — the regreet login screen shows our wallpaper, not the EndeavourOS default splash.'
     li 'gatherd async/vault services: `systemctl is-failed gatherd-async.service gatherd-vault.service` shows neither failed (the old path-unit start-limit loop is gone), the slow AUR packages installed, and `/etc/gatherd/async-complete` exists. Dropping `.vault_pass` should run them the same session with no reboot.'
     li 'Slow-progress terminal: during a fresh repave (async still running) first login pops a terminal showing live package-install progress; on later logins, once `/etc/gatherd/async-complete` exists, NO terminal flashes on screen.'
-    has_resume && li 'Suspend over NFS: with a shell sitting in ~/trees (the Tailscale NFS mount), close the lid, wait, then reopen — should wake to the lock screen, not hang on a black screen'
     if is_thinkpad; then
         li 'ThinkVantage button (T60): press blue ThinkVantage button — should open a terminal'
     fi
@@ -236,8 +233,6 @@ section_verify() {
         li 'IR receiver: run `ir-keytable` — confirm device listed with a keymap loaded'
         li 'IR receiver: run `ir-keytable -t -s rc0` and press remote buttons — should show scancode + keycode per press'
     fi
-    li 'Session teardown: log out and log back in. The previous session should NOT linger — `loginctl list-sessions` shows no extra `seat0`/`tty1` session stuck in state `closing`, and the helper cohort does not stack: `pgrep -c gatherd-session-helpers` stays 1 (not climbing per login) and `pgrep -af gatherd-prompt-captiveportal` shows a single watcher. Then log out of a supervisor session and confirm conky/systrays/watchers from it are gone (no orphans reparented to PID 1).'
-    is_chromebook && li 'Chromebook machine label: conky'"'"'s top-right machine name shows the OEM marketing name reordered to `Vendor Chromebook Model` (e.g. `Lenovo Chromebook 100e`), not the board codename (`Google Robo (rev3)`). `gatherd-describe-machine` reads it from `/sys/firmware/vpd/ro/model_name`; confirm `cat /sys/firmware/vpd/ro/model_name` is non-empty.'
     li 'WiFi unmanaged-network nudge: hand-join any new network, log out and back in — an "Unmanaged WiFi" section listing it should appear in this file'
 }
 

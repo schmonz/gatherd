@@ -31,65 +31,12 @@
 
 ## Session teardown
 
-- **Logout strands the whole autostart cohort (discovered 2026-06-02).** Logging out
-  does not clean up; every login stacks another full set of orphaned daemons.
-  - **Mechanism (two compounding causes):** (1) `KillUserProcesses=no` — the systemd
-    default (confirmed: commented out in `/etc/systemd/logind.conf`), so logind never
-    kills your processes on logout. (2) sway does not reap its autostart `exec`
-    children. So when sway exits, the entire autostart cohort keeps running, orphaned,
-    pinning the old `session-N.scope` in state `closing` **forever** (the scope can't
-    finish closing while processes remain). Each fresh login then stacks a new cohort.
-  - **Evidence:** found three stranded tty1 logins (sessions 1, 5, 8). Session 1 (13h
-    old, `closing`) still held conky, `op daemon`, tailscale systray, jetbrainsd;
-    session 5 (`closing`) held conky + tmux. Hence three captive-portal watchers, three
-    conkys, etc. The captive-portal watcher was just the most visible symptom; this is a
-    general teardown leak affecting *every* sway-autostart helper.
-  - **Symptoms it causes:** duplicate daemons accumulate across logins (e.g. multiple
-    captive-portal watchers racing the `pgrep` guard to launch captive-browser; multiple
-    conkys/systrays); old sessions never drain; wasted memory; confusing process lists.
-  - **Decision (revised 2026-06-02 after researching the Artix/s6 future): fix it in the
-    session layer, init-agnostically — NOT via `KillUserProcesses`.** The reasoning:
-    `KillUserProcesses` is a systemd-logind / elogind feature, but sway tries **seatd
-    first**, and a minimal Artix/s6 sway box typically runs **seatd, which has no session
-    lifecycle at all** — no session scope, no `closing` state, no `KillUserProcesses`
-    knob. So a logind drop-in would be a no-op there and the leak would reappear as plain
-    orphans reparented to PID 1. Worse, even on the elogind path elogind has a known bug
-    of *ignoring* `KillUserProcesses` (elogind issue #53). So that knob is doubly
-    unreliable for our target. The portable root cause is the same everywhere: **sway
-    autostart children outlive sway because nothing reaps them.**
-  - **Chosen fix — a single session-lifetime supervisor (POSIX sh, sway-only deps):**
-    one script started from sway autostart that (a) becomes its own process-group leader
-    (`setsid`), (b) launches the whole helper cohort (conky, waybar, systrays, the
-    gatherd-prompt-* scripts, the captive-portal watcher, …) as its children, (c) polls
-    the Wayland socket (`$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY`) and, when it disappears (sway
-    gone), `kill`s its whole process group and exits. Depends only on sway + POSIX sh +
-    the Wayland socket — identical behavior on systemd+logind, systemd+seatd, s6+seatd,
-    s6+elogind. Replaces the current N independent `exec ~/.local/bin/<helper>` lines in
-    `roles/desktop/tasks/main.yml` with one `exec <supervisor>`.
-    - **Bonus: dodges the tmux tradeoff entirely.** tmux is not in the sway-autostart
-      cohort (it's started from a terminal), so it stays outside the supervisor and keeps
-      surviving logout — no `enable-linger` or user-manager gymnastics, unlike the
-      rejected `KillUserProcesses=yes` route.
-    - Don't add per-helper restart-on-crash to the supervisor; keep it launch-then-reap.
-      The captive-portal watcher already self-restarts its own `nmcli monitor`.
-  - **Rejected — `KillUserProcesses=yes` logind drop-in:** not portable to seatd-based
-    s6 (and elogind may ignore it); would also kill detached tmux unless we add linger.
-  - **Rejected — systemd `graphical-session.target` + `systemctl --user
-    import-environment` (the uwsm approach):** clean on systemd but heavily systemd-coupled,
-    same Artix problem.
-  - **IMPLEMENTED 2026-06-02 — awaiting logout/login validation.** Added
-    `scripts/gatherd-session-helpers` (the supervisor above), installed by the `desktop`
-    role; the autostart tasks in `roles/desktop/tasks/main.yml` now drop the per-helper
-    `exec` lines (conky, `gatherd-prompt-*`, `gatherd-systray *`) and write a single
-    `exec gatherd-session-helpers`. Hand-applied to the live machine too, so it activates
-    on the next login. Validate per the new `section_verify` item: log out/in, confirm no
-    session stuck `closing`, the cohort doesn't stack, and a supervisor session drains on
-    logout. **Not yet exercised through a real logout** (the running session predates the
-    change). Delete this item once validated.
-  - **Out of scope (note for later):** the supervisor adopts only gatherd's own cohort.
-    EndeavourOS default autostart helpers (nm-applet, mako, cliphist watchers, …) and the
-    `swayidle` block still `exec` directly from sway, so on systemd they'll keep the
-    session scope from fully draining until they're folded in or handled separately.
+- **Fold the non-gatherd autostart helpers into the supervisor.** `gatherd-session-helpers`
+  reaps gatherd's own cohort on logout (validated 2026-06-03), but the EndeavourOS default
+  helpers (`nm-applet`, `mako`, the cliphist watchers) and the `swayidle` block still `exec`
+  directly from sway, so nothing reaps them. On systemd they keep the old `session-N.scope`
+  from fully draining (state `closing`) until they are folded into the supervisor or handled
+  separately. Moot on the Artix/s6 (seatd) target, which has no session scope.
 
 ## Secrets
 
@@ -219,9 +166,7 @@
     fragility); Syncthing must run on local disk on every node incl. the NAS.
 - **NFS mount slow to return after resume** *(superseded by the Syncthing migration above
   once it reaches Phase E; the autofs `negative_timeout` tuning below stays useful as an
-  A–C interim safety net)*: suspend itself is fixed
-  (`gatherd-unmount-nfs` force-unmounts before sleep so the freeze succeeds),
-  but after unlock the `~/trees` NFS mount takes ~1 min to come back. Network
+  A–C interim safety net)*: after unlock the `~/trees` NFS mount takes ~1 min to come back. Network
   and Tailscale recover in ~5s, so the delay is NOT reconnect time.
   *Hypothesis* (unconfirmed): autofs's negative-mount cache. If something
   touches `~/trees` in the few seconds after unlock — before Tailscale is up —

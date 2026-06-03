@@ -134,9 +134,8 @@ section_tailscale() {
     # Never auto-done: exit node check is always relevant after a repave
     section_present 'Tailscale' && return
     h 'Tailscale'
-    tailscale_connected   || li 'Connect now — log in this session before rebooting. The operator pref only persists once the node has logged in; reboot while still logged out and the systray says "no permission to manage tailscale", fixed by re-running `sudo tailscale set --operator=$USER`.'
+    tailscale_connected   || li 'Connect during this session before rebooting. Else next session re-run `sudo tailscale set --operator=$USER` first.'
     tailscale_settings_ok || li 'Run `tailscale set --accept-dns=true --accept-routes`'
-    li 'Fix exit node: check admin console ("cannot relay traffic")'
 }
 
 section_icloud() {

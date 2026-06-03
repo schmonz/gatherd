@@ -224,7 +224,7 @@ section_verify() {
     li 'PIA: am I actually able to get online with it?'
     li 'Tailscale shutdown: shut down — should complete in under 30 seconds with no "A stop job is running for Tailscale" delay'
     li 'gatherd async/vault services: `systemctl is-failed gatherd-async.service gatherd-vault.service` shows neither failed (the old path-unit start-limit loop is gone), the slow AUR packages installed, and `/etc/gatherd/async-complete` exists. Dropping `.vault_pass` should run them the same session with no reboot.'
-    li 'Slow-progress terminal: during a fresh repave (async still running) first login pops a terminal showing live package-install progress; on later logins, once `/etc/gatherd/async-complete` exists, NO terminal flashes on screen.'
+    li 'LocalSend startup flash: log out and back in, watching the screen — no LocalSend window should flash up before it settles into the tray. `gatherd-intercept-localsend-flash` (launched from the supervisor just before localsend) stashes the startup surface to scratchpad until LocalSend withdraws it via `--hidden`. If a brief flash returns, confirm the interceptor is installed and still listed in `gatherd-session-helpers`.'
     if is_thinkpad; then
         li 'ThinkVantage button (T60): press blue ThinkVantage button — should open a terminal'
     fi

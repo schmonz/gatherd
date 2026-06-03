@@ -77,6 +77,8 @@
       - btop
       - conky
       - inotify-tools
+      # parses sway IPC events for gatherd-intercept-localsend-flash
+      - jq
       - fastfetch
       - tmux
       - the_silver_searcher

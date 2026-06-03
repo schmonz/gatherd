@@ -39,6 +39,10 @@ run "$bin/gatherd-prompt-postsetup"
 run "$bin/gatherd-prompt-vault"
 run "$bin/gatherd-prompt-pia"
 run "env XDG_CURRENT_DESKTOP=GNOME $bin/gatherd-systray 1password --silent"
+# Stash LocalSend's startup-window flash before it reaches the screen. Must be
+# launched just ahead of localsend so it is already subscribed when the first
+# surface maps (see scripts/gatherd-intercept-localsend-flash).
+run "$bin/gatherd-intercept-localsend-flash"
 run "$bin/gatherd-systray localsend --hidden"
 run "$bin/gatherd-systray tailscale systray"
 run "$bin/gatherd-systray jetbrains-toolbox --minimize"

@@ -1,0 +1,36 @@
+#!/bin/sh
+# Suppress LocalSend's startup-window flash.
+#
+# LocalSend's --hidden flag hides the window only *after* mapping it: at launch a
+# surface (sometimes two) maps and then self-closes within ~100ms, so a window
+# visibly flickers on screen at every login. Nothing distinguishes that startup
+# window from a tray-summoned one — same app_id `localsend`, null name at map,
+# native xdg_shell, no X11 class/role — so a static `for_window` rule would also
+# swallow the windows the user deliberately opens from the tray. The only real
+# difference is *when* they appear, so we discriminate by time: for a short window
+# after login, move any localsend window to the scratchpad the instant it maps
+# (targeted by con_id, so only that exact surface is touched), then exit — leaving
+# every later tray-summoned window alone.
+#
+# Launched from the gatherd-session-helpers cohort just before localsend, so it is
+# already subscribed when the first surface appears, and inherits the live
+# session's SWAYSOCK as a sway child (no stale-socket trap).
+#
+# This is reactive — it acts on the `new` IPC event — so in the worst case a frame
+# or two can slip through before `move scratchpad` lands. The only strictly
+# race-free option is a `for_window` rule removed afterward via `swaymsg reload`,
+# but reload re-fires every exec_always autostart line (a duplicate autotiling,
+# among others), which is a worse trade than the residual blip.
+#
+# stdbuf -oL + jq --unbuffered keep latency to a minimum (same reason the captive
+# watcher forces line buffering on `nmcli monitor`): any output buffering here
+# would directly widen the race.
+
+# `timeout` bounds the producer (swaymsg): when it fires, swaymsg exits, its EOF
+# cascades through jq to the read loop, and the whole pipeline tears down cleanly
+# at the deadline — regardless of whether another window event ever arrives.
+timeout 12 stdbuf -oL swaymsg -t subscribe -m '["window"]' \
+    | jq --unbuffered -r 'select(.change == "new" and .container.app_id == "localsend") | .container.id' \
+    | while IFS= read -r id; do
+        swaymsg "[con_id=$id] move scratchpad" >/dev/null 2>&1
+    done

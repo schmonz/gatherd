@@ -416,6 +416,13 @@
     mode: '0755'
     remote_src: true
 
+- name: Install gatherd-conky wrapper script
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-conky"
+    dest: "{{ target_home }}/.local/bin/gatherd-conky"
+    mode: '0755'
+    remote_src: true
+
 - name: Install gatherd-intercept-localsend-flash script
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-intercept-localsend-flash"

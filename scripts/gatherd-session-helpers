@@ -31,7 +31,7 @@ run() { sh -c "$1" & }
 # The cohort: long-running session helpers gatherd autostarts. One-shots and
 # things with their own lifecycle (swayidle, gatherd-show-slow-progress) stay as
 # plain sway `exec` lines and are intentionally not listed here.
-run "conky"
+run "$bin/gatherd-conky"
 run "$bin/gatherd-prompt-captiveportal"
 run "$bin/gatherd-prompt-1password"
 run "$bin/gatherd-prompt-tailscale"

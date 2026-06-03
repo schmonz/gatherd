@@ -1,0 +1,31 @@
+#!/bin/sh
+set -u
+# Run conky under a parent that turns SIGTERM into an immediate SIGKILL of conky.
+#
+# Why: conky honors SIGTERM normally, but once its Wayland compositor dies it
+# stops responding to it. At system shutdown systemd SIGTERMs the session scope,
+# conky (compositor already gone) ignores it, and the scope then sits out the
+# full 90s TimeoutStopSec before systemd escalates to SIGKILL — a 90s stall on
+# every shutdown/reboot. This parent catches the TERM conky won't honor and
+# sends the SIGKILL it can't ignore. Transparent otherwise: same args, stdio,
+# environment, and exit status.
+
+# Absolute path so we invoke conky itself, never this wrapper, regardless of PATH.
+real=/usr/bin/conky
+
+"$real" "$@" &
+pid=$!
+
+trap 'kill -KILL "$pid" 2>/dev/null' TERM
+# Stay a faithful passthrough for the one signal conky acts on itself (reload).
+trap 'kill -USR1 "$pid" 2>/dev/null' USR1
+
+# A trapped signal interrupts `wait` and makes it return early, so loop until
+# conky is actually gone — that way we exit with conky's real status, not the
+# 128+signo of an interrupted wait.
+status=0
+while kill -0 "$pid" 2>/dev/null; do
+    wait "$pid"
+    status=$?
+done
+exit "$status"

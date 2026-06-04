@@ -1,21 +1,18 @@
 # TODO
 
-## From repave 2026-06-01 (work down in order)
-
-### Post-setup notes correctness
-- **Re-author the lost rclone setup notes**: the handwritten rclone setup notes got
-  eaten and are gone. Reconstruct them (and fold into the `icloud_configured`/rclone
-  section above so they're managed, not handwritten).
-
-### New conveniences wanted
+- Helium appearance:
+    - use QT (and make sure QT is aware we're "dark"-themed)
+    - make sure we'd be dark-themed in Classic appearance, too
+    - (we already got GTK handled)
+    - browser layout: compact
+    - zen mode: enabled
+    - rounded frame around web contents: disabled
+    - use system title bar and borders: enabled
 - **chsh to zsh**: make zsh the login shell as part of provisioning.
 - **Install mattwynne/yaks non-interactively**: want it installed without
   `curl | bash` and without interactive prompts. Find/derive a scriptable install
   path (clone + run a documented installer step, or package it) for gatherd to drive.
 - a cooler tmux status bar
-
----
-
 - arch-update: can running the update be less interactive? lots of reading and
   agreeing. Dunno if I want full automatic but fewer interactions for sure
 - Automate preparing a local package mirror on a USB stick (such as Ventoy),

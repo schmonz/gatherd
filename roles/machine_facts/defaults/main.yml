@@ -17,6 +17,7 @@ has_grub: false
 has_ir_receiver: false
 has_kbd_backlight: false
 has_luks_btrfs_root: false
+has_hidpi_display: false
 has_phantom_second_display: false
 has_plenty_of_ram: false
 has_screen_backlight: false

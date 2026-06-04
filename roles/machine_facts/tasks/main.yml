@@ -320,17 +320,22 @@
     - (_root_parent_uuid.stdout | default('')) | trim | length > 0
 
 - name: Compute foot font size for this panel
-  # gatherd-font-size reads the panel's native resolution from EDID and applies
-  # the two-up 80-column formula. The pre-login environment has no compositor, so
-  # reading the live DRM mode is unreliable; see the script for the details.
+  # gatherd-font-size reads the panel's native resolution and physical dimensions
+  # from EDID and applies the two-up 80-column formula. Emits the font size on
+  # line 1; emits "hidpi" on line 2 when PPI >= 192 (2x Sway scale expected).
   ansible.builtin.command: "{{ setup_dir }}/scripts/gatherd-font-size"
   register: _foot_font_size
   changed_when: false
 
 - name: Set foot_font_size fact
   ansible.builtin.set_fact:
-    foot_font_size: "{{ _foot_font_size.stdout | int }}"
-  when: (_foot_font_size.stdout | default('')) | int > 0
+    foot_font_size: "{{ _foot_font_size.stdout_lines[0] | int }}"
+  when: (_foot_font_size.stdout_lines[0] | default('')) | int > 0
+
+- name: Detect has_hidpi_display
+  ansible.builtin.set_fact:
+    has_hidpi_display: true
+  when: "'hidpi' in (_foot_font_size.stdout_lines | default([]))"
 
 # Role defaults only apply within this role. This task promotes every has_* fact
 # to a host fact so later plays (system, desktop) can reference them without error.
@@ -352,6 +357,7 @@
     has_ir_receiver: "{{ has_ir_receiver }}"
     has_kbd_backlight: "{{ has_kbd_backlight }}"
     has_luks_btrfs_root: "{{ has_luks_btrfs_root }}"
+    has_hidpi_display: "{{ has_hidpi_display }}"
     has_phantom_second_display: "{{ has_phantom_second_display }}"
     has_plenty_of_ram: "{{ has_plenty_of_ram }}"
     has_screen_backlight: "{{ has_screen_backlight }}"

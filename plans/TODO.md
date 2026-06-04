@@ -1,5 +1,34 @@
 # TODO
 
+# 2026/06/04 Regressions
+
+## Font sizing and general display
+
+- X270 Text Editor font looks huge, foot is fine
+  (Likely fix: text-scaling-factor double-scaling is now removed; re-run
+  gatherd or set `gsettings set org.gnome.desktop.interface text-scaling-factor 1.0`
+  and `gsettings set org.gnome.desktop.interface monospace-font-name 'JetBrains Mono 14'`
+  manually on the already-repaved machine.)
+- Latitude 9330 all fonts comically ENORMOUS
+  (Likely fix: gatherd-font-size now reads EDID physical dimensions and
+  halves pixel width for HiDPI panels; Sway `output * scale 2` is also
+  written to config.d/outputs. Re-run gatherd on the repaved machine.)
+- 17" MBP maybe didn't get the phantom-display fix
+  ...or maybe 7.x kernels are different about this?
+  ...or maybe just had to coax convergence to complete?
+
+## Helium (fixed in code; apply manually to already-repaved machines)
+
+- ~~lost "continue where you left off"~~ — fixed: initial_preferences and
+  Default/Preferences seed now use restore_on_startup:5. Manual fix: in
+  Helium settings → On startup → Continue where you left off.
+- ~~Qt appearance not dark~~ — fixed: Default/Preferences now seeds
+  system_theme:1 (GTK, which follows color-scheme prefer-dark). Manual fix:
+  in Helium Settings → Appearance → switch to GTK.
+- thinks it's managed by my organization -- pre-existing, not a regression
+
+-----
+
 - **chsh to zsh**: make zsh the login shell as part of provisioning.
 - **Install mattwynne/yaks non-interactively**: want it installed without
   `curl | bash` and without interactive prompts. Find/derive a scriptable install

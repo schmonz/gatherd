@@ -184,6 +184,18 @@
     regexp: '"icon-size":\s*\d+'
     replace: '"icon-size": {{ (16 * foot_font_size / 10) | round | int }}'
 
+- name: Configure Sway output scale for HiDPI panel
+  # output * applies to all connected outputs; on a laptop this is the internal
+  # panel. Users with external monitors at a different DPI should add a more
+  # specific override (e.g. output HDMI-1 scale 1) in config.d/outputs.
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/sway/config.d/outputs"
+    create: true
+    mode: '0644'
+    line: "output * scale 2"
+    regexp: '^\s*output\s+\*\s+scale\b'
+  when: has_hidpi_display
+
 - name: Configure foot font size for 80-col two-up layout
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/foot/foot.ini"
@@ -205,9 +217,26 @@
   register: _xed_font
   changed_when: _xed_font.stdout == 'changed'
 
-- name: Configure GTK text scaling factor
+- name: Configure system monospace font
+  # Sets the default monospace font for apps that don't have explicit font config
+  # (e.g. gnome-text-editor). xed has its own explicit setting below.
+  ansible.builtin.shell: |
+    font="JetBrains Mono {{ foot_font_size }}"
+    cur=$(dbus-run-session gsettings get org.gnome.desktop.interface monospace-font-name 2>/dev/null)
+    [ "$cur" = "'$font'" ] || {
+      dbus-run-session gsettings set org.gnome.desktop.interface monospace-font-name "$font"
+      echo changed
+    }
+  register: _monospace_font
+  changed_when: "'changed' in _monospace_font.stdout"
+
+- name: Reset GTK text scaling factor to 1.0
+  # text-scaling-factor used to be set proportionally to foot_font_size, but that
+  # double-scales any GTK app with an explicit font setting (xed, Text Editor).
+  # All apps needing foot_font_size are now configured explicitly or via
+  # monospace-font-name above; text-scaling-factor must stay at 1.0.
   ansible.builtin.command:
-    cmd: "dbus-run-session gsettings set org.gnome.desktop.interface text-scaling-factor {{ foot_font_size | float / 10.0 }}"
+    cmd: "dbus-run-session gsettings set org.gnome.desktop.interface text-scaling-factor 1.0"
   changed_when: false
 
 - name: Configure Sway window title font size
@@ -272,7 +301,7 @@
     mode: "{{ item.mode | default('0644') }}"
   loop:
     - dest: .config/net.imput.helium/initial_preferences
-      content: '{"browser":{"check_default_browser":false},"extensions":{"theme":{"system_theme":1}},"helium":{"completed_onboarding":true,"services":{"schema_version":1,"user_consented":true}},"session":{"restore_on_startup":1}}'
+      content: '{"browser":{"check_default_browser":false},"extensions":{"theme":{"system_theme":1}},"helium":{"completed_onboarding":true,"services":{"schema_version":1,"user_consented":true}},"session":{"restore_on_startup":5}}'
     - dest: .config/chromium/initial_preferences
       content: '{"browser":{"check_default_browser":false},"distribution":{"skip_first_run_ui":true,"suppress_first_run_bubble":true,"show_welcome_page":false},"session":{"restore_on_startup":1}}'
     - dest: .config/helium-browser-flags.conf
@@ -281,17 +310,17 @@
       content: "--password-store=basic"
 
 - name: Seed Helium UI preferences on a fresh profile
-  # system_theme 2 = Qt; custom_chrome_frame false = system title bar/borders;
-  # helium.browser layout 1 = compact, zen_mode on, no rounded web-content frame.
-  # Dark theme is not seeded here — the "Enable system dark mode" task sets
-  # color-scheme prefer-dark, which Qt, GTK, and Classic all follow via the
-  # desktop portal. These keys must live in Default/Preferences: Chromium's
-  # initial_preferences only honors a fixed whitelist and drops them. force:false
-  # so an established profile (the user's own later tweaks) is never clobbered;
-  # the Default/ dir is pre-created above.
+  # system_theme 1 = GTK; follows color-scheme prefer-dark via the XDG desktop
+  # portal (Qt/system_theme 2 doesn't on Sway without a Qt dark theme setup).
+  # custom_chrome_frame false = system title bar/borders; helium.browser layout 1
+  # = compact, zen_mode on, no rounded web-content frame; restore_on_startup 5 =
+  # continue where you left off. These keys must live in Default/Preferences:
+  # Chromium's initial_preferences only honors a fixed whitelist and drops them.
+  # force:false so an established profile (the user's own later tweaks) is never
+  # clobbered; the Default/ dir is pre-created above.
   ansible.builtin.copy:
     dest: "{{ target_home }}/.config/net.imput.helium/Default/Preferences"
-    content: '{"browser":{"custom_chrome_frame":false},"extensions":{"theme":{"system_theme":2}},"helium":{"browser":{"layout":1,"rounded_frame":false,"zen_mode":true}}}'
+    content: '{"browser":{"custom_chrome_frame":false},"extensions":{"theme":{"system_theme":1}},"helium":{"browser":{"layout":1,"rounded_frame":false,"zen_mode":true}},"session":{"restore_on_startup":5}}'
     force: false
     mode: '0600'
 

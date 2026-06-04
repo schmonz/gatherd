@@ -2,6 +2,8 @@
 # Emit the foot point size that yields ~80 columns in a two-up (half-width)
 # tiled layout on this machine's internal panel. All size-dependent desktop
 # config (waybar, conky, mako, fuzzel, sway titles) is derived from this number.
+# If the panel is HiDPI (physical PPI >= 192), also emits "hidpi" on a second
+# line so machine_facts can set has_hidpi_display.
 #
 # Why read EDID instead of the current display mode: machine_facts runs before
 # greetd, with no compositor, so DRM `modes` files are often empty or list a
@@ -12,16 +14,20 @@
 # The internal panel is an eDP/LVDS/DSI/DPI connector. A valid EDID begins with
 # the fixed 8-byte header 00 ff ff ff ff ff ff 00; horizontal active pixels live
 # in the first detailed timing descriptor — low 8 bits at byte 56, high 4 bits
-# in the upper nibble of byte 58. (sysfs reports the edid size as 0 even when
-# populated, so validate the header rather than the file size.)
+# in the upper nibble of byte 58. Physical width in cm lives at byte 21.
+# (sysfs reports the edid size as 0 even when populated, so validate the header
+# rather than the file size.)
 #
 # Formula (foot ~96 DPI, JetBrains Mono ~0.8 px/pt cell, 80 cols * 0.8 = 64):
-# floor((width / 2 - padding) / 64), floored to a minimum of 8.
+# floor((logical_width / 2 - padding) / 64), floored to a minimum of 8.
+# logical_width = pixel_width / sway_scale, where sway_scale is inferred from
+# physical PPI: >= 192 DPI → 2x; >= 288 DPI → 3x; otherwise 1x.
 
 # Fallback for a 1920-wide panel, used when no EDID is readable.
 DEFAULT_FONT_SIZE=14
 
 width=
+phys_w_cm=
 for d in /sys/class/drm/*-eDP-*/ /sys/class/drm/*-LVDS-*/ \
          /sys/class/drm/*-DSI-*/ /sys/class/drm/*-DPI-*/; do
     e="${d}edid"
@@ -30,6 +36,7 @@ for d in /sys/class/drm/*-eDP-*/ /sys/class/drm/*-LVDS-*/ \
     lo=$(od -An -tu1 -j56 -N1 "$e" | tr -d ' ')
     hi=$(od -An -tu1 -j58 -N1 "$e" | tr -d ' ')
     width=$(( lo + 256 * (hi / 16) ))
+    phys_w_cm=$(od -An -tu1 -j21 -N1 "$e" | tr -d ' ')
     break
 done
 
@@ -38,6 +45,23 @@ if [ -z "$width" ] || [ "$width" -lt 640 ]; then
     exit 0
 fi
 
-size=$(( (width / 2 - 4) / 64 ))
+# Compute expected Sway scale from physical PPI to get logical width.
+# ppi100 = width * 254 / phys_w_cm (integer arithmetic, 100x to avoid floats).
+# Thresholds: 19200 = 192 DPI (2x); 28800 = 288 DPI (3x).
+logical_width="$width"
+hidpi=
+if [ -n "$phys_w_cm" ] && [ "$phys_w_cm" -gt 0 ]; then
+    ppi100=$(( width * 254 / phys_w_cm ))
+    if [ "$ppi100" -ge 28800 ]; then
+        logical_width=$(( width / 3 ))
+        hidpi=1
+    elif [ "$ppi100" -ge 19200 ]; then
+        logical_width=$(( width / 2 ))
+        hidpi=1
+    fi
+fi
+
+size=$(( (logical_width / 2 - 4) / 64 ))
 [ "$size" -lt 8 ] && size=8
 echo "$size"
+[ -n "$hidpi" ] && echo "hidpi"

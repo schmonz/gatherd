@@ -14,7 +14,18 @@ OUTPUT="$HOME/.config/gatherd-post-setup.md"
 # ---------------------------------------------------------------------------
 
 h()  { printf '\n# %s\n'  "$1" >> "$OUTPUT"; }
-li() { printf -- '- %s\n' "$1" >> "$OUTPUT"; }
+
+# Render one bullet wrapped to fit an 80-column editor: the first line gets the
+# "- " marker, continuation lines a 2-space hanging indent. fold -s breaks only
+# at spaces; trailing whitespace is trimmed so the rendering is deterministic —
+# prune_section re-renders bullets the same way to find and remove them.
+wrap_bullet() {
+    printf '%s\n' "$1" | fold -s -w 78 | sed 's/[[:space:]]*$//' | awk '
+        NR == 1 { print "- " $0; next }
+                { print "  " $0 }'
+}
+
+li() { wrap_bullet "$1" >> "$OUTPUT"; }
 
 section_present() { grep -q "^# $1\$" "$OUTPUT" 2>/dev/null; }
 
@@ -37,19 +48,41 @@ prune_section() {
     _name=$1
     shift
     section_present "$_name" || return
-    PRUNE_BULLETS=$(printf '%s\n' "$@") \
-    awk -v hdr="# $_name" '
+    # Re-render each boilerplate bullet exactly as li() wrote it (wrapping and
+    # all), separated by a sentinel line, so awk matches and drops the whole
+    # possibly-multi-line bullet as a unit while leaving hand-added lines verbatim.
+    _own=$(for _b in "$@"; do wrap_bullet "$_b"; printf '@@PRUNE_SEP@@\n'; done)
+    PRUNE_OWN="$_own" awk -v hdr="# $_name" '
         BEGIN {
-            n = split(ENVIRON["PRUNE_BULLETS"], a, "\n")
-            for (i = 1; i <= n; i++) if (a[i] != "") own["- " a[i]] = 1
+            n = split(ENVIRON["PRUNE_OWN"], L, "\n")
+            b = ""
+            for (i = 1; i <= n; i++) {
+                if (L[i] == "@@PRUNE_SEP@@") { if (b != "") own[b] = 1; b = ""; continue }
+                b = (b == "") ? L[i] : b "\n" L[i]
+            }
         }
-        function flush(   i) {
-            if (nonblank) { print hdr; for (i = 1; i <= bn; i++) print body[i] }
-            bn = 0; nonblank = 0
+        # A bullet group is a "- " line plus its "  " continuation lines; drop the
+        # whole group if it matches a boilerplate bullet, else keep it verbatim.
+        function endgrp(   j, m, gl) {
+            if (!ingrp) return
+            if (!(g in own)) {
+                m = split(g, gl, "\n")
+                for (j = 1; j <= m; j++) { out[++on] = gl[j]; if (gl[j] != "") nonblank = 1 }
+            }
+            ingrp = 0; g = ""
         }
-        $0 == hdr      { inseg = 1; bn = 0; nonblank = 0; next }
+        function flush(   j) {
+            endgrp()
+            if (nonblank) { print hdr; for (j = 1; j <= on; j++) print out[j] }
+            on = 0; nonblank = 0
+        }
+        $0 == hdr      { inseg = 1; on = 0; nonblank = 0; ingrp = 0; g = ""; next }
         inseg && /^# / { flush(); inseg = 0; print; next }
-        inseg          { if ($0 in own) next; body[++bn] = $0; if ($0 != "") nonblank = 1; next }
+        inseg {
+            if ($0 ~ /^- /)          { endgrp(); ingrp = 1; g = $0; next }
+            if (ingrp && $0 ~ /^  /) { g = g "\n" $0; next }
+            endgrp(); out[++on] = $0; if ($0 != "") nonblank = 1; next
+        }
                        { print }
         END            { if (inseg) flush() }
     ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
@@ -75,13 +108,10 @@ has_grub()        { [ -f /etc/default/grub ]; }
 # App state detection
 # ---------------------------------------------------------------------------
 
-onepassword_keyring_ok() {
-    [ -f "$HOME/.local/share/keyrings/login.keyring" ]
-}
-
-helium_1p_extension_ok() {
-    [ -d "$HOME/.config/net.imput.helium/Default/Extensions/aeblfdkhhhdcdjpifhhbdiojplfjncoa" ]
-}
+seahorse_keyring_ok()      { [ -f "$HOME/.local/share/keyrings/login.keyring" ]; }
+# The SSH-agent socket appears only once "Use the SSH agent" is enabled — the
+# last 1Password setup step, so a good proxy for the whole section being done.
+onepassword_ssh_agent_ok() { [ -S "$HOME/.1password/agent.sock" ]; }
 
 tailscale_connected() { tailscale ip >/dev/null 2>&1; }
 
@@ -100,33 +130,34 @@ claude_code_authed()    { [ -f "$HOME/.claude/.credentials.json" ] || [ -f "$HOM
 # Pattern: if done → prune; else if absent → add; else → leave alone
 # ---------------------------------------------------------------------------
 
+section_seahorse() {
+    set -- 'Create a password keyring named "login" with no password, and confirm'
+    if seahorse_keyring_ok; then
+        prune_section 'Seahorse' "$@"
+    else
+        # Open Seahorse so the keyring window is right there to act on, rather than
+        # telling the reader to launch it. Guard against stacking a new window on
+        # every login while the keyring is still missing.
+        if command -v seahorse >/dev/null 2>&1 && ! pgrep -x seahorse >/dev/null 2>&1; then
+            seahorse >/dev/null 2>&1 &
+        fi
+        section_present 'Seahorse' && return
+        h 'Seahorse'
+        for b in "$@"; do li "$b"; done
+    fi
+}
+
 section_1password() {
     set -- \
-        'Open seahorse' \
-        'Create a "login" keyring with no password' \
         'Sign in to 1Password' \
         'Lock, unlock, enter 2FA code' \
-        'Settings → Developer → enable "Connect with 1Password CLI" (gatherd-prompt-pia depends on this)' \
-        'Settings → Developer → enable "Use the SSH agent" (git/ssh auth via the vault-held key; ~/.ssh/config already points all SSH hosts at the agent)'
-    if onepassword_keyring_ok; then
+        'Settings → Developer: enable "Connect with 1Password CLI" and "Use the SSH agent"'
+    if onepassword_ssh_agent_ok; then
         prune_section '1Password' "$@"
     else
         section_present '1Password' && return
         h '1Password'
         for b in "$@"; do li "$b"; done
-    fi
-}
-
-section_helium() {
-    b_ext='Install 1Password browser extension'
-    b_ts='Log into Tailscale admin console'
-    if helium_1p_extension_ok && tailscale_connected; then
-        prune_section 'Helium' "$b_ext" "$b_ts"
-    else
-        section_present 'Helium' && return
-        h 'Helium'
-        helium_1p_extension_ok || li "$b_ext"
-        tailscale_connected    || li "$b_ts"
     fi
 }
 
@@ -138,45 +169,30 @@ section_tailscale() {
     tailscale_settings_ok || li 'Run `tailscale set --accept-dns=true --accept-routes`'
 }
 
-section_icloud() {
-    set -- 'Run `rclone config` and follow prompts to add a remote named `icloud`; complete 2FA when prompted'
-    if icloud_configured; then
-        prune_section 'iCloud' "$@"
-    else
-        section_present 'iCloud' && return
-        h 'iCloud'
-        for b in "$@"; do li "$b"; done
-    fi
-}
+section_other_logins() {
+    # Detectable logins (Claude, iCloud) get pruned once done. Zoom and JetBrains
+    # login state isn't reliably detectable — Toolbox writes assorted .json just by
+    # running, so any file heuristic false-positives — so they're never auto-done
+    # and keep this section alive.
+    b_claude_desktop='Claude Desktop: log in via the app'
+    b_claude_code='Claude Code: run `claude` in a terminal'
+    b_zoom='Zoom: log in'
+    b_jetbrains='JetBrains Toolbox: log in to your account by clicking the tray icon'
+    b_icloud='iCloud: run `rclone config` and follow prompts to add a remote named `icloud`; complete 2FA when prompted'
 
-section_claude() {
-    b_desktop='Desktop: log in via the app'
-    b_code='Code: run `claude` in a terminal'
-    if claude_desktop_authed && claude_code_authed; then
-        prune_section 'Claude' "$b_desktop" "$b_code"
-    else
-        section_present 'Claude' && return
-        h 'Claude'
-        claude_desktop_authed || li "$b_desktop"
-        claude_code_authed    || li "$b_code"
-    fi
-}
+    set --
+    claude_desktop_authed && set -- "$@" "$b_claude_desktop"
+    claude_code_authed    && set -- "$@" "$b_claude_code"
+    icloud_configured     && set -- "$@" "$b_icloud"
+    [ "$#" -gt 0 ] && prune_section 'Other Logins' "$@"
 
-section_zoom() {
-    # Never auto-done: login state not detectable
-    section_present 'Zoom' && return
-    h 'Zoom'
-    li 'Log in'
-    li 'Try sharing a window — confirm screen sharing works under Sway/wlroots'
-}
-
-section_jetbrains() {
-    # Never auto-done: account-login state isn't reliably detectable. Toolbox
-    # autostarts and writes assorted .json by merely running, so any file-based
-    # heuristic false-positives and prunes this before you've actually logged in.
-    section_present 'JetBrains Toolbox' && return
-    h 'JetBrains Toolbox'
-    li 'Log in to your JetBrains account by clicking the tray icon'
+    section_present 'Other Logins' && return
+    h 'Other Logins'
+    claude_desktop_authed || li "$b_claude_desktop"
+    claude_code_authed    || li "$b_claude_code"
+    li "$b_zoom"
+    li "$b_jetbrains"
+    icloud_configured     || li "$b_icloud"
 }
 
 section_unmanaged_wifi() {
@@ -190,21 +206,40 @@ section_unmanaged_wifi() {
     saved=$(nmcli -t -f NAME,TYPE connection show 2>/dev/null \
         | awk -F: '$2 == "802-11-wireless" { print $1 }' \
         | sort -u)
-    unmanaged=$(printf '%s\n' "$saved" | grep -vxFf /etc/gatherd/managed-wifi.list || true)
+    # Suppress both the Ansible-managed networks and any you've durably dismissed
+    # in the local ack file. The ack file is per-machine and intentionally not
+    # carried across a repave — a fresh machine re-surfaces every unmanaged net.
+    _exclude=$(mktemp)
+    cat /etc/gatherd/managed-wifi.list > "$_exclude"
+    _ack="$HOME/.config/gatherd/wifi-ignore.list"
+    [ -r "$_ack" ] && cat "$_ack" >> "$_exclude"
+    unmanaged=$(printf '%s\n' "$saved" | grep -vxFf "$_exclude" || true)
+    rm -f "$_exclude"
 
     section_present 'Unmanaged WiFi' && section_remove 'Unmanaged WiFi'
     [ -n "$unmanaged" ] || return
 
+    # Build the block on its own, then splice it just under the top "Manual steps
+    # remaining:" line. This section regenerates every run and would otherwise
+    # re-append at the bottom, but it belongs above Verify.
+    _blk=$(mktemp)
+    _main=$OUTPUT
+    OUTPUT=$_blk
     h 'Unmanaged WiFi'
-    li 'These saved WiFi connections are not in Ansible — consider adding to wifi_networks (SSID) + group_vars/all/vault.yml (PSK):'
+    li 'Either keep in Ansible (vault/vault.yml) or append to ~/.config/gatherd/wifi-ignore.list:'
     printf '%s\n' "$unmanaged" | while IFS= read -r ssid; do
-        [ -n "$ssid" ] && li "  - $ssid"
+        [ -n "$ssid" ] && printf '  - %s\n' "$ssid" >> "$OUTPUT"
     done
+    OUTPUT=$_main
+
+    { head -n 1 "$OUTPUT"; cat "$_blk"; tail -n +2 "$OUTPUT"; } \
+        > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+    rm -f "$_blk"
 }
 
 section_vault() {
     set -- \
-        'Enter vault password when prompted — WiFi and other secrets will configure in the background' \
+        'Enter password when prompted' \
         'Run `journalctl -u gatherd-vault.service` to check progress'
     if [ -f /etc/gatherd/vault-complete ]; then
         prune_section 'Vault' "$@"
@@ -222,6 +257,7 @@ section_verify() {
     li 'PIA Quick Tour: on the first launch after a repave, pia-client opens to the login/connect screen, not the multi-step Quick Tour walkthrough (nor the "What'\''s New" dialog). Confirm `grep lastUsedVersion ~/.config/privateinternetaccess/clientsettings.json` matches `/opt/piavpn/bin/piactl --version`'
     li 'Sway session shutdown: shut down, then on next boot run `journalctl -b -1 | grep -iE "session-[0-9]+\.scope: Stopping timed out"` — should print nothing. conky stops honoring SIGTERM once its Wayland compositor dies, so the sway session scope used to ride out the full 90s TimeoutStopSec before SIGKILL; the `gatherd-conky` wrapper (cohort launches it instead of bare `conky`) converts SIGTERM into an immediate SIGKILL.'
     li 'LocalSend startup flash: log out and back in, watching the screen — no LocalSend window should flash up before it settles into the tray. `gatherd-intercept-localsend-flash` (launched from the supervisor just before localsend) stashes the startup surface to scratchpad until LocalSend withdraws it via `--hidden`. If a brief flash returns, confirm the interceptor is installed and still listed in `gatherd-session-helpers`.'
+    li 'Zoom screen sharing: try sharing a window — confirm screen sharing works under Sway/wlroots'
     if is_thinkpad; then
         li 'ThinkVantage button (T60): press blue ThinkVantage button — should open a terminal'
     fi
@@ -238,15 +274,12 @@ section_verify() {
 
 [ -f "$OUTPUT" ] || printf 'Manual steps remaining:\n' > "$OUTPUT"
 
-section_verify
 section_unmanaged_wifi
+section_verify
 section_vault
+section_seahorse
 section_1password
-section_helium
 section_tailscale
-section_icloud
-section_claude
-section_zoom
-section_jetbrains
+section_other_logins
 
 collapse_blanks

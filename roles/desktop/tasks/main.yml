@@ -18,6 +18,7 @@
     - .config/vesktop
     - .local/share/org.localsend.localsend_app
     - .cache/captive-browser/Default
+    - .config/xdg-desktop-portal
 
 - name: Enable system dark mode
   # Without this, the default ('default') leaves GTK, Flutter, and other apps guessing.
@@ -42,6 +43,28 @@
   ansible.builtin.copy:
     dest: "{{ target_home }}/.config/environment.d/50-gatherd-askpass.conf"
     content: "SUDO_ASKPASS={{ target_home }}/.local/bin/gatherd-askpass\n"
+    mode: '0644'
+
+- name: Configure Qt platform theme for dark-mode portal integration
+  # Qt 6.7+ reads color-scheme from the XDG settings portal when
+  # QT_QPA_PLATFORMTHEME=xdgdesktopportal, auto-following system light/dark mode.
+  # The portal is provided by xdg-desktop-portal-gtk (Settings interface only —
+  # Location and others are routed to wlr via portals.conf).
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.config/environment.d/51-qt-platform-theme.conf"
+    content: "QT_QPA_PLATFORMTHEME=xdgdesktopportal\n"
+    mode: '0644'
+
+- name: Configure XDG desktop portal backend routing
+  # Route Settings to gtk (for Qt color-scheme) and everything else to wlr.
+  # This keeps geolocation off (neither wlr nor gtk handle Location by default
+  # when wlr is the default backend) while enabling the Settings portal.
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.config/xdg-desktop-portal/portals.conf"
+    content: |
+      [preferred]
+      default=wlr
+      Settings=gtk
     mode: '0644'
 
 - name: Plant a passwordless login keyring
@@ -310,17 +333,18 @@
       content: "--password-store=basic"
 
 - name: Seed Helium UI preferences on a fresh profile
-  # system_theme 1 = GTK; follows color-scheme prefer-dark via the XDG desktop
-  # portal (Qt/system_theme 2 doesn't on Sway without a Qt dark theme setup).
-  # custom_chrome_frame false = system title bar/borders; helium.browser layout 1
-  # = compact, zen_mode on, no rounded web-content frame; restore_on_startup 5 =
-  # continue where you left off. These keys must live in Default/Preferences:
-  # Chromium's initial_preferences only honors a fixed whitelist and drops them.
-  # force:false so an established profile (the user's own later tweaks) is never
-  # clobbered; the Default/ dir is pre-created above.
+  # system_theme 2 = Qt; dark mode follows color-scheme prefer-dark via the XDG
+  # settings portal (QT_QPA_PLATFORMTHEME=xdgdesktopportal + xdg-desktop-portal-gtk
+  # providing the Settings interface). custom_chrome_frame false = system title
+  # bar/borders; helium.browser layout 1 = compact, zen_mode on, no rounded
+  # web-content frame; restore_on_startup 5 = continue where you left off.
+  # These keys must live in Default/Preferences: Chromium's initial_preferences
+  # only honors a fixed whitelist and drops them. force:false so an established
+  # profile (the user's own later tweaks) is never clobbered; the Default/ dir
+  # is pre-created above.
   ansible.builtin.copy:
     dest: "{{ target_home }}/.config/net.imput.helium/Default/Preferences"
-    content: '{"browser":{"custom_chrome_frame":false},"extensions":{"theme":{"system_theme":1}},"helium":{"browser":{"layout":1,"rounded_frame":false,"zen_mode":true}},"session":{"restore_on_startup":5}}'
+    content: '{"browser":{"custom_chrome_frame":false},"extensions":{"theme":{"system_theme":2}},"helium":{"browser":{"layout":1,"rounded_frame":false,"zen_mode":true}},"session":{"restore_on_startup":5}}'
     force: false
     mode: '0600'
 

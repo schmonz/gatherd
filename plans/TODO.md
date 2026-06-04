@@ -22,9 +22,12 @@
 - ~~lost "continue where you left off"~~ — fixed: initial_preferences and
   Default/Preferences seed now use restore_on_startup:5. Manual fix: in
   Helium settings → On startup → Continue where you left off.
-- ~~Qt appearance not dark~~ — fixed: Default/Preferences now seeds
-  system_theme:1 (GTK, which follows color-scheme prefer-dark). Manual fix:
-  in Helium Settings → Appearance → switch to GTK.
+- ~~Qt appearance not dark~~ — fixed: QT_QPA_PLATFORMTHEME=xdgdesktopportal
+  (Qt 6.7+) reads color-scheme from the XDG settings portal; xdg-desktop-portal-gtk
+  now installed with portals.conf routing Settings→gtk, everything else→wlr
+  (geolocation stays off). Default/Preferences keeps system_theme:2 (Qt).
+  Manual fix on already-repaved machines: re-run gatherd (or install
+  xdg-desktop-portal-gtk, write the portals.conf, set the env var, relogin).
 - thinks it's managed by my organization -- pre-existing, not a regression
 
 -----

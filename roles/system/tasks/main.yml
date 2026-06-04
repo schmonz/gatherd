@@ -67,10 +67,13 @@
       - cups
       - cups-browsed
       - system-config-printer
-      # desktop portals (xdg-desktop-portal-gtk deliberately omitted: it enables
-      # geolocation via browser, which also requires XDG_CURRENT_DESKTOP=GNOME)
+      # desktop portals: wlr handles screenshot/screencast; gtk handles Settings
+      # only (for Qt dark mode via QT_QPA_PLATFORMTHEME=xdgdesktopportal). The
+      # Location (geolocation) interface is not implemented by wlr and is
+      # explicitly excluded from gtk via portals.conf, so geolocation stays off.
       - xdg-desktop-portal
       - xdg-desktop-portal-wlr
+      - xdg-desktop-portal-gtk
       # system tools
       - btop
       - conky

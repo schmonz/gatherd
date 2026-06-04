@@ -53,6 +53,32 @@ session is broken." Confirm this on a deliberately-broken boot before assuming t
 mechanism; it changes nothing about the plan (the fixes are robust to either reading)
 but it tells us where the pain actually comes from.
 
+**Empirical sighting (2026-06-04): boot with WiFi not yet up cost a flat 60s to the
+greeter.** `NetworkManager-wait-online.service` ran its full default 60s timeout
+(`22:07:26`→`22:08:26`, exit FAILURE) because wlan0 never associated; the greeter
+session opened ~120ms *after* the wait gave up. So the wait-for-network gate is real
+and the dominant boot cost when offline — and it is **overdetermined by two independent
+paths to `greetd`**:
+
+1. **Ours:** `greetd ← gatherd.service` (gatherd's `Before=greetd.service`), and
+   `gatherd.service` carries `Wants=`/`After=network-online.target`.
+2. **Stock:** `greetd ← graphical.target ← autofs.service`, and **upstream** autofs
+   (`/usr/lib/systemd/system/autofs.service`, owned by `autofs`) ships
+   `Wants=`/`After=network-online.target` + `WantedBy=multi-user.target`. We did not add
+   this; our autofs drop-in only sets the `tailscaled`/`user-slice` *shutdown* ordering.
+
+The full reverse-dependency set of `network-online.target` here is six units: stock
+`autofs`, `rpc-statd`, the `code` mount unit, plus our `gatherd`, `gatherd-async`,
+`gatherd-vault`. **Implication for this plan:** decoupling *gatherd* from the network
+(the CORE-tier work below) removes path 1 but **not** path 2 — stock autofs pulls
+network-online into `graphical.target` independently. Fully taking the greeter off the
+network needs its own knob alongside the tiering: an `autofs.service` drop-in that
+resets the inherited `network-online` ordering (autofs mounts on demand and needs no
+network at start; the `nfs4` map needs no `rpc-statd` either), or masking
+`NetworkManager-wait-online`. A blunter stopgap that bounds all six at once is an
+`nm-online --timeout=N` drop-in, but it trades first-boot provisioning slack for boot
+speed, so it is a mitigation, not the fix.
+
 ## Current state on `main` (2026-06-03)
 
 A snapshot so a fresh agent knows what already exists vs. what this plan still builds:

@@ -1,5 +1,6 @@
 # TODO
 
+- keyboard backlight: did we lose the ability to press the brightness keys?
 - Helium appearance:
     - use QT (and make sure QT is aware we're "dark"-themed)
     - make sure we'd be dark-themed in Classic appearance, too

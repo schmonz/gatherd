@@ -280,6 +280,21 @@
     - dest: .config/chromium-flags.conf
       content: "--password-store=basic"
 
+- name: Seed Helium UI preferences on a fresh profile
+  # system_theme 2 = Qt; custom_chrome_frame false = system title bar/borders;
+  # helium.browser layout 1 = compact, zen_mode on, no rounded web-content frame.
+  # Dark theme is not seeded here — the "Enable system dark mode" task sets
+  # color-scheme prefer-dark, which Qt, GTK, and Classic all follow via the
+  # desktop portal. These keys must live in Default/Preferences: Chromium's
+  # initial_preferences only honors a fixed whitelist and drops them. force:false
+  # so an established profile (the user's own later tweaks) is never clobbered;
+  # the Default/ dir is pre-created above.
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.config/net.imput.helium/Default/Preferences"
+    content: '{"browser":{"custom_chrome_frame":false},"extensions":{"theme":{"system_theme":2}},"helium":{"browser":{"layout":1,"rounded_frame":false,"zen_mode":true}}}'
+    force: false
+    mode: '0600'
+
 - name: Seed Helium Memory Saver to Maximum on low-RAM machines
   # Stored in Local State (not Default/Preferences); aggressiveness 2 = Maximum.
   # force: false so Helium's live Local State is never clobbered on re-runs.

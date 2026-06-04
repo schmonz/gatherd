@@ -1,0 +1,43 @@
+---
+# A passwordless GNOME login keyring is stored unencrypted as a plaintext INI
+# file (password-protected keyrings use a binary format). Apps store their
+# secrets here on first use; we just have to plant the empty keyring and point
+# the default at it. Doing this directly avoids both seahorse (which previously
+# created it by hand) and python-secretstorage — the latter needs a running
+# gnome-keyring-daemon on a session bus, which does not exist pre-login when
+# this play runs.
+#
+# Gate on the 'default' pointer so we never disturb a machine that already has
+# a keyring holding live secrets; this only plants one on a fresh pave.
+
+- name: Check for an existing default keyring
+  ansible.builtin.stat:
+    path: "{{ target_home }}/.local/share/keyrings/default"
+  register: keyring_default
+
+- name: Create the keyrings directory
+  ansible.builtin.file:
+    path: "{{ target_home }}/.local/share/keyrings"
+    state: directory
+    mode: '0700'
+  when: not keyring_default.stat.exists
+
+- name: Plant an empty passwordless login keyring
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.local/share/keyrings/login.keyring"
+    mode: '0600'
+    content: |
+      [keyring]
+      display-name=login
+      ctime={{ ansible_date_time.epoch }}
+      mtime=0
+      lock-on-idle=false
+      lock-after=false
+  when: not keyring_default.stat.exists
+
+- name: Point the default keyring at the login keyring
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.local/share/keyrings/default"
+    mode: '0644'
+    content: login
+  when: not keyring_default.stat.exists

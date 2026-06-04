@@ -108,7 +108,6 @@ has_grub()        { [ -f /etc/default/grub ]; }
 # App state detection
 # ---------------------------------------------------------------------------
 
-seahorse_keyring_ok()      { [ -f "$HOME/.local/share/keyrings/login.keyring" ]; }
 # The SSH-agent socket appears only once "Use the SSH agent" is enabled — the
 # last 1Password setup step, so a good proxy for the whole section being done.
 onepassword_ssh_agent_ok() { [ -S "$HOME/.1password/agent.sock" ]; }
@@ -129,23 +128,6 @@ claude_code_authed()    { [ -f "$HOME/.claude/.credentials.json" ] || [ -f "$HOM
 # Section handlers
 # Pattern: if done → prune; else if absent → add; else → leave alone
 # ---------------------------------------------------------------------------
-
-section_seahorse() {
-    set -- 'Create a password keyring named "login" with no password, and confirm'
-    if seahorse_keyring_ok; then
-        prune_section 'Seahorse' "$@"
-    else
-        # Open Seahorse so the keyring window is right there to act on, rather than
-        # telling the reader to launch it. Guard against stacking a new window on
-        # every login while the keyring is still missing.
-        if command -v seahorse >/dev/null 2>&1 && ! pgrep -x seahorse >/dev/null 2>&1; then
-            seahorse >/dev/null 2>&1 &
-        fi
-        section_present 'Seahorse' && return
-        h 'Seahorse'
-        for b in "$@"; do li "$b"; done
-    fi
-}
 
 section_1password() {
     set -- \
@@ -258,6 +240,8 @@ section_verify() {
     li 'Sway session shutdown: shut down, then on next boot run `journalctl -b -1 | grep -iE "session-[0-9]+\.scope: Stopping timed out"` — should print nothing. conky stops honoring SIGTERM once its Wayland compositor dies, so the sway session scope used to ride out the full 90s TimeoutStopSec before SIGKILL; the `gatherd-conky` wrapper (cohort launches it instead of bare `conky`) converts SIGTERM into an immediate SIGKILL.'
     li 'LocalSend startup flash: log out and back in, watching the screen — no LocalSend window should flash up before it settles into the tray. `gatherd-intercept-localsend-flash` (launched from the supervisor just before localsend) stashes the startup surface to scratchpad until LocalSend withdraws it via `--hidden`. If a brief flash returns, confirm the interceptor is installed and still listed in `gatherd-session-helpers`.'
     li 'Zoom screen sharing: try sharing a window — confirm screen sharing works under Sway/wlroots'
+    li 'Passwordless keyring: on a fresh pave, before opening any keyring app, run `cat ~/.local/share/keyrings/default` (should print `login`) and `head -1 ~/.local/share/keyrings/login.keyring` (should be `[keyring]`, i.e. plaintext = no password). Then store and reload an app secret (1Password 2FA, Chromium "Safe Storage") across a logout — no "unlock keyring" prompt should appear.'
+    li 'fuzzel askpass: trigger a password prompt (e.g. the vault prompt, or `SUDO_ASKPASS=~/.local/bin/gatherd-askpass sudo -A -k true`) — a fuzzel entry box should pop, accept a typed password, and Escape should cancel. seahorse is no longer installed.'
     if is_thinkpad; then
         li 'ThinkVantage button (T60): press blue ThinkVantage button — should open a terminal'
     fi
@@ -277,7 +261,6 @@ section_verify() {
 section_unmanaged_wifi
 section_verify
 section_vault
-section_seahorse
 section_1password
 section_tailscale
 section_other_logins

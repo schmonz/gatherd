@@ -31,11 +31,21 @@
   register: _darkmode
   changed_when: "'changed' in _darkmode.stdout"
 
-- name: Configure sudo askpass (seahorse ssh-askpass, already installed)
+- name: Install gatherd-askpass script
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-askpass"
+    dest: "{{ target_home }}/.local/bin/gatherd-askpass"
+    mode: '0755'
+    remote_src: true
+
+- name: Configure sudo askpass (fuzzel-based gatherd-askpass)
   ansible.builtin.copy:
     dest: "{{ target_home }}/.config/environment.d/50-gatherd-askpass.conf"
-    content: "SUDO_ASKPASS=/usr/lib/seahorse/ssh-askpass\n"
+    content: "SUDO_ASKPASS={{ target_home }}/.local/bin/gatherd-askpass\n"
     mode: '0644'
+
+- name: Plant a passwordless login keyring
+  ansible.builtin.import_tasks: keyring.yml
 
 - name: Configure gtklock (no unauthenticated power buttons)
   ansible.builtin.template:

@@ -1,0 +1,7 @@
+#!/bin/sh
+# Wayland-native askpass for sudo -A, ssh, and our prompt scripts. Replaces
+# seahorse's ssh-askpass so we don't install seahorse just to pop a password
+# box — fuzzel is already our launcher/prompt tool. --prompt-only skips the
+# stdin wait and the (empty) match list, so it behaves as a plain entry that
+# echoes the typed text on Enter and exits non-zero on Escape.
+exec fuzzel --dmenu --password --prompt-only "${1:-Password:} "

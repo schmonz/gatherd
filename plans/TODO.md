@@ -1,8 +1,5 @@
 # TODO
 
-- automate keyring creation with `python-secretstorage`
-    - means the 1Password 2FA secret sits unencrypted at rest -- implications?
-    - (we are already doing this, just not automated yet)
 - keyboard backlight: did we lose the ability to press the brightness keys?
 - Helium appearance:
     - use QT (and make sure QT is aware we're "dark"-themed)

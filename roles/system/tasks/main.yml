@@ -57,8 +57,6 @@
       - gvfs-dnssd
       - nfs-utils
       - tailscale
-      # keyring
-      - seahorse
       # firmware updates
       - fwupd
       # text editor

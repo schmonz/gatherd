@@ -104,6 +104,7 @@ has_ir_receiver() { ls /dev/lirc* /sys/class/rc/rc* >/dev/null 2>&1; }
 has_kbd_backlight() { ls /sys/class/leds/ 2>/dev/null | grep -qiE 'kbd|keyboard'; }
 has_resume()      { [ "$(systemctl is-enabled suspend.target 2>/dev/null)" != "masked" ]; }
 has_grub()        { [ -f /etc/default/grub ]; }
+has_hidpi_display() { swaymsg -t get_outputs 2>/dev/null | grep -q '"scale": 2'; }
 
 # ---------------------------------------------------------------------------
 # App state detection
@@ -243,7 +244,12 @@ section_verify() {
     li 'Zoom screen sharing: try sharing a window — confirm screen sharing works under Sway/wlroots'
     li 'Passwordless keyring: on a fresh pave, before opening any keyring app, run `cat ~/.local/share/keyrings/default` (should print `login`) and `head -1 ~/.local/share/keyrings/login.keyring` (should be `[keyring]`, i.e. plaintext = no password). Then store and reload an app secret (1Password 2FA, Chromium "Safe Storage") across a logout — no "unlock keyring" prompt should appear.'
     li 'fuzzel askpass: trigger a password prompt (e.g. the vault prompt, or `SUDO_ASKPASS=~/.local/bin/gatherd-askpass sudo -A -k true`) — a fuzzel entry box should pop, accept a typed password, and Escape should cancel. seahorse is no longer installed.'
-    li 'Helium appearance: open Helium settings and confirm the Qt theme (dark), Compact browser layout, zen mode on, no rounded frame around web contents, and "Use system title bar and borders" enabled. Seeded into `Default/Preferences` on a fresh profile (initial_preferences silently drops these keys); spot-check with `grep -E "system_theme|custom_chrome_frame|layout|rounded_frame|zen_mode" ~/.config/net.imput.helium/Default/Preferences` — expect system_theme 2, custom_chrome_frame false, layout 1, rounded_frame false, zen_mode true.'
+    li 'Helium appearance: open Helium settings and confirm the Qt theme (dark, and visually dark — tabs and toolbar should not be white/grey), Compact browser layout, zen mode on, no rounded frame around web contents, "Use system title bar and borders" enabled, and "Continue where you left off" on startup. Spot-check with `grep -E "system_theme|custom_chrome_frame|layout|rounded_frame|zen_mode|restore_on_startup" ~/.config/net.imput.helium/Default/Preferences` — expect system_theme 2, custom_chrome_frame false, layout 1, rounded_frame false, zen_mode true, restore_on_startup 5. (Seeded into Default/Preferences on a fresh profile; initial_preferences silently drops these keys.)'
+    li 'Qt dark mode portal: confirm `systemctl --user is-active xdg-desktop-portal-gtk` returns `active`. In a logged-in session run `printenv QT_QPA_PLATFORMTHEME` — expect `xdgdesktopportal`. If env var is missing, the environment.d change needs a full relogin (not just a terminal restart) to propagate.'
+    li 'Font sizing: run `gsettings get org.gnome.desktop.interface text-scaling-factor` — expect `1.0`. Run `gsettings get org.gnome.desktop.interface monospace-font-name` — expect `'\''JetBrains Mono N'\''` for N matching the foot font size on this screen. Open Text Editor and a terminal side-by-side — text should look similar in size, not Text Editor significantly larger.'
+    if has_hidpi_display; then
+        li 'HiDPI scaling: run `swaymsg -t get_outputs | grep scale` — expect `"scale": 2`. Run `grep scale ~/.config/sway/config.d/outputs` — expect `output * scale 2`. Fonts in foot, waybar, and text apps should look appropriately sized for the screen, not enormous.'
+    fi
     if has_kbd_backlight; then
         li 'Keyboard backlight keys: press the keyboard-brightness up/down keys (F5/F6 on Apple) — the keys should visibly raise and lower the key backlight. The device is auto-detected (e.g. `smc::kbd_backlight`, `tpacpi::kbd_backlight`) and the step is derived from its max, so a coarse three-level keyboard moves one level per press while a 255-level keyboard moves smoothly.'
     fi

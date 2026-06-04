@@ -2,26 +2,43 @@
 - name: Find keyboard backlight device
   ansible.builtin.shell: |
     set -o pipefail
-    brightnessctl --list 2>/dev/null | awk -F"'" '/[Kk]eyboard/{print $2; exit}'
+    brightnessctl --list 2>/dev/null \
+      | awk -F"'" 'tolower($0) ~ /kbd_backlight|keyboard/ {print $2; exit}'
   args:
     executable: /bin/bash
   register: _kbd_dev
   changed_when: false
   failed_when: false
 
+- name: Read keyboard backlight max brightness
+  ansible.builtin.command: "brightnessctl --device={{ _kbd_dev.stdout }} max"
+  register: _kbd_max
+  when: _kbd_dev.stdout != ''
+  changed_when: false
+
+# A fixed percentage step rounds to zero on low-resolution keyboards
+# (e.g. ThinkPad's three-level max=2), making the keys appear dead. Derive an
+# absolute step from each device's own max so 255-step and 2-step keyboards
+# both move.
+- name: Compute keyboard backlight step
+  ansible.builtin.set_fact:
+    _kbd_step: "{{ [1, _kbd_max.stdout | int * 5 // 100] | max }}"
+  when: _kbd_dev.stdout != ''
+
 - name: Set keyboard backlight to 50%
   ansible.builtin.command: "brightnessctl --device={{ _kbd_dev.stdout }} set 50%"
   when: _kbd_dev.stdout != ''
   changed_when: false
 
+# Standalone bindsym lines (not folded into the EndeavourOS bindsym {} block):
+# nesting a bindsym inside that block is a sway parse error.
 - name: Add keyboard backlight Sway bindings
   ansible.builtin.blockinfile:
     path: "{{ target_home }}/.config/sway/config.d/default"
     block: |
-      bindsym XF86KbdBrightnessUp exec brightnessctl -d '{{ _kbd_dev.stdout }}' set +5%
-      bindsym XF86KbdBrightnessDown exec brightnessctl -d '{{ _kbd_dev.stdout }}' set 5%-
+      bindsym XF86KbdBrightnessUp exec brightnessctl -d '{{ _kbd_dev.stdout }}' set +{{ _kbd_step }}
+      bindsym XF86KbdBrightnessDown exec brightnessctl -d '{{ _kbd_dev.stdout }}' set {{ _kbd_step }}-
     marker: "# {mark} ANSIBLE MANAGED BLOCK: kbd-backlight"
-    insertafter: "XF86MonBrightnessDown"
   when: _kbd_dev.stdout != ''
   become: true
   become_user: "{{ target_user }}"

@@ -101,6 +101,7 @@ is_thinkpad()     { grep -qi 'thinkpad' /sys/class/dmi/id/product_version 2>/dev
                         || grep -qiE 'lenovo|ibm' /sys/class/dmi/id/board_vendor 2>/dev/null; }
 is_chromebook()   { grep -qi 'google' /sys/class/dmi/id/sys_vendor 2>/dev/null; }
 has_ir_receiver() { ls /dev/lirc* /sys/class/rc/rc* >/dev/null 2>&1; }
+has_kbd_backlight() { ls /sys/class/leds/ 2>/dev/null | grep -qiE 'kbd|keyboard'; }
 has_resume()      { [ "$(systemctl is-enabled suspend.target 2>/dev/null)" != "masked" ]; }
 has_grub()        { [ -f /etc/default/grub ]; }
 
@@ -242,6 +243,9 @@ section_verify() {
     li 'Zoom screen sharing: try sharing a window — confirm screen sharing works under Sway/wlroots'
     li 'Passwordless keyring: on a fresh pave, before opening any keyring app, run `cat ~/.local/share/keyrings/default` (should print `login`) and `head -1 ~/.local/share/keyrings/login.keyring` (should be `[keyring]`, i.e. plaintext = no password). Then store and reload an app secret (1Password 2FA, Chromium "Safe Storage") across a logout — no "unlock keyring" prompt should appear.'
     li 'fuzzel askpass: trigger a password prompt (e.g. the vault prompt, or `SUDO_ASKPASS=~/.local/bin/gatherd-askpass sudo -A -k true`) — a fuzzel entry box should pop, accept a typed password, and Escape should cancel. seahorse is no longer installed.'
+    if has_kbd_backlight; then
+        li 'Keyboard backlight keys: press the keyboard-brightness up/down keys (F5/F6 on Apple) — the keys should visibly raise and lower the key backlight. The device is auto-detected (e.g. `smc::kbd_backlight`, `tpacpi::kbd_backlight`) and the step is derived from its max, so a coarse three-level keyboard moves one level per press while a 255-level keyboard moves smoothly.'
+    fi
     if is_thinkpad; then
         li 'ThinkVantage button (T60): press blue ThinkVantage button — should open a terminal'
     fi

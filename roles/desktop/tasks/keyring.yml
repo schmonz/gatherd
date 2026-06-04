@@ -29,7 +29,7 @@
     content: |
       [keyring]
       display-name=login
-      ctime={{ ansible_date_time.epoch }}
+      ctime={{ now().timestamp() | int }}
       mtime=0
       lock-on-idle=false
       lock-after=false

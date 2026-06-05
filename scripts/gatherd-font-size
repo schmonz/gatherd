@@ -64,4 +64,4 @@ fi
 size=$(( (logical_width / 2 - 4) / 64 ))
 [ "$size" -lt 8 ] && size=8
 echo "$size"
-[ -n "$hidpi" ] && echo "hidpi"
+[ -z "$hidpi" ] || echo "hidpi"

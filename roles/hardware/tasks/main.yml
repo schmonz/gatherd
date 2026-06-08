@@ -45,10 +45,6 @@
       ansible.builtin.import_tasks: zswap_extlinux.yml
       when: not has_plenty_of_ram and has_extlinux
 
-    - name: Import software GL tasks
-      ansible.builtin.import_tasks: software_gl.yml
-      when: not has_gl_capable_gpu
-
     - name: Import keyboard backlight tasks
       ansible.builtin.import_tasks: kbd_backlight.yml
       when: has_kbd_backlight

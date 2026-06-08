@@ -4,7 +4,6 @@
 has_resume: true
 has_lid_events: true
 has_powerbutton_events: true
-has_gl_capable_gpu: true
 has_avs_audio: false
 has_ambient_light_sensor: false
 has_applesmc: false

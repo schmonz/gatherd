@@ -45,14 +45,14 @@
     content: "SUDO_ASKPASS={{ target_home }}/.local/bin/gatherd-askpass\n"
     mode: '0644'
 
-- name: Configure Qt platform theme for dark-mode portal integration
-  # Qt 6.7+ reads color-scheme from the XDG settings portal when
-  # QT_QPA_PLATFORMTHEME=xdgdesktopportal, auto-following system light/dark mode.
-  # The portal is provided by xdg-desktop-portal-gtk (Settings interface only —
-  # Location and others are routed to wlr via portals.conf).
+- name: Drop an environment.d sentinel to test session propagation
+  # A uniquely-named canary nothing else touches, so the "does environment.d reach
+  # the sway session" check (post-setup verify) can't be confounded by a var like
+  # SUDO_ASKPASS that sudo/PAM may scrub specially. Once we know the answer, this
+  # and the whole environment.d approach can go — see the env-propagation TODO.
   ansible.builtin.copy:
-    dest: "{{ target_home }}/.config/environment.d/51-qt-platform-theme.conf"
-    content: "QT_QPA_PLATFORMTHEME=xdgdesktopportal\n"
+    dest: "{{ target_home }}/.config/environment.d/99-gatherd-env-sentinel.conf"
+    content: "GATHERD_ENVIRONMENT_SENTINEL=cheese\n"
     mode: '0644'
 
 - name: Configure XDG desktop portal backend routing

@@ -1,21 +1,65 @@
 # TODO
 
+## Repave workflow
+
+- After each repave, process `~/.config/gatherd-post-setup.md` on the target:
+  fold its VERIFIED items into `section_verify` and turn its ANTI-VERIFIED items
+  into TODO entries here.
+
+## Low-end / constrained machines
+
+The T60 (2GB RAM, spinning rust) is the test rig for the low end — treat anything
+here as "must stay usable on a potato."
+
+- **`claude` dumps core on the T60.** Diagnose: likely memory pressure or a
+  CPU-feature/arch mismatch. Capture the crash and decide whether it's fixable
+  here or belongs upstream.
+- **Always install Netsurf.** A lightweight browser constrained machines can fall
+  back to.
+- **Don't autostart heavy apps on every login.** JetBrains Toolbox, Zoom, Discord,
+  and Slack are heavy; launch them on demand. (Original note: "launch it only if
+  I'm not logged in and gatherd isn't running. Otherwise I'll run it myself when I
+  need to.") Pin down the gating — probably: autostart only during first-run
+  provisioning so they can be configured/signed in, then never again.
+
 # 2026/06/04 Regressions
 
 ## Font sizing and general display
 
-- X270 Text Editor font looks huge, foot is fine
-  (Likely fix: text-scaling-factor double-scaling is now removed; re-run
-  gatherd or set `gsettings set org.gnome.desktop.interface text-scaling-factor 1.0`
-  and `gsettings set org.gnome.desktop.interface monospace-font-name 'JetBrains Mono 14'`
-  manually on the already-repaved machine.)
-- Latitude 9330 all fonts comically ENORMOUS
-  (Likely fix: gatherd-font-size now reads EDID physical dimensions and
-  halves pixel width for HiDPI panels; Sway `output * scale 2` is also
-  written to config.d/outputs. Re-run gatherd on the repaved machine.)
 - 17" MBP maybe didn't get the phantom-display fix
   ...or maybe 7.x kernels are different about this?
   ...or maybe just had to coax convergence to complete?
+  I think I was just expecting it on first login -- in which case it needs to
+  happen during `postinstall` already. Anything else that belongs that early?
+  Worth doing a couple things that early?
+
+## Session env propagation — `environment.d` may not reach greetd's sway
+
+The GL-context regression (LocalSend, 1Password) and the Qt dark-mode env var both
+rode `environment.d`, which is consumed by `systemd --user` and may never reach
+greetd's directly-exec'd sway cohort. Both moved to proximate delivery — GL var at
+the launch point (`gatherd-systray` checks `lspci` itself), Qt var to `pam_env` —
+with verify steps in the post-setup notes. Still open:
+
+- **Settle whether `environment.d` reaches greetd's sway at all.** A uniquely-named
+  sentinel `GATHERD_ENVIRONMENT_SENTINEL=cheese` is now dropped in
+  `environment.d/99-gatherd-env-sentinel.conf`, with a post-setup verify step:
+  `printenv` it in a sway child. If empty, `environment.d` is a black hole for the
+  session — rip it out everywhere and stop using it. (Dedicated sentinel so the
+  test can't be fooled by a var like `SUDO_ASKPASS` that sudo/PAM may scrub.) Once
+  the verdict is in, delete the sentinel too.
+- **`SUDO_ASKPASS` is the same antipattern (third instance).** Set in
+  `environment.d/50-gatherd-askpass.conf`, but nothing proves it reaches the
+  session: `gatherd-prompt-vault` works via a hardcoded fallback
+  (`${SUDO_ASKPASS:-…/gatherd-askpass}`) and the post-setup test sets it inline, so
+  a bare `sudo -A` may well find nothing. Candidate home: `/etc/sudo.conf`
+  (`Path askpass /…/gatherd-askpass`), which sudo reads independent of the
+  environment. **Open question: is sudo.conf robust against `sudo` package
+  updates?** It has no drop-in/include dir (single file). Check on Arch whether the
+  package ships `/etc/sudo.conf` and lists it in its pacman `backup` array — if so
+  our edits survive upgrades (with `.pacnew` to merge); if it's not shipped at all,
+  the file is fully ours. If neither feels safe, fall back to `pam_env` (already
+  the proven session-env mechanism here). Either way, drop the `environment.d` file.
 
 ## Helium (fixed in code; apply manually to already-repaved machines)
 
@@ -26,9 +70,20 @@
   (Qt 6.7+) reads color-scheme from the XDG settings portal; xdg-desktop-portal-gtk
   now installed with portals.conf routing Settings→gtk, everything else→wlr
   (geolocation stays off). Default/Preferences keeps system_theme:2 (Qt).
-  Manual fix on already-repaved machines: re-run gatherd (or install
-  xdg-desktop-portal-gtk, write the portals.conf, set the env var, relogin).
+  The env var is delivered via `pam_env` (not `environment.d`) so it reaches the
+  sway session; the "Qt dark mode portal" verify step confirms it on repave.
 - thinks it's managed by my organization -- pre-existing, not a regression
+
+Still open on the T60:
+
+- **"Continue where I left off" still broken** despite the initial_preferences /
+  restore_on_startup:5 fix above — reopen and find why the seed isn't taking on a
+  fresh repave.
+- **Undo Zen and Compact modes** — not ready for them; revert whatever turned them
+  on.
+- **Tailscale admin tab on first run?** Expected Helium to open a Tailscale admin
+  tab; only the 1Password tab appeared. Confirm whether that tab is supposed to
+  exist and wire it up, or drop the expectation.
 
 -----
 
@@ -73,6 +128,10 @@
   have everything else derive from it. End state: supply one thing you know, run
   gatherd, and the machine reconstitutes its own credentials with no secret files
   copied around by hand.
+- **Reliable first-autologin VPN cred delivery**: the initial VPN credentials need
+  to land on the first autologin reliably and without eating CPU (the current path
+  apparently does something costly). Find a lighter, more dependable delivery
+  mechanism — ties into the single-credential bootstrap above.
 - **Git SSH commit signing via the 1Password agent**: agent *auth* for git/ssh is
   wired (`roles/desktop/tasks/ssh-agent.yml` sets `IdentityAgent` for github.com;
   the "Use the SSH agent" GUI toggle is a documented post-setup step). Still to do:
@@ -271,6 +330,8 @@
   `python-validity` for Validity 0097-family). Furthermore, we don't have
   explicit checking or control flow for enrollment: is it already done,
   do we need to do it, do we need to _undo_ it first, etc.
+  Concrete cases waiting on this: the T60 and the Latitude 9330 both have
+  sensors — capture their USB IDs and reader families as the next branches.
 
 - **ThinkPad smart card reader**: investigate `pcscd` + `opensc`. T60 has a
   built-in reader; X270 (20HMS6VR00) has Alcor Micro AU9540 (058f:9540), a
@@ -290,6 +351,15 @@
 
 ## Desktop / UX
 
+- **fuzzel for polkit prompts**: the vault and sudo prompts already use fuzzel and
+  it's great — extend the same treatment to the polkit agent prompts.
+- **"Reboot to UEFI" power-menu entry shows on BIOS-only machines**: the T60 is
+  BIOS-only, so it can't reboot to UEFI firmware setup — yet the power menu still
+  offers the entry. Gate it on the machine actually being UEFI (`/sys/firmware/efi`
+  present), so it's hidden on legacy-BIOS boxes. Likely a Sway CE PR.
+- **Chromebook gtklock on lid-open isn't a faithful resume**: opening the lid
+  lights the screen via gtklock but doesn't land on the password prompt, so it
+  doesn't quite mimic real suspend/resume. Make lid-open present the lock prompt.
 - **Light/dark mode switch**: darkman + waybar button wired up; Helium, xed,
   apostrophe switch. foot does not: in server mode, existing sessions can't be
   reconfigured without killing them all, and new sessions don't pick up the
@@ -314,6 +384,11 @@
 
 ## Setup
 
+- **WiFi reconnect blip on re-run**: gatherd pushes a network config for the SSID
+  you're already connected to, which bounces the connection. Diff the existing vs
+  pushed config — if they're equivalent, make the task idempotent (skip the write,
+  don't trigger a reconnect) so re-running gatherd on the active network doesn't
+  blip it.
 - **Snapshots**: find CLI equivalent to Welcome-app GUI for Timeshift initial
   config. Decide snapper vs. Timeshift (snapper + pacman hooks?).
 - **Swap for hibernate**: size swap partition appropriately; Chromebook may differ.

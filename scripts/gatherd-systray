@@ -14,4 +14,22 @@ until busctl --user status org.kde.StatusNotifierWatcher >/dev/null 2>&1; do
     sleep 1
 done
 
+# Force llvmpipe (software GL) for the launched app on legacy GPUs. The puzzle
+# this answers: the same machine runs sway fine on hardware GL, so why do these
+# apps need software? Because "GL" isn't one bar. The r300-family ATI Mesa driver
+# caps around OpenGL 2.1 / GLES2 — enough for sway/wlroots (a GLES2 renderer) but
+# below what Flutter (LocalSend) and Electron/Chromium (1Password) request:
+# desktop GL ~3.x. So their context creation fails ("Unable to create a GL
+# context") or renders garbage on the hardware path, while llvmpipe implements
+# modern GL in software. To dig deeper, look up: wlroots GLES2 renderer vs the
+# Mesa r300 GL-version ceiling vs llvmpipe. We set it here, next to the launch, so
+# only the overshooting app drops to software — sway keeps hardware GL instead of
+# the whole desktop software-rendering on our weakest machine. The lspci check is
+# cheap enough to do at launch rather than caching a machine fact: 1002:5b6x =
+# RV370 (Radeon X300/X600), 1002:7145 = M26 (Mobility Radeon X1400). (`if` exempts
+# this from set -e if lspci is absent.)
+if lspci -n 2>/dev/null | grep -qE '1002:(5b6|7145)'; then
+    export LIBGL_ALWAYS_SOFTWARE=1
+fi
+
 exec "$@"

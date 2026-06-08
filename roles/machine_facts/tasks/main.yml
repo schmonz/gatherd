@@ -241,13 +241,6 @@
     has_thinkpad_vantage_button: true
   when: _vantage_button.stdout == 'true'
 
-# r300-family ATI/AMD GPUs cannot drive modern OpenGL; need llvmpipe.
-# 1002:5b6x = RV370 (Radeon X300/X600); 1002:7145 = M26 (Mobility Radeon X1400)
-- name: Detect has_gl_capable_gpu
-  ansible.builtin.set_fact:
-    has_gl_capable_gpu: false
-  when: _lspci.stdout is search('1002:(5b6|7145)')
-
 - name: Stat /etc/default/grub
   ansible.builtin.stat:
     path: /etc/default/grub
@@ -344,7 +337,6 @@
     has_resume: "{{ has_resume }}"
     has_lid_events: "{{ has_lid_events }}"
     has_powerbutton_events: "{{ has_powerbutton_events }}"
-    has_gl_capable_gpu: "{{ has_gl_capable_gpu }}"
     has_avs_audio: "{{ has_avs_audio }}"
     has_ambient_light_sensor: "{{ has_ambient_light_sensor }}"
     has_applesmc: "{{ has_applesmc }}"

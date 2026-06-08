@@ -94,19 +94,6 @@ collapse_blanks() {
 }
 
 # ---------------------------------------------------------------------------
-# Hardware detection
-# ---------------------------------------------------------------------------
-
-is_thinkpad()     { grep -qi 'thinkpad' /sys/class/dmi/id/product_version 2>/dev/null \
-                        || grep -qiE 'lenovo|ibm' /sys/class/dmi/id/board_vendor 2>/dev/null; }
-is_chromebook()   { grep -qi 'google' /sys/class/dmi/id/sys_vendor 2>/dev/null; }
-has_ir_receiver() { ls /dev/lirc* /sys/class/rc/rc* >/dev/null 2>&1; }
-has_kbd_backlight() { ls /sys/class/leds/ 2>/dev/null | grep -qiE 'kbd|keyboard'; }
-has_resume()      { [ "$(systemctl is-enabled suspend.target 2>/dev/null)" != "masked" ]; }
-has_grub()        { [ -f /etc/default/grub ]; }
-has_hidpi_display() { swaymsg -t get_outputs 2>/dev/null | grep -q '"scale": 2'; }
-
-# ---------------------------------------------------------------------------
 # App state detection
 # ---------------------------------------------------------------------------
 
@@ -249,20 +236,12 @@ section_verify() {
     li 'Software GL on legacy GPUs: only relevant if this machine'\''s GPU predates GL3 (e.g. the T60'\''s ATI Mobility Radeon X1400). gatherd-systray checks `lspci -n` at launch for r300-family IDs (1002:5b6x / 1002:7145) and exports LIBGL_ALWAYS_SOFTWARE=1 for the launched app only, so sway/wlroots stays on hardware GL. On such a machine the GL-using tray apps should render — LocalSend opens with no "Unable to create a GL context", 1Password'\''s first window draws cleanly. If the GPU is legacy but still broken, the lspci match in gatherd-systray did not catch it — check `lspci -n | grep -iE "1002|vga|display"` and add the ID to that pattern.'
     li 'environment.d reaching the session (decide if it is a black hole): in a foot terminal launched from sway — a sway child, not a systemd --user service — run `printenv GATHERD_ENVIRONMENT_SENTINEL`. gatherd drops it in ~/.config/environment.d/99-gatherd-env-sentinel.conf purely as a uniquely-named canary (nothing special-cases it, unlike SUDO_ASKPASS which sudo may scrub). Expect `cheese`. If empty, environment.d is a black hole for this session and every var placed there is dead — move the askpass var (and any others) off environment.d, then stop using it. Record the verdict in the env-propagation TODO.'
     li 'Font sizing: run `gsettings get org.gnome.desktop.interface text-scaling-factor` — expect `1.0`. Run `gsettings get org.gnome.desktop.interface monospace-font-name` — expect `'\''JetBrains Mono N'\''` for N matching the foot font size on this screen. Open Text Editor and a terminal side-by-side — text should look similar in size, not Text Editor significantly larger.'
-    if has_hidpi_display; then
-        li 'HiDPI scaling: run `swaymsg -t get_outputs | grep scale` — expect `"scale": 2`. Run `grep scale ~/.config/sway/config.d/outputs` — expect `output * scale 2`. Fonts in foot, waybar, and text apps should look appropriately sized for the screen, not enormous.'
-    fi
-    if has_kbd_backlight; then
-        li 'Keyboard backlight keys: press the keyboard-brightness up/down keys (F5/F6 on Apple) — the keys should visibly raise and lower the key backlight. The device is auto-detected (e.g. `smc::kbd_backlight`, `tpacpi::kbd_backlight`) and the step is derived from its max, so a coarse three-level keyboard moves one level per press while a 255-level keyboard moves smoothly.'
-    fi
-    if is_thinkpad; then
-        li 'ThinkVantage button (T60): press blue ThinkVantage button — should open a terminal'
-    fi
-    if has_ir_receiver; then
-        li 'IR receiver: run `ls /dev/lirc* /sys/class/rc/rc* 2>/dev/null` — should show at least one device'
-        li 'IR receiver: run `ir-keytable` — confirm device listed with a keymap loaded'
-        li 'IR receiver: run `ir-keytable -t -s rc0` and press remote buttons — should show scancode + keycode per press'
-    fi
+    li 'HiDPI scaling (HiDPI-panel machines only): run `swaymsg -t get_outputs | grep scale` — expect `"scale": 2`. Run `grep scale ~/.config/sway/config.d/outputs` — expect `output * scale 2`. Fonts in foot, waybar, and text apps should look appropriately sized for the screen, not enormous.'
+    li 'Keyboard backlight keys (backlit keyboards only): press the keyboard-brightness up/down keys (F5/F6 on Apple) — the keys should visibly raise and lower the key backlight. The device is auto-detected (e.g. `smc::kbd_backlight`, `tpacpi::kbd_backlight`) and the step is derived from its max, so a coarse three-level keyboard moves one level per press while a 255-level keyboard moves smoothly.'
+    li 'ThinkVantage button (ThinkPads with the blue button, e.g. T60): press it — should open a terminal'
+    li 'IR receiver (machines with an IR receiver, e.g. T60): run `ls /dev/lirc* /sys/class/rc/rc* 2>/dev/null` — should show at least one device'
+    li 'IR receiver: run `ir-keytable` — confirm device listed with a keymap loaded'
+    li 'IR receiver: run `ir-keytable -t -s rc0` and press remote buttons — should show scancode + keycode per press'
 }
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,6 @@ has_plenty_of_ram: false
 has_screen_backlight: false
 has_thinkpad_hardware: false
 has_thinkpad_trackpoint: false
-has_thinkpad_vantage_button: false
 is_aarch64: "{{ ansible_facts['architecture'] == 'aarch64' }}"
 foot_font_size: 14
 timeshift_backup_device_uuid: ""

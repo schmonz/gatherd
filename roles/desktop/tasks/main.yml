@@ -118,12 +118,25 @@
     marker: "# {mark} ANSIBLE MANAGED BLOCK: trackpoint-scroll"
   when: has_thinkpad_trackpoint
 
+# Unconditional on purpose: a bindsym for a keysym no device emits is inert,
+# so there's nothing to detect. The blue ThinkVantage button (T60-era and
+# earlier ThinkPads) emits KEY_PROG1 = XF86Launch1; machines without it simply
+# never fire this. To wire up *other* extra buttons on some future machine,
+# first discover what they emit, then add a bindsym here:
+#   1. See the superset a device *can* emit (includes codes the chassis lacks):
+#      decode each /sys/class/input/input*/capabilities/key bitmap (64-bit hex
+#      words, high codes first) against /usr/include/linux/input-event-codes.h.
+#   2. Confirm the *physical* button -> code mapping by pressing it — capability
+#      alone lies (that device advertises KEY_VENDOR, but the button sends
+#      KEY_PROG1): sudo evtest /dev/input/eventN  (or libinput debug-events / wev).
+#   3. Map the evdev code to its X keysym for the bindsym. Note: codes > 247 are
+#      outside xkb's range and can't be bound by keysym — those need a udev/hwdb
+#      scancode remap to a low code first.
 - name: Bind ThinkVantage button to open terminal
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/default"
     line: "bindsym XF86Launch1 exec foot"
     regexp: '^\s*bindsym\s+XF86Launch1\b'
-  when: has_thinkpad_vantage_button
 
 - name: Remove network throughput widget from waybar center
   ansible.builtin.lineinfile:

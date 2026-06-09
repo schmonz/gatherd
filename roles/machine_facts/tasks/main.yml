@@ -208,8 +208,8 @@
     has_fingerprint_reader: true
   when: _fingerprint_reader.stdout == 'true'
 
-# Lenovo ThinkPad SMBIOS — TrackPoint buttons, smart card, ThinkVantage button,
-# fingerprint reader are ThinkPad-specific.
+# Lenovo ThinkPad SMBIOS — TrackPoint buttons, smart card, fingerprint reader
+# are ThinkPad-specific.
 - name: Detect has_thinkpad_hardware
   ansible.builtin.set_fact:
     has_thinkpad_hardware: true
@@ -230,27 +230,8 @@
     has_thinkpad_trackpoint: true
   when: _trackpoint.stdout == 'true'
 
-# The blue ThinkVantage button has no device of its own; it lives on the
-# "ThinkPad Extra Buttons" device (thinkpad_acpi) and emits KEY_PROG1 (148) =
-# X keysym XF86Launch1, which is what the sway bind targets. Detect the
-# capability rather than a device name: capabilities/key prints 64-bit hex
-# words high codes first, so keys 128-191 are the 3rd field from the end and
-# KEY_PROG1 is bit 148-128=20 within it.
-- name: Check for a button that emits XF86Launch1 (ThinkVantage)  # noqa: risky-shell-pipe
-  ansible.builtin.shell: |
-    found=false
-    for cap in /sys/class/input/input*/capabilities/key; do
-      word=$(awk '{print (NF>=3 ? $(NF-2) : 0)}' "$cap")
-      if [ $(( 0x${word:-0} >> 20 & 1 )) -eq 1 ]; then found=true; break; fi
-    done
-    echo "$found"
-  register: _vantage_button
-  changed_when: false
-
-- name: Detect has_thinkpad_vantage_button
-  ansible.builtin.set_fact:
-    has_thinkpad_vantage_button: true
-  when: _vantage_button.stdout == 'true'
+# The ThinkVantage button needs no fact: its sway bind (XF86Launch1) is inert
+# on machines without the button, so the desktop role binds it unconditionally.
 
 - name: Stat /etc/default/grub
   ansible.builtin.stat:
@@ -366,7 +347,6 @@
     has_screen_backlight: "{{ has_screen_backlight }}"
     has_thinkpad_hardware: "{{ has_thinkpad_hardware }}"
     has_thinkpad_trackpoint: "{{ has_thinkpad_trackpoint }}"
-    has_thinkpad_vantage_button: "{{ has_thinkpad_vantage_button }}"
     is_aarch64: "{{ is_aarch64 }}"
     foot_font_size: "{{ foot_font_size }}"
     timeshift_backup_device_uuid: "{{ timeshift_backup_device_uuid }}"

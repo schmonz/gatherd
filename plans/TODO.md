@@ -9,7 +9,6 @@
 ## Recently anti-verified on T60
 
 - Qt theme not dark (QT_QPA_PLATFORMTHEME not set)
-- Helium "continue where you left off" not enabled
 - ThinkVantage button does not launch anything
 
 ## Low-end / constrained machines
@@ -82,11 +81,6 @@ with verify steps in the post-setup notes. Still open:
 
 Still open on the T60:
 
-- **"Continue where I left off" still broken** despite the initial_preferences /
-  restore_on_startup:5 fix above — reopen and find why the seed isn't taking on a
-  fresh repave.
-- **Undo Zen and Compact modes** — not ready for them; revert whatever turned them
-  on.
 - **Tailscale admin tab on first run?** Expected Helium to open a Tailscale admin
   tab; only the 1Password tab appeared. Confirm whether that tab is supposed to
   exist and wire it up, or drop the expectation.

@@ -324,7 +324,7 @@
     mode: "{{ item.mode | default('0644') }}"
   loop:
     - dest: .config/net.imput.helium/initial_preferences
-      content: '{"browser":{"check_default_browser":false},"extensions":{"theme":{"system_theme":1}},"helium":{"completed_onboarding":true,"services":{"schema_version":1,"user_consented":true}},"session":{"restore_on_startup":5}}'
+      content: '{"browser":{"check_default_browser":false},"extensions":{"theme":{"system_theme":1}},"helium":{"completed_onboarding":true,"services":{"schema_version":1,"user_consented":true}},"session":{"restore_on_startup":1}}'
     - dest: .config/chromium/initial_preferences
       content: '{"browser":{"check_default_browser":false},"distribution":{"skip_first_run_ui":true,"suppress_first_run_bubble":true,"show_welcome_page":false},"session":{"restore_on_startup":1}}'
     - dest: .config/helium-browser-flags.conf
@@ -336,15 +336,16 @@
   # system_theme 2 = Qt; dark mode follows color-scheme prefer-dark via the XDG
   # settings portal (QT_QPA_PLATFORMTHEME=xdgdesktopportal + xdg-desktop-portal-gtk
   # providing the Settings interface). custom_chrome_frame false = system title
-  # bar/borders; helium.browser layout 1 = compact, zen_mode on, no rounded
-  # web-content frame; restore_on_startup 5 = continue where you left off.
+  # bar/borders; helium.browser layout 0 = normal (not compact), zen_mode off,
+  # no rounded web-content frame; restore_on_startup 1 = continue where you left off
+  # (Chromium enum: 1=last session, 4=specific URLs, 5=New Tab page).
   # These keys must live in Default/Preferences: Chromium's initial_preferences
   # only honors a fixed whitelist and drops them. force:false so an established
   # profile (the user's own later tweaks) is never clobbered; the Default/ dir
   # is pre-created above.
   ansible.builtin.copy:
     dest: "{{ target_home }}/.config/net.imput.helium/Default/Preferences"
-    content: '{"browser":{"custom_chrome_frame":false},"extensions":{"theme":{"system_theme":2}},"helium":{"browser":{"layout":1,"rounded_frame":false,"zen_mode":true}},"session":{"restore_on_startup":5}}'
+    content: '{"browser":{"custom_chrome_frame":false},"extensions":{"theme":{"system_theme":2}},"helium":{"browser":{"layout":0,"rounded_frame":false,"zen_mode":false}},"session":{"restore_on_startup":1}}'
     force: false
     mode: '0600'
 

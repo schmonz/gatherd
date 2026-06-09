@@ -6,6 +6,12 @@
   fold its VERIFIED items into `section_verify` and turn its ANTI-VERIFIED items
   into TODO entries here.
 
+## Recently anti-verified on T60
+
+- Qt theme not dark (QT_QPA_PLATFORMTHEME not set)
+- Helium "continue where you left off" not enabled
+- ThinkVantage button does not launch anything
+
 ## Low-end / constrained machines
 
 The T60 (2GB RAM, spinning rust) is the test rig for the low end — treat anything

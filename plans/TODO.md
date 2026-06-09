@@ -9,7 +9,6 @@
 ## Recently anti-verified on T60
 
 - Qt theme not dark (QT_QPA_PLATFORMTHEME not set)
-- ThinkVantage button does not launch anything
 
 ## Low-end / constrained machines
 

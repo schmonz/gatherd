@@ -41,6 +41,22 @@ fi
 bin="$HOME/.local/bin"
 run() { sh -c "$1" & }
 
+# Sweep any cohort a prior login leaked. One sway session runs at a time, so any
+# gatherd helper not in this supervisor's own process group ($$) is a stale
+# orphan from a session that failed to reap itself. Kill it by group (SIGKILL,
+# no grace — its session is long gone) so each leaf app dies with its wrapper.
+# This is the backstop: whichever link in the previous session's teardown broke
+# (IPC never reached, supervisor killed mid-wait, an older script), we clear the
+# mess here, before launching a fresh cohort — so helpers never stack across
+# logins. Skip ourselves and our own setsid launcher by name.
+for _pid in $(pgrep -f "$bin/gatherd-" 2>/dev/null); do
+    case "$(ps -o args= -p "$_pid" 2>/dev/null)" in
+        *gatherd-session-helpers*) continue ;;
+    esac
+    _pgid=$(ps -o pgid= -p "$_pid" 2>/dev/null | tr -d ' ')
+    [ -n "$_pgid" ] && [ "$_pgid" != "$$" ] && kill -KILL -- "-$_pgid" 2>/dev/null
+done
+
 # The cohort: long-running session helpers gatherd autostarts. One-shots and
 # things with their own lifecycle (swayidle, gatherd-show-slow-progress) stay as
 # plain sway `exec` lines and are intentionally not listed here.
@@ -70,18 +86,38 @@ run "$bin/gatherd-systray tailscale systray"
 run "$bin/gatherd-systray /opt/piavpn/bin/pia-client --quiet"
 run "$bin/gatherd-systray arch-update --tray"
 
-# If we can't reach sway's IPC we have no way to detect session end; launching the
-# cohort then exiting just reverts to the old (leaky but functional) behavior,
-# which is far safer than tearing the cohort down the instant it started.
-swaymsg -t get_version >/dev/null 2>&1 || exit 0
+# Teardown runs when this supervisor learns the session is ending, by whichever
+# signal arrives first: sway's shutdown event (clean logout) or a TERM/HUP/INT
+# (something killing us directly). Both funnel into cleanup() so neither path can
+# die bare and strand the cohort — the trap is armed BEFORE we block, closing the
+# window where a signal during the wait used to kill us before cleanup ran.
+# cleanup ignores the TERM it sends to its own group so it outlives that long
+# enough to KILL any straggler.
+cleanup() {
+    trap '' TERM
+    kill -TERM -- "-$$" 2>/dev/null
+    sleep 2
+    for p in $(pgrep -g "$$" | grep -vx "$$"); do
+        kill -KILL "$p" 2>/dev/null
+    done
+    exit 0
+}
+trap cleanup TERM HUP INT
 
-# Block until sway goes away, then take the cohort down with us. Ignore the TERM
-# we send to our own group so we outlive it long enough to KILL any straggler.
-swaymsg -m -t subscribe '["shutdown"]' >/dev/null 2>&1
-
-trap '' TERM
-kill -TERM -- "-$$" 2>/dev/null
-sleep 2
-for p in $(pgrep -g "$$" | grep -vx "$$"); do
-    kill -KILL "$p" 2>/dev/null
+# Sway's IPC can lag a moment behind session start on a slow or first boot, so
+# retry before giving up rather than stranding the cohort on a single early miss
+# (the suspected cause of the first-boot orphan). If it truly never answers we
+# exit and leave the cohort running (old leaky-but-functional behavior) — but now
+# the next login's startup sweep reaps that leak. This runs detached from sway's
+# `exec` and after the cohort is already launched, so it never delays login or
+# the helpers coming up; at worst it delays only teardown-readiness.
+_n=0
+until swaymsg -t get_version >/dev/null 2>&1; do
+    _n=$((_n + 1))
+    [ "$_n" -ge 30 ] && exit 0
+    sleep 1
 done
+
+# Block until sway goes away, then take the cohort down with us.
+swaymsg -m -t subscribe '["shutdown"]' >/dev/null 2>&1
+cleanup

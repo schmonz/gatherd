@@ -19,12 +19,14 @@ here as "must stay usable on a potato."
 
 ## Font sizing and general display
 
-- 17" MBP maybe didn't get the phantom-display fix
-  ...or maybe 7.x kernels are different about this?
-  ...or maybe just had to coax convergence to complete?
-  I think I was just expecting it on first login -- in which case it needs to
-  happen during `postinstall` already. Anything else that belongs that early?
-  Worth doing a couple things that early?
+- **17" MBP phantom-display fix on the first session** — the grub cmdline fix
+  (`video=LVDS-2:d`) is now pre-seeded by `postinstall` before first boot, so
+  it's live for the very first session instead of only after a gatherd grub
+  rebuild + reboot. zswap rode along the same way (`preseed_grub_cmdline_fixes`);
+  see the "candidates that belong in postinstall" analysis for what else might
+  justify that layer. Still to confirm on the 17" MBP itself: whether it actually
+  needed the fix and now gets it on first login, or whether 7.x kernels behave
+  differently / convergence just needed coaxing.
 
 ## Session env propagation — `environment.d` may not reach greetd's sway
 

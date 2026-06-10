@@ -1,6 +1,10 @@
 ---
 # MacBookPro5,2: disable phantom second internal display (LVDS-2).
 # Targets GRUB_CMDLINE_LINUX (not _DEFAULT) so recovery boots also get the fix.
+# Also pre-seeded in `postinstall` (preseed_grub_cmdline_fixes) so the very first
+# session already has it — keep the video= param in sync there. This task stays
+# the applier for machines that pull the fix after install, and is a no-op when
+# postinstall already added it (the negative-lookahead guard).
 - name: Disable phantom LVDS-2 display in GRUB
   ansible.builtin.replace:
     path: /etc/default/grub

@@ -1,6 +1,10 @@
 ---
 # Enable zswap for machines with limited RAM.
 # Targets GRUB_CMDLINE_LINUX_DEFAULT — performance optimization, not needed in recovery.
+# Also pre-seeded in `postinstall` (preseed_grub_cmdline_fixes) so zswap is live
+# for the heaviest run of all — the first boot's AUR builds. Keep the zswap.*
+# params in sync there. This task stays the applier for machines that pull the
+# change after install, and is a no-op when postinstall already added it.
 - name: Enable zswap in GRUB
   ansible.builtin.replace:
     path: /etc/default/grub

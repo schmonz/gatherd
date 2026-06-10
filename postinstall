@@ -2,7 +2,11 @@
 #
 # Calamares shellprocess hook: runs inside the installer chroot.
 # Installs Ansible, clones this repo, and registers the first-boot service.
-# Everything else runs via ansible-playbook on first boot.
+# Everything else runs via ansible-playbook on first boot — except a couple of
+# GRUB kernel-cmdline fixes (see preseed_grub_cmdline_fixes) that must be baked
+# in *before* the first boot, or the first session is already degraded on the
+# broken config. /proc and /sys are bind-mounted into the chroot, so hardware
+# detection here sees the real machine.
 #
 set -euo pipefail
 
@@ -41,6 +45,49 @@ mask_conflicting_services() {
     systemctl mask power-profiles-daemon.service systemd-rfkill.service systemd-rfkill.socket
 }
 
+add_grub_cmdline() {
+    # Idempotently append params to a GRUB_CMDLINE_* var in /etc/default/grub.
+    # $1 = var name, $2 = params; the first token of $2 is the present-check, so
+    # this mirrors the negative-lookahead guard in the matching Ansible task and
+    # a later gatherd run sees the param already there and makes no change.
+    local var="$1" params="$2" grub=/etc/default/grub
+    local marker="${params%% *}"
+    grep -q "^${var}=\".*${marker}.*\"" "$grub" && return 0
+    sed -i -E "s|^(${var}=\".*)(\")[[:space:]]*\$|\1 ${params}\2|" "$grub"
+}
+
+preseed_grub_cmdline_fixes() {
+    # First-boot usability fixes that live in the kernel cmdline, so they must be
+    # in place before the very first boot (gatherd's first-boot run is too late —
+    # it would only apply them after a grub rebuild + reboot, with the first
+    # session already degraded). Each fix is the bash twin of an idempotent
+    # gatherd task; keep the params in sync with the cross-referenced files.
+    local grub=/etc/default/grub
+    [[ -f "$grub" ]] || return 0  # no GRUB (e.g. extlinux): first-boot Ansible handles it
+
+    # MacBookPro5,2 phantom LVDS-2 internal display — interferes with the first
+    # session. Sync with roles/hardware/tasks/phantom_display.yml.
+    if [[ "$(cat /sys/class/dmi/id/product_name 2>/dev/null)" == "MacBookPro5,2" ]]; then
+        add_grub_cmdline GRUB_CMDLINE_LINUX 'video=LVDS-2:d'
+    fi
+
+    # zswap on < 8 GB RAM — the first boot is the heaviest run (all the AUR
+    # builds), exactly when a low-RAM machine most needs it. Sync with
+    # roles/hardware/tasks/zswap.yml.
+    if [[ "$(awk '/^MemTotal:/ {print ($2 < 8*1024*1024)}' /proc/meminfo)" == 1 ]]; then
+        add_grub_cmdline GRUB_CMDLINE_LINUX_DEFAULT \
+            'zswap.enabled=1 zswap.compressor=zstd zswap.zpool=z3fold zswap.max_pool_percent=20'
+    fi
+
+    # Regenerate only if grub.cfg already exists (Calamares ran its bootloader
+    # step before this shellprocess). If it doesn't yet, Calamares will generate
+    # it from the /etc/default/grub we just edited, so there's nothing to do.
+    # Never fatal: a fresh install must not abort if regeneration hiccups.
+    if [[ -f /boot/grub/grub.cfg ]]; then
+        grub-mkconfig -o /boot/grub/grub.cfg || true
+    fi
+}
+
 main() {
     local target_user
     target_user=$(detect_target_user)
@@ -51,6 +98,7 @@ main() {
     select_fastest_mirrors "$target_user"
     register_boot_services
     mask_conflicting_services
+    preseed_grub_cmdline_fixes
 }
 
 main "$@"

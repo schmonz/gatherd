@@ -15,12 +15,6 @@
 The T60 (2GB RAM, spinning rust) is the test rig for the low end — treat anything
 here as "must stay usable on a potato."
 
-- **Don't autostart heavy apps on every login.** JetBrains Toolbox, Zoom, Discord,
-  and Slack are heavy; launch them on demand. (Original note: "launch it only if
-  I'm not logged in and gatherd isn't running. Otherwise I'll run it myself when I
-  need to.") Pin down the gating — probably: autostart only during first-run
-  provisioning so they can be configured/signed in, then never again.
-
 # 2026/06/04 Regressions
 
 ## Font sizing and general display

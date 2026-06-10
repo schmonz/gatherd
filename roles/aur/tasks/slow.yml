@@ -121,10 +121,6 @@
         XDG_RUNTIME_DIR=/run/user/$(id -u) SWAYSOCK="$sock" \
           swaymsg exec "$HOME/.local/bin/gatherd-systray localsend --hidden"
         XDG_RUNTIME_DIR=/run/user/$(id -u) SWAYSOCK="$sock" \
-          swaymsg exec "$HOME/.local/bin/gatherd-systray jetbrains-toolbox --minimize"
-        XDG_RUNTIME_DIR=/run/user/$(id -u) SWAYSOCK="$sock" \
-          swaymsg exec "$HOME/.local/bin/gatherd-systray vesktop --start-minimized"
-        XDG_RUNTIME_DIR=/run/user/$(id -u) SWAYSOCK="$sock" \
           swaymsg exec "$HOME/.local/bin/gatherd-systray /opt/piavpn/bin/pia-client --quiet"
       changed_when: false
 

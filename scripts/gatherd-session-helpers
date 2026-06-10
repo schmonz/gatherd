@@ -12,6 +12,19 @@
 # the full rationale and the rejected alternatives (KillUserProcesses=yes, the
 # systemd graphical-session.target/uwsm approach).
 #
+# Why not XDG autostart (~/.config/autostart/*.desktop): it is the "standard"
+# mechanism, but it is the wrong layer here and we deliberately do not use it.
+# Reaping on logout is the whole point, and the only thing that reaps XDG
+# autostart entries is systemd's xdg-desktop-autostart.target, scoped to
+# graphical-session.target — which does not exist on the Artix/s6 + seatd target,
+# so the orphans-stacking-every-login bug returns there in full. A bare `Exec=`
+# line also can't express what these helpers need: the systray apps must wait for
+# a StatusNotifierWatcher (the gatherd-systray wrapper) or their icons silently
+# never register, which `.desktop` autostart would race. So gatherd owns session
+# autostart here, on purpose, and the apps' own self-registered autostart entries
+# are intentionally ignored — they are inert in this sway session (nothing runs
+# them). This is the way it needs to be, not a gap to migrate to XDG later.
+#
 # Mechanism: become a process-group leader, launch the cohort as our children,
 # then block until sway's IPC connection closes. That wait is event-driven, not a
 # poll: `swaymsg subscribe` returns on the `shutdown` event for a clean exit, and
@@ -45,8 +58,10 @@ run "env XDG_CURRENT_DESKTOP=GNOME $bin/gatherd-systray 1password --silent"
 run "$bin/gatherd-intercept-localsend-flash"
 run "$bin/gatherd-systray localsend --hidden"
 run "$bin/gatherd-systray tailscale systray"
-run "$bin/gatherd-systray jetbrains-toolbox --minimize"
-run "$bin/gatherd-systray vesktop --start-minimized"
+# Sign-in apps (JetBrains Toolbox, Discord/vesktop, Slack, Zoom, …) are
+# deliberately never autostarted — not here and not during provisioning. They
+# are just installed; open them on demand and sign in via 1Password when needed.
+# Nothing special about them, and starting them on every login wastes a potato.
 run "$bin/gatherd-systray /opt/piavpn/bin/pia-client --quiet"
 run "$bin/gatherd-systray arch-update --tray"
 

@@ -44,6 +44,11 @@ run() { sh -c "$1" & }
 # The cohort: long-running session helpers gatherd autostarts. One-shots and
 # things with their own lifecycle (swayidle, gatherd-show-slow-progress) stay as
 # plain sway `exec` lines and are intentionally not listed here.
+# xdg-desktop-portal's systemd unit has Requisite=graphical-session.target, which
+# we don't activate (init-agnostic design). Start it directly so the Requisite
+# check is bypassed; the backends (xdg-desktop-portal-gtk for Qt Settings/dark mode)
+# only have PartOf/After, not Requisite, so they D-Bus-activate fine once this runs.
+run "/usr/lib/xdg-desktop-portal"
 run "$bin/gatherd-conky"
 run "$bin/gatherd-prompt-captiveportal"
 run "$bin/gatherd-prompt-1password"

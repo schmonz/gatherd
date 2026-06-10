@@ -173,6 +173,20 @@
     has_plenty_of_ram: true
   when: ansible_facts.memtotal_mb >= 8192
 
+# AVX = x86-64-v3 floor; gates AVX-requiring binaries (e.g. the claude-code
+# native bundle, which SIGILLs on pre-AVX CPUs like the Core 2 T60). Any
+# AVX-capable CPU also has SSE4.2/POPCNT, so this one flag is sufficient.
+- name: Check for AVX CPU support  # noqa: risky-shell-pipe
+  ansible.builtin.shell: |
+    grep -qm1 -E '^flags\b.*\bavx\b' /proc/cpuinfo && echo true || echo false
+  register: _avx
+  changed_when: false
+
+- name: Detect has_avx
+  ansible.builtin.set_fact:
+    has_avx: true
+  when: _avx.stdout == 'true'
+
 - name: Check for infrared remote control receiver  # noqa: risky-shell-pipe
   # /dev/lirc*: traditional LIRC path (requires lirc kernel module)
   # /sys/class/rc/rc*: modern rc-core path (Apple Remote, most built-ins)
@@ -344,6 +358,7 @@
     has_hidpi_display: "{{ has_hidpi_display }}"
     has_phantom_second_display: "{{ has_phantom_second_display }}"
     has_plenty_of_ram: "{{ has_plenty_of_ram }}"
+    has_avx: "{{ has_avx }}"
     has_screen_backlight: "{{ has_screen_backlight }}"
     has_thinkpad_hardware: "{{ has_thinkpad_hardware }}"
     has_thinkpad_trackpoint: "{{ has_thinkpad_trackpoint }}"

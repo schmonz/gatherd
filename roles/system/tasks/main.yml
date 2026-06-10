@@ -61,6 +61,8 @@
       - fwupd
       # text editor
       - xed
+      # lightweight fallback browser for low-end/constrained machines
+      - netsurf
       # favicon conversion for web-app desktop entries (ICO→PNG for fuzzel)
       - python-pillow
       # printing

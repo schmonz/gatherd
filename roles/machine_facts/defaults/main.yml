@@ -19,6 +19,7 @@ has_luks_btrfs_root: false
 has_hidpi_display: false
 has_phantom_second_display: false
 has_plenty_of_ram: false
+has_avx: false
 has_screen_backlight: false
 has_thinkpad_hardware: false
 has_thinkpad_trackpoint: false

@@ -15,11 +15,6 @@
 The T60 (2GB RAM, spinning rust) is the test rig for the low end — treat anything
 here as "must stay usable on a potato."
 
-- **`claude` dumps core on the T60.** Diagnose: likely memory pressure or a
-  CPU-feature/arch mismatch. Capture the crash and decide whether it's fixable
-  here or belongs upstream.
-- **Always install Netsurf.** A lightweight browser constrained machines can fall
-  back to.
 - **Don't autostart heavy apps on every login.** JetBrains Toolbox, Zoom, Discord,
   and Slack are heavy; launch them on demand. (Original note: "launch it only if
   I'm not logged in and gatherd isn't running. Otherwise I'll run it myself when I
@@ -101,6 +96,12 @@ Still open on the T60:
   whether it actually blocks, and either way figure out how much of what a repave
   needs can ride along on a USB stick (ties into the package-mirror item above) to
   speed things up and survive a hostile/absent network.
+- **Try Netsurf as the captive-portal browser**: now that Netsurf is always
+  installed (lightweight fallback), see whether the captive-portal flow
+  (`gatherd-prompt-captiveportal`) should open the portal in Netsurf instead of
+  the default browser — small footprint, fast launch, no profile/session baggage,
+  and it keeps the portal's (often sketchy) login page out of the main browser
+  profile. Confirm it renders typical captive portals well enough to authenticate.
 - need an email app. remember I'm the guy that loved MacSOUP. Also gonna want
   to preconfigure it with (explicitly hardwired for now) servers, other settings
 

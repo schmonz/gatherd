@@ -23,15 +23,27 @@
           - rclone
           # writing
           - dawn-writer-bin
-          # AI tools
-          - claude-code
+          # AI tools (the Electron desktop app runs on any CPU; the native
+          # claude-code bundle needs AVX — see the gated task below)
           - claude-desktop-bin
-          - claude-cowork-service
           # IDE manager
           - jetbrains-toolbox
         use: yay
         state: present
         extra_args: "--mflags --skippgpcheck"
+
+    - name: Install programs that use AVX or newer instructions
+      # claude-code is a native Node bundle that uses AVX/SSE4 instructions and
+      # SIGILLs on pre-AVX CPUs (e.g. the Core 2 T60); claude-cowork-service is
+      # useless without it. On those machines, SSH in from an AVX-capable box.
+      kewlfft.aur.aur:
+        name:
+          - claude-code
+          - claude-cowork-service
+        use: yay
+        state: present
+        extra_args: "--mflags --skippgpcheck"
+      when: has_avx
 
     - name: Install AUR fingerprint reader driver
       # python-validity drives the Validity 138a:0097 sensor and brings in

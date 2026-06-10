@@ -291,8 +291,16 @@
   # d), so fuzzel silently falls back to hicolor and misses icons in the theme.
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/fuzzel/fuzzel.ini"
-    regexp: '^icon-theme='
+    regexp: '^#?\s*icon-theme='
     line: "icon-theme=Qogir-Dark"
+
+- name: Enable fuzzel keyword search
+  # Default fields (filename,name,generic) omit keywords, so apps are only
+  # findable by their packaged name — e.g. searching "discord" misses vesktop.
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/fuzzel/fuzzel.ini"
+    regexp: '^#?\s*fields='
+    line: "fields=filename,name,generic,keywords"
 
 - name: Enable foot browser launch
   ansible.builtin.lineinfile:

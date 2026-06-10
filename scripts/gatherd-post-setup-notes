@@ -226,7 +226,7 @@ section_verify() {
     section_present 'Verify' && return
     h 'Verify'
     li 'LocalSend startup flash: log out and back in, watching the screen — no LocalSend window should flash up before it settles into the tray. `gatherd-intercept-localsend-flash` (launched from the supervisor just before localsend) stashes the startup surface to scratchpad until LocalSend withdraws it via `--hidden`. If a brief flash returns, confirm the interceptor is installed and still listed in `gatherd-session-helpers`.'
-    li 'Heavy sign-in apps not autostarted: after a normal login (and after a first-boot provisioning session), confirm `pgrep -f jetbrains-toolbox` and `pgrep -f vesktop` print nothing — they are installed (`pacman -Q jetbrains-toolbox vesktop-bin`) but never autostarted, by gatherd-session-helpers or otherwise. Open them on demand and sign in via 1Password. Lightweight tray utilities (1Password, LocalSend, Tailscale, PIA, arch-update) do still appear.'
+    li 'Fuzzel keyword search: open fuzzel and type "discord" — Vesktop should appear. fuzzel is configured to search keywords fields, and vesktop'\''s .desktop has Keywords=discord.'
     li 'Zoom screen sharing: try sharing a window — confirm screen sharing works under Sway/wlroots'
     li 'Qt dark mode: open Helium (or any Qt app) — it should come up dark, not bright white.'
     li 'sudo askpass via pam_env: in a foot terminal run `printenv SUDO_ASKPASS` — expect the full path to gatherd-askpass (~/.local/bin/gatherd-askpass). Set via pam_env so it reaches the sway session; if empty, pam_env is not delivering it and graphical sudo prompts will silently fall back or fail.'

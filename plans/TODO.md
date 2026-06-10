@@ -69,6 +69,11 @@ Still open on the T60:
   the default browser — small footprint, fast launch, no profile/session baggage,
   and it keeps the portal's (often sketchy) login page out of the main browser
   profile. Confirm it renders typical captive portals well enough to authenticate.
+- **Netsurf preferences**: seed `~/.config/netsurf/Choices` so Netsurf comes up
+  configured — DuckDuckGo as the search provider, "search from URL bar" enabled,
+  dark mode, toolbar buttons set to small icons. Find the exact Choices keys (set
+  each in the GUI, then diff `Choices`) and template them via the dotfiles/desktop
+  role. Decide what else is worth setting while in there.
 - need an email app. remember I'm the guy that loved MacSOUP. Also gonna want
   to preconfigure it with (explicitly hardwired for now) servers, other settings
 
@@ -347,6 +352,18 @@ Still open on the T60:
 
 ## Setup
 
+- **Auto-set the Tailscale operator**: gatherd never runs `tailscale set
+  --operator=$USER`, so non-sudo `tailscale` commands only work if you connected
+  interactively in the right session; otherwise you re-run it by hand. Bake it into
+  provisioning — a `gatherd-*` script or task that sets the operator once tailscaled
+  is up and the target user is known (idempotent: `tailscale set` is a no-op when
+  already correct). The manual reminder has been dropped from `section_tailscale`.
+- **pacman-mirrorlist .pacnew handling**: when the `pacman-mirrorlist` package ships
+  a new `/etc/pacman.d/mirrorlist.pacnew`, decide whether anything should merge into
+  our rate-mirrors-generated mirrorlist. We overwrite the mirrorlist with a
+  rate-mirrors ranking, so the stock list is normally irrelevant — but newly added
+  or removed upstream mirrors, or format changes, might matter. Determine whether to
+  ignore the .pacnew, periodically re-rank, or diff it for newly added mirrors.
 - **WiFi reconnect blip on re-run**: gatherd pushes a network config for the SSID
   you're already connected to, which bounces the connection. Diff the existing vs
   pushed config — if they're equivalent, make the task idempotent (skip the write,

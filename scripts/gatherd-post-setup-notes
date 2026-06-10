@@ -110,8 +110,6 @@ tailscale_settings_ok() {
 }
 
 icloud_configured()     { rclone listremotes 2>/dev/null | grep -q '^icloud:'; }
-claude_desktop_authed() { find "$HOME/.config/Claude" -name '*.json' 2>/dev/null | grep -q .; }
-claude_code_authed()    { [ -f "$HOME/.claude/.credentials.json" ] || [ -f "$HOME/.claude/credentials" ]; }
 
 # ---------------------------------------------------------------------------
 # Section handlers
@@ -136,34 +134,25 @@ section_tailscale() {
     # Never auto-done: exit node check is always relevant after a repave
     section_present 'Tailscale' && return
     h 'Tailscale'
-    tailscale_connected   || li 'Connect during this session before rebooting. Else next session re-run `sudo tailscale set --operator=$USER` first.'
+    tailscale_connected   || li 'Connect during this session before rebooting. Set up 1Password (including its browser extension) first — then Tailscale offers to log you in via Apple SSO and 1Password fills it correctly.'
     tailscale_settings_ok || li 'Run `tailscale set --accept-dns=true --accept-routes`'
 }
 
 section_other_logins() {
-    # Detectable logins (Claude, iCloud) get pruned once done. Zoom and JetBrains
-    # login state isn't reliably detectable — Toolbox writes assorted .json just by
-    # running, so any file heuristic false-positives — so they're never auto-done
-    # and keep this section alive.
-    b_claude_desktop='Claude Desktop: log in via the app'
-    b_claude_code='Claude Code: run `claude` in a terminal'
-    b_zoom='Zoom: log in'
-    b_jetbrains='JetBrains Toolbox: log in to your account by clicking the tray icon'
+    # Only iCloud earns a standing reminder here, and it auto-prunes once the
+    # rclone remote exists. Claude Desktop/Code, Zoom, and JetBrains are
+    # deliberately not surfaced — logging into them is obvious on demand and
+    # didn't merit a recurring nag. PIA needs nothing here either: it logs in
+    # automatically from 1Password via gatherd-prompt-pia at every login.
     b_icloud='iCloud: run `rclone config` and follow prompts to add a remote named `icloud`; complete 2FA when prompted'
 
-    set --
-    claude_desktop_authed && set -- "$@" "$b_claude_desktop"
-    claude_code_authed    && set -- "$@" "$b_claude_code"
-    icloud_configured     && set -- "$@" "$b_icloud"
-    [ "$#" -gt 0 ] && prune_section 'Other Logins' "$@"
-
-    section_present 'Other Logins' && return
-    h 'Other Logins'
-    claude_desktop_authed || li "$b_claude_desktop"
-    claude_code_authed    || li "$b_claude_code"
-    li "$b_zoom"
-    li "$b_jetbrains"
-    icloud_configured     || li "$b_icloud"
+    if icloud_configured; then
+        prune_section 'Other Logins' "$b_icloud"
+    else
+        section_present 'Other Logins' && return
+        h 'Other Logins'
+        li "$b_icloud"
+    fi
 }
 
 section_unmanaged_wifi() {

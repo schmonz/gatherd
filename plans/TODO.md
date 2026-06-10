@@ -352,12 +352,6 @@ Still open on the T60:
 
 ## Setup
 
-- **Auto-set the Tailscale operator**: gatherd never runs `tailscale set
-  --operator=$USER`, so non-sudo `tailscale` commands only work if you connected
-  interactively in the right session; otherwise you re-run it by hand. Bake it into
-  provisioning — a `gatherd-*` script or task that sets the operator once tailscaled
-  is up and the target user is known (idempotent: `tailscale set` is a no-op when
-  already correct). The manual reminder has been dropped from `section_tailscale`.
 - **pacman-mirrorlist .pacnew handling**: when the `pacman-mirrorlist` package ships
   a new `/etc/pacman.d/mirrorlist.pacnew`, decide whether anything should merge into
   our rate-mirrors-generated mirrorlist. We overwrite the mirrorlist with a

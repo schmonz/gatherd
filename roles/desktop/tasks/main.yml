@@ -559,6 +559,13 @@
     mode: '0755'
     remote_src: true
 
+- name: Install gatherd-set-tailscale-operator script
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-set-tailscale-operator"
+    dest: "{{ target_home }}/.local/bin/gatherd-set-tailscale-operator"
+    mode: '0755'
+    remote_src: true
+
 
 - name: Install gatherd-show-slow-progress script
   ansible.builtin.copy:

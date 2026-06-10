@@ -1,0 +1,7 @@
+#!/bin/sh
+# Set the Tailscale operator to the invoking user so plain `tailscale` works
+# without sudo. The operator pref does not survive into a later session when it
+# was set in a session where Tailscale wasn't brought up — so rather than try to
+# apply it during provisioning (where it wouldn't stick), this is a small
+# idempotent helper to re-assert it on demand. Needs root; sudo will prompt.
+exec sudo tailscale set --operator="$(id -un)"

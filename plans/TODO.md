@@ -248,10 +248,6 @@ Still open on the T60:
   screen and needs a little left-right scrolling to see everything — likely a side
   effect of font-size scaling (see the Scaling item). Figure out whether tuning the
   menu geometry/font or the scaling fixes it so nothing is clipped.
-- **App menu missing icons for some shipped apps**: the short app-menu list is
-  missing icons for Text Editor and a few others that shipped with the system
-  (distinct from the blurry web-app icons above — these are absent, not low-res).
-  Find why their `.desktop`/icon-theme lookup fails and fix it.
 - Set up VNC (see `VNC.md`)
 - JetBrains IDE settings, starting with font size
 - **Auto git pull on a cadence**: the sentinels now record the git HEAD that

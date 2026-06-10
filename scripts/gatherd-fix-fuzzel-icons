@@ -1,0 +1,81 @@
+#!/bin/sh
+# Proactively fixes fuzzel icon gaps for all installed .desktop entries.
+# Three cases handled:
+#   1. XPM-only: icon lives in /usr/share/pixmaps as .xpm → convert to PNG
+#   2. Wrong context: icon is SVG in the theme but outside apps/ → copy to apps
+#   3. Non-standard extension in Icon= name (e.g. netsurf.xpm) → local .desktop
+#      override with the bare name so the installed PNG/SVG is actually resolved
+# Idempotent: skips entries that already resolve in the apps context.
+
+ICON_THEME=$(grep "^icon-theme=" "$HOME/.config/fuzzel/fuzzel.ini" 2>/dev/null | cut -d= -f2-)
+: "${ICON_THEME:=hicolor}"
+
+HICOLOR="$HOME/.local/share/icons/hicolor"
+LOCAL_APPS="$HOME/.local/share/applications"
+THEME_SEARCH="/usr/share/icons/$ICON_THEME /usr/share/icons/hicolor $HICOLOR"
+
+changed=0
+
+in_apps() {
+    for _d in $THEME_SEARCH; do
+        find "$_d" -path "*/apps/${1}.png" -o -path "*/apps/${1}.svg" 2>/dev/null \
+            | grep -q . && return 0
+    done
+    return 1
+}
+
+mkdir -p "$HICOLOR/48x48/apps" "$HICOLOR/scalable/apps" "$LOCAL_APPS"
+
+for _f in /usr/share/applications/*.desktop; do
+    grep -q "^Type=Application" "$_f" 2>/dev/null || continue
+    _icon=$(grep "^Icon=" "$_f" | head -1 | cut -d= -f2-)
+    [ -z "$_icon" ] && continue
+
+    case "$_icon" in
+        *.xpm|*.png|*.svg) _base="${_icon%.*}"; _ext="${_icon##*.}" ;;
+        *) _base="$_icon"; _ext="" ;;
+    esac
+
+    in_apps "$_base" && continue
+
+    _fixed=0
+
+    # Case 1: XPM in pixmaps
+    _xpm=""
+    [ -f "/usr/share/pixmaps/${_base}.xpm" ] && _xpm="/usr/share/pixmaps/${_base}.xpm"
+    [ -z "$_xpm" ] && [ -n "$_ext" ] && [ -f "/usr/share/pixmaps/${_icon}" ] \
+        && _xpm="/usr/share/pixmaps/${_icon}"
+    if [ -n "$_xpm" ]; then
+        _dest="$HICOLOR/48x48/apps/${_base}.png"
+        if [ ! -f "$_dest" ]; then
+            magick "$_xpm" "$_dest" && changed=1
+        fi
+        _fixed=1
+    fi
+
+    # Case 2: SVG in theme but not under apps/
+    if [ "$_fixed" = "0" ]; then
+        # shellcheck disable=SC2086
+        _svg=$(find $THEME_SEARCH -name "${_base}.svg" 2>/dev/null \
+            | grep -v "/apps/" | head -1)
+        if [ -n "$_svg" ]; then
+            _dest="$HICOLOR/scalable/apps/${_base}.svg"
+            if [ ! -f "$_dest" ]; then
+                cp "$_svg" "$_dest" && changed=1
+            fi
+            _fixed=1
+        fi
+    fi
+
+    # Case 3: icon name had a non-standard extension → local .desktop override
+    if [ "$_fixed" = "1" ] && [ -n "$_ext" ] && [ "$_ext" != "png" ] && [ "$_ext" != "svg" ]; then
+        _local="$LOCAL_APPS/$(basename "$_f")"
+        if [ ! -f "$_local" ]; then
+            sed "s|^Icon=.*|Icon=${_base}|" "$_f" > "$_local"
+            chmod 644 "$_local"
+            changed=1
+        fi
+    fi
+done
+
+[ "$changed" = "1" ] && echo changed || true

@@ -286,6 +286,14 @@
     regexp: '^font='
     line: "font=JetBrainsMono-Regular:size={{ foot_font_size }}"
 
+- name: Fix fuzzel icon theme case
+  # EndeavourOS ships Qogir-Dark but fuzzel.ini defaults to Qogir-dark (lowercase
+  # d), so fuzzel silently falls back to hicolor and misses icons in the theme.
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/fuzzel/fuzzel.ini"
+    regexp: '^icon-theme='
+    line: "icon-theme=Qogir-Dark"
+
 - name: Enable foot browser launch
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/foot/foot.ini"
@@ -769,6 +777,16 @@
     dest: "{{ target_home }}/.local/bin/gatherd-prompt-pia"
     mode: '0755'
     remote_src: true
+
+- name: Fix missing fuzzel icons
+  # Scans all .desktop entries and remediates known gap patterns: XPM-only icons
+  # in pixmaps (converted to PNG), SVGs filed under non-apps theme contexts
+  # (copied to hicolor/scalable/apps), and Icon= names with non-standard
+  # extensions (local .desktop override with the bare name). Idempotent.
+  ansible.builtin.script:
+    cmd: "{{ setup_dir }}/scripts/gatherd-fix-fuzzel-icons"
+  register: _fuzzel_icons
+  changed_when: "'changed' in _fuzzel_icons.stdout"
 
 - name: Remove sway-install.sh stray gparted desktop entry
   ansible.builtin.file:

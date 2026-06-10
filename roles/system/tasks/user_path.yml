@@ -4,7 +4,7 @@
 # (via system-login) before sway is exec'd, so sway and every process it spawns
 # — terminals, swayidle, autostarted apps — inherit these. It also fires for
 # console and SSH logins, so it covers the login shells profile.d used to.
-- name: Set user-session environment (PATH, Go, Qt theme) via pam_env
+- name: Set user-session environment (PATH, Go, Qt theme, askpass) via pam_env
   ansible.builtin.blockinfile:
     path: /etc/security/pam_env.conf
     # PATH base is set before the prepend so an unset PATH can never collapse to
@@ -14,11 +14,11 @@
       PATH    OVERRIDE=@{HOME}/.local/bin:${PATH}
       GOPATH  DEFAULT=@{HOME}/.local/share/go
       GOBIN   DEFAULT=@{HOME}/.local/bin
-      # Qt 6.7+ follows system light/dark from the XDG settings portal when this
-      # is set. Via pam_env (not environment.d) so it reliably reaches greetd's
-      # directly-exec'd sway session and every Qt app under it, hand-launched or
-      # not — see the env-propagation note in plans/TODO.md.
+      # Qt 6.7+ follows system light/dark from the XDG settings portal when set.
       QT_QPA_PLATFORMTHEME    DEFAULT=xdgdesktopportal
+      # sudo -A graphical password prompt (fuzzel-based). environment.d is a black
+      # hole in greetd's sway session; pam_env is the proven delivery mechanism.
+      SUDO_ASKPASS    DEFAULT=@{HOME}/.local/bin/gatherd-askpass
     marker: "# {mark} ANSIBLE MANAGED BLOCK: gatherd user env"
   notify: Etckeeper commit
 

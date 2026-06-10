@@ -2,11 +2,10 @@
 
 ## Status
 
-**The graphical askpass half is already done.** `roles/desktop/tasks/main.yml`
-writes `~/.config/environment.d/50-gatherd-askpass.conf` with
-`SUDO_ASKPASS=/usr/lib/seahorse/ssh-askpass`, which gives sudo a Wayland dialog
-when invoked with no terminal. No `/etc/sudo.conf` `Path askpass` edit is needed
-— that would be a redundant second mechanism.
+**The graphical askpass half is already done.** `SUDO_ASKPASS` is set via
+`pam_env` (`/etc/security/pam_env.conf`) to `~/.local/bin/gatherd-askpass`,
+which gives sudo a Wayland (fuzzel) dialog when invoked with no terminal.
+`environment.d` is a black hole in greetd's sway session and is not used.
 
 What's left is the credential-caching behaviour described below.
 

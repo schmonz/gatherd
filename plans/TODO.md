@@ -28,34 +28,6 @@ here as "must stay usable on a potato."
   needed the fix and now gets it on first login, or whether 7.x kernels behave
   differently / convergence just needed coaxing.
 
-## Session env propagation — `environment.d` may not reach greetd's sway
-
-The GL-context regression (LocalSend, 1Password) and the Qt dark-mode env var both
-rode `environment.d`, which is consumed by `systemd --user` and may never reach
-greetd's directly-exec'd sway cohort. Both moved to proximate delivery — GL var at
-the launch point (`gatherd-systray` checks `lspci` itself), Qt var to `pam_env` —
-with verify steps in the post-setup notes. Still open:
-
-- **Settle whether `environment.d` reaches greetd's sway at all.** A uniquely-named
-  sentinel `GATHERD_ENVIRONMENT_SENTINEL=cheese` is now dropped in
-  `environment.d/99-gatherd-env-sentinel.conf`, with a post-setup verify step:
-  `printenv` it in a sway child. If empty, `environment.d` is a black hole for the
-  session — rip it out everywhere and stop using it. (Dedicated sentinel so the
-  test can't be fooled by a var like `SUDO_ASKPASS` that sudo/PAM may scrub.) Once
-  the verdict is in, delete the sentinel too.
-- **`SUDO_ASKPASS` is the same antipattern (third instance).** Set in
-  `environment.d/50-gatherd-askpass.conf`, but nothing proves it reaches the
-  session: `gatherd-prompt-vault` works via a hardcoded fallback
-  (`${SUDO_ASKPASS:-…/gatherd-askpass}`) and the post-setup test sets it inline, so
-  a bare `sudo -A` may well find nothing. Candidate home: `/etc/sudo.conf`
-  (`Path askpass /…/gatherd-askpass`), which sudo reads independent of the
-  environment. **Open question: is sudo.conf robust against `sudo` package
-  updates?** It has no drop-in/include dir (single file). Check on Arch whether the
-  package ships `/etc/sudo.conf` and lists it in its pacman `backup` array — if so
-  our edits survive upgrades (with `.pacnew` to merge); if it's not shipped at all,
-  the file is fully ours. If neither feels safe, fall back to `pam_env` (already
-  the proven session-env mechanism here). Either way, drop the `environment.d` file.
-
 ## Helium (fixed in code; apply manually to already-repaved machines)
 
 - ~~lost "continue where you left off"~~ — fixed: initial_preferences and
@@ -65,8 +37,7 @@ with verify steps in the post-setup notes. Still open:
   (Qt 6.7+) reads color-scheme from the XDG settings portal; xdg-desktop-portal-gtk
   now installed with portals.conf routing Settings→gtk, everything else→wlr
   (geolocation stays off). Default/Preferences keeps system_theme:2 (Qt).
-  The env var is delivered via `pam_env` (not `environment.d`) so it reaches the
-  sway session; the "Qt dark mode portal" verify step confirms it on repave.
+  The env var is delivered via `pam_env`, which reaches greetd's sway session.
 - thinks it's managed by my organization -- pre-existing, not a regression
 
 Still open on the T60:

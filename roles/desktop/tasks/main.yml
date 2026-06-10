@@ -9,7 +9,6 @@
     - .config/arch-update
     - .config/systemd/user/timers.target.wants
     - .config/gtklock
-    - .config/environment.d
     - .config/sway/config.d
     - .config/sway/scripts
     - .local/share/applications/kde4
@@ -39,21 +38,15 @@
     mode: '0755'
     remote_src: true
 
-- name: Configure sudo askpass (fuzzel-based gatherd-askpass)
-  ansible.builtin.copy:
-    dest: "{{ target_home }}/.config/environment.d/50-gatherd-askpass.conf"
-    content: "SUDO_ASKPASS={{ target_home }}/.local/bin/gatherd-askpass\n"
-    mode: '0644'
+- name: Remove obsolete environment.d askpass file
+  ansible.builtin.file:
+    path: "{{ target_home }}/.config/environment.d/50-gatherd-askpass.conf"
+    state: absent
 
-- name: Drop an environment.d sentinel to test session propagation
-  # A uniquely-named canary nothing else touches, so the "does environment.d reach
-  # the sway session" check (post-setup verify) can't be confounded by a var like
-  # SUDO_ASKPASS that sudo/PAM may scrub specially. Once we know the answer, this
-  # and the whole environment.d approach can go — see the env-propagation TODO.
-  ansible.builtin.copy:
-    dest: "{{ target_home }}/.config/environment.d/99-gatherd-env-sentinel.conf"
-    content: "GATHERD_ENVIRONMENT_SENTINEL=cheese\n"
-    mode: '0644'
+- name: Remove obsolete environment.d sentinel file
+  ansible.builtin.file:
+    path: "{{ target_home }}/.config/environment.d/99-gatherd-env-sentinel.conf"
+    state: absent
 
 - name: Configure XDG desktop portal backend routing
   # Route Settings to gtk (for Qt color-scheme) and everything else to wlr.

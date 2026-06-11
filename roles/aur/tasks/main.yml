@@ -96,6 +96,8 @@
           # update notifier
           - arch-update
           - xdg-terminal-exec
+          # polkit agent that drives any prompt command (we point it at fuzzel)
+          - cmd-polkit-git
         use: yay
         state: present
         extra_args: "--mflags --skippgpcheck"

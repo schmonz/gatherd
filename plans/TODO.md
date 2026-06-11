@@ -285,8 +285,6 @@ After each repave, process `~/.config/gatherd-post-setup.md` on the target.
 
 ## Desktop / UX
 
-- **fuzzel for polkit prompts**: the vault and sudo prompts already use fuzzel and
-  it's great — extend the same treatment to the polkit agent prompts.
 - **"Reboot to UEFI" power-menu entry shows on BIOS-only machines**: the T60 is
   BIOS-only, so it can't reboot to UEFI firmware setup — yet the power menu still
   offers the entry. Gate it on the machine actually being UEFI (`/sys/firmware/efi`

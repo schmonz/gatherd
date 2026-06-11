@@ -89,6 +89,20 @@
     block: "{{ lookup('template', 'swayidle-exec.j2') }}"
     marker: "# {mark} ANSIBLE MANAGED BLOCK: swayidle"
 
+# Replace EndeavourOS's polkit-gnome (its own GTK dialog) with our cmd-polkit
+# agent, so polkit password prompts come up in fuzzel like sudo/ssh/vault.
+- name: Point the polkit agent autostart at gatherd-polkit-agent
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
+    regexp: '^exec .*polkit-gnome-authentication-agent'
+    line: "exec {{ target_home }}/.local/bin/gatherd-polkit-agent"
+
+- name: Fix the polkit autostart comment
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
+    regexp: '^# Auth with polkit'
+    line: "# Auth with polkit (fuzzel via gatherd-polkit-agent):"
+
 - name: Add XF86PowerOff binding to sway config
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/default"
@@ -530,6 +544,13 @@
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-session-helpers"
     dest: "{{ target_home }}/.local/bin/gatherd-session-helpers"
+    mode: '0755'
+    remote_src: true
+
+- name: Install gatherd-polkit-agent (fuzzel polkit prompts)
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-polkit-agent"
+    dest: "{{ target_home }}/.local/bin/gatherd-polkit-agent"
     mode: '0755'
     remote_src: true
 

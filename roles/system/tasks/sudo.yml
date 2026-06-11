@@ -26,16 +26,27 @@
     line: Path askpass /usr/local/bin/gatherd-askpass
   notify: Etckeeper commit
 
-# Share one credential cache across all of the user's processes instead of
-# caching per-TTY, so an agent (or anything) shelling out to sudo repeatedly
-# authenticates once. timestamp_timeout caps the shared window as a modest
-# security tradeoff. validate keeps a malformed drop-in from ever breaking sudo.
-- name: Share sudo's credential cache across the user's processes
+# Two user-scoped sudo defaults:
+# - timestamp_type=global + timestamp_timeout share one credential cache across
+#   all of the user's processes (instead of per-TTY) so an agent shelling out to
+#   sudo repeatedly authenticates once, with a short window as a security cap.
+# - passprompt tags the prompt so the fuzzel box clearly reads as sudo, the way
+#   vault and polkit prompts name themselves (ssh's own prompt already does).
+# validate keeps a malformed drop-in from ever breaking sudo.
+- name: Configure sudo defaults (shared cache, tagged prompt)
   ansible.builtin.copy:
-    dest: /etc/sudoers.d/gatherd-sudo-timestamp
+    dest: /etc/sudoers.d/gatherd-sudo-defaults
     content: |
       Defaults:{{ target_user }} timestamp_type=global
       Defaults:{{ target_user }} timestamp_timeout=2
+      Defaults:{{ target_user }} passprompt="[sudo] password for %p: "
     mode: '0440'
     validate: visudo -cf %s
+  notify: Etckeeper commit
+
+# Old name before passprompt was folded in; remove so it isn't left orphaned.
+- name: Remove superseded sudo timestamp drop-in
+  ansible.builtin.file:
+    path: /etc/sudoers.d/gatherd-sudo-timestamp
+    state: absent
   notify: Etckeeper commit

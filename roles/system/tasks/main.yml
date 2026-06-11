@@ -29,6 +29,15 @@
     state: absent
   failed_when: false
 
+# Superseded by gatherd-polkit-agent (cmd-polkit driving fuzzel); the desktop
+# role swaps the sway autostart over to it. polkit-gnome is explicitly installed
+# by EndeavourOS, required by nothing and in no group, so removal is clean.
+- name: Remove polkit-gnome (replaced by our fuzzel polkit agent)
+  community.general.pacman:
+    name: polkit-gnome
+    state: absent
+  failed_when: false
+
 - name: Install grub-btrfs
   community.general.pacman:
     name: grub-btrfs

@@ -2,51 +2,14 @@
 
 ## Repave workflow
 
-- After each repave, process `~/.config/gatherd-post-setup.md` on the target:
-  fold its VERIFIED items into `section_verify` and turn its ANTI-VERIFIED items
-  into TODO entries here.
+After each repave, process `~/.config/gatherd-post-setup.md` on the target.
 
-## Recently anti-verified on T60
+1. Anything I've removed from the Verify section, remove corresponding item from
+  `scripts/gatherd-post-setup-notes`
+2. Any new notes I've written or any existing Verify entries marked
+   `ANTI-VERIFIED` turn into work items in this file
 
-- Qt theme not dark (QT_QPA_PLATFORMTHEME not set)
-
-## Low-end / constrained machines
-
-The T60 (2GB RAM, spinning rust) is the test rig for the low end — treat anything
-here as "must stay usable on a potato."
-
-# 2026/06/04 Regressions
-
-## Font sizing and general display
-
-- **17" MBP phantom-display fix on the first session** — the grub cmdline fix
-  (`video=LVDS-2:d`) is now pre-seeded by `postinstall` before first boot, so
-  it's live for the very first session instead of only after a gatherd grub
-  rebuild + reboot. zswap rode along the same way (`preseed_grub_cmdline_fixes`);
-  see the "candidates that belong in postinstall" analysis for what else might
-  justify that layer. Still to confirm on the 17" MBP itself: whether it actually
-  needed the fix and now gets it on first login, or whether 7.x kernels behave
-  differently / convergence just needed coaxing.
-
-## Helium (fixed in code; apply manually to already-repaved machines)
-
-- ~~lost "continue where you left off"~~ — fixed: initial_preferences and
-  Default/Preferences seed now use restore_on_startup:5. Manual fix: in
-  Helium settings → On startup → Continue where you left off.
-- ~~Qt appearance not dark~~ — fixed: QT_QPA_PLATFORMTHEME=xdgdesktopportal
-  (Qt 6.7+) reads color-scheme from the XDG settings portal; xdg-desktop-portal-gtk
-  now installed with portals.conf routing Settings→gtk, everything else→wlr
-  (geolocation stays off). Default/Preferences keeps system_theme:2 (Qt).
-  The env var is delivered via `pam_env`, which reaches greetd's sway session.
-- thinks it's managed by my organization -- pre-existing, not a regression
-
-Still open on the T60:
-
-- **Tailscale admin tab on first run?** Expected Helium to open a Tailscale admin
-  tab; only the 1Password tab appeared. Confirm whether that tab is supposed to
-  exist and wire it up, or drop the expectation.
-
------
+## Potential work items
 
 - **chsh to zsh**: make zsh the login shell as part of provisioning.
 - **Install mattwynne/yaks non-interactively**: want it installed without
@@ -355,11 +318,34 @@ Still open on the T60:
 
 ## Setup
 
-- **WiFi reconnect blip on re-run**: gatherd pushes a network config for the SSID
-  you're already connected to, which bounces the connection. Diff the existing vs
-  pushed config — if they're equivalent, make the task idempotent (skip the write,
-  don't trigger a reconnect) so re-running gatherd on the active network doesn't
-  blip it.
+- **`sudo` falls back to seahorse askpass unexpectedly**: running `sudo` in the
+  desktop session tried to use `/usr/lib/seahorse/ssh-askpass` instead of the
+  intended askpass helper (fuzzel). Find what sets `SUDO_ASKPASS` or the sudo
+  `askpass` config to seahorse — likely an EndeavourOS default in
+  `/etc/profile.d/`, `pam_env`, or a sudo drop-in — and either remove it or
+  have gatherd override it so sudo's password prompt goes through fuzzel like
+  the vault and PIA prompts do.
+
+- **`gatherd-show-slow-progress` should tail in-place**: when invoked from inside
+  an existing terminal, the script currently opens a new terminal window instead of
+  just tailing the log in that terminal. Make it detect it already has a TTY and
+  tail the log directly, opening a new terminal only when there is none.
+
+- **WiFi reconnect blip on first vault run**: `site-vault.yml` writes
+  `.nmconnection` files via `ansible.builtin.copy` with exact content. On first
+  run, two differences from the Calamares-written file cause a blip:
+  (1) UUID: Calamares generates a random UUID; Ansible's `to_uuid` filter
+  produces a different deterministic one. NM identifies connections by UUID, so
+  it sees the old connection disappear and a new one appear on
+  `nmcli connection reload` — dropping and reconnecting the active link.
+  (2) `interface-name=wlan0` removed, `autoconnect=true` added (Calamares pins
+  to device; Ansible doesn't). After the first vault run the file is stable —
+  NM does not write `timestamp=` back into the keyfile — so subsequent runs are
+  already idempotent.
+  Fix: switch to `community.general.nmcli`, which manages connections via the NM
+  D-Bus API and identifies them by name, not UUID. It would see Calamares'
+  existing connection, compare SSID/PSK/method, find them already correct, and
+  report `ok` — no reload, no blip. Also handles future PSK changes correctly.
 - **Snapshots**: find CLI equivalent to Welcome-app GUI for Timeshift initial
   config. Decide snapper vs. Timeshift (snapper + pacman hooks?).
 - **Swap for hibernate**: size swap partition appropriately; Chromebook may differ.

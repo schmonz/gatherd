@@ -82,6 +82,11 @@ module names.
 - Handlers: trigger reboots and other post-change actions (e.g. `grub-mkconfig`)
 - Slow tasks (long downloads, big compiles): in `roles/<role>/tasks/slow.yml`,
   included by `site-async.yml` so they run after login is available
+- Session environment variables (`PATH`, `SUDO_ASKPASS`, `SSH_ASKPASS`, Qt theme,
+  etc.): set them via `pam_env` (`/etc/security/pam_env.conf`), never `environment.d`.
+  greetd launches sway with no login shell and does not source `environment.d`, so
+  variables put there silently never reach the session. pam_env runs in greetd's
+  PAM stack and is the proven delivery mechanism. See `roles/system/tasks/user_path.yml`.
 
 **Idempotency.** Ansible gives this for free with most modules — lean on it.
 For `command`/`shell` tasks, use `creates:`, `changed_when:`, or explicit checks.

@@ -16,9 +16,13 @@
       GOBIN   DEFAULT=@{HOME}/.local/bin
       # Qt 6.7+ follows system light/dark from the XDG settings portal when set.
       QT_QPA_PLATFORMTHEME    DEFAULT=xdgdesktopportal
-      # sudo -A graphical password prompt (fuzzel-based). environment.d is a black
-      # hole in greetd's sway session; pam_env is the proven delivery mechanism.
-      SUDO_ASKPASS    DEFAULT=@{HOME}/.local/bin/gatherd-askpass
+      # Graphical (no-terminal) password prompts for sudo and ssh go through the
+      # same fuzzel helper, killing seahorse's ssh-askpass. environment.d is a
+      # black hole in greetd's sway session; pam_env is the proven delivery
+      # mechanism. SSH_ASKPASS_REQUIRE is left unset so a terminal ssh still
+      # prompts on the tty; only no-tty invocations reach for fuzzel.
+      SUDO_ASKPASS    DEFAULT=/usr/local/bin/gatherd-askpass
+      SSH_ASKPASS     DEFAULT=/usr/local/bin/gatherd-askpass
     marker: "# {mark} ANSIBLE MANAGED BLOCK: gatherd user env"
   notify: Etckeeper commit
 

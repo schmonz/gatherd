@@ -318,14 +318,6 @@ After each repave, process `~/.config/gatherd-post-setup.md` on the target.
 
 ## Setup
 
-- **`sudo` falls back to seahorse askpass unexpectedly**: running `sudo` in the
-  desktop session tried to use `/usr/lib/seahorse/ssh-askpass` instead of the
-  intended askpass helper (fuzzel). Find what sets `SUDO_ASKPASS` or the sudo
-  `askpass` config to seahorse — likely an EndeavourOS default in
-  `/etc/profile.d/`, `pam_env`, or a sudo drop-in — and either remove it or
-  have gatherd override it so sudo's password prompt goes through fuzzel like
-  the vault and PIA prompts do.
-
 - **WiFi reconnect blip on first vault run**: `site-vault.yml` writes
   `.nmconnection` files via `ansible.builtin.copy` with exact content. On first
   run, two differences from the Calamares-written file cause a blip:

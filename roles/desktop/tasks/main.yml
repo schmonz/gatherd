@@ -32,12 +32,13 @@
   register: _darkmode
   changed_when: "'changed' in _darkmode.stdout"
 
-- name: Install gatherd-askpass script
-  ansible.builtin.copy:
-    src: "{{ setup_dir }}/scripts/gatherd-askpass"
-    dest: "{{ target_home }}/.local/bin/gatherd-askpass"
-    mode: '0755'
-    remote_src: true
+# gatherd-askpass now lives only at /usr/local/bin (installed by the system role,
+# referenced by sudo.conf, SUDO_ASKPASS, and SSH_ASKPASS). Drop the old per-user
+# copy so there is a single source of truth.
+- name: Remove obsolete per-user gatherd-askpass
+  ansible.builtin.file:
+    path: "{{ target_home }}/.local/bin/gatherd-askpass"
+    state: absent
 
 - name: Remove obsolete environment.d askpass file
   ansible.builtin.file:

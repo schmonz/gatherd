@@ -189,6 +189,9 @@
 - name: Configure user-session environment
   ansible.builtin.include_tasks: user_path.yml
 
+- name: Configure sudo's askpass and shared credential cache
+  ansible.builtin.include_tasks: sudo.yml
+
 - name: Create /etc/1password directory
   ansible.builtin.file:
     path: /etc/1password

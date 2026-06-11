@@ -1,0 +1,41 @@
+---
+# A graphical `sudo` (launched from a sway keybinding or app, with no controlling
+# terminal) reads its password through an askpass helper. SUDO_ASKPASS in the
+# environment normally points sudo at fuzzel, but that variable is only present
+# in processes that inherited the pam_env login environment; anything started
+# outside that chain falls through to /etc/sudo.conf's `Path askpass`, which on
+# EndeavourOS can resolve to seahorse's ssh-askpass. Pinning the line here makes
+# the fuzzel prompt the environment-independent default and overrides seahorse.
+
+- name: Install gatherd-askpass for graphical sudo and ssh
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-askpass"
+    dest: /usr/local/bin/gatherd-askpass
+    mode: '0755'
+    remote_src: true
+
+- name: Point sudo's no-terminal askpass at fuzzel, not seahorse
+  # Match only an active (uncommented) Path askpass line, so the stock commented
+  # examples stay intact and ours is appended; a seahorse line, if EndeavourOS
+  # ships one, is rewritten in place instead of leaving two competing entries.
+  # /etc/sudo.conf is a pacman backup file, so a sudo upgrade lands a .pacnew
+  # rather than clobbering this line.
+  ansible.builtin.lineinfile:
+    path: /etc/sudo.conf
+    regexp: '^\s*Path\s+askpass\s'
+    line: Path askpass /usr/local/bin/gatherd-askpass
+  notify: Etckeeper commit
+
+# Share one credential cache across all of the user's processes instead of
+# caching per-TTY, so an agent (or anything) shelling out to sudo repeatedly
+# authenticates once. timestamp_timeout caps the shared window as a modest
+# security tradeoff. validate keeps a malformed drop-in from ever breaking sudo.
+- name: Share sudo's credential cache across the user's processes
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/gatherd-sudo-timestamp
+    content: |
+      Defaults:{{ target_user }} timestamp_type=global
+      Defaults:{{ target_user }} timestamp_timeout=2
+    mode: '0440'
+    validate: visudo -cf %s
+  notify: Etckeeper commit

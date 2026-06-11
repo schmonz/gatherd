@@ -18,10 +18,13 @@ if [ -z "${GATHERD_SLOW_PROGRESS_TERM:-}" ]; then
     # 'activating', which is why opening the terminal unconditionally flashed.)
     systemctl is-active --quiet gatherd-async.service || exit 0
 
-    # Decision made — only now open the terminal, and keep it open (it shows a
-    # result and waits for Enter) rather than letting it vanish if the run
-    # happens to finish in the same instant.
-    exec foot -e env GATHERD_SLOW_PROGRESS_TERM=1 "$0"
+    # Decision made: if already in a terminal, just display here; otherwise open
+    # a new foot window.  Keep it open (waits for Enter) so it doesn't vanish.
+    if [ -t 1 ]; then
+        export GATHERD_SLOW_PROGRESS_TERM=1
+    else
+        exec foot -e env GATHERD_SLOW_PROGRESS_TERM=1 "$0"
+    fi
 fi
 
 printf '\033]0;Package Installation\007'

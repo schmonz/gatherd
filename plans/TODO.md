@@ -326,11 +326,6 @@ After each repave, process `~/.config/gatherd-post-setup.md` on the target.
   have gatherd override it so sudo's password prompt goes through fuzzel like
   the vault and PIA prompts do.
 
-- **`gatherd-show-slow-progress` should tail in-place**: when invoked from inside
-  an existing terminal, the script currently opens a new terminal window instead of
-  just tailing the log in that terminal. Make it detect it already has a TTY and
-  tail the log directly, opening a new terminal only when there is none.
-
 - **WiFi reconnect blip on first vault run**: `site-vault.yml` writes
   `.nmconnection` files via `ansible.builtin.copy` with exact content. On first
   run, two differences from the Calamares-written file cause a blip:

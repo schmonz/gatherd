@@ -243,6 +243,27 @@
     validate: visudo -cf %s
   notify: Etckeeper commit
 
+# postinstall ranks mirrors once at install, then the list is frozen until the
+# next repave. A pacman-mirrorlist upgrade is the cue that the upstream set
+# shifted, so re-rank then. A pacman hook (not a systemd timer) keeps this
+# init-agnostic for the Artix/s6 target. See scripts/gatherd-rerank-mirrors.
+- name: Re-rank mirrors when the pacman-mirrorlist package updates
+  ansible.builtin.copy:
+    dest: /etc/pacman.d/hooks/gatherd-rerank-mirrors.hook
+    content: |
+      [Trigger]
+      Operation = Upgrade
+      Type = Package
+      Target = pacman-mirrorlist
+
+      [Action]
+      Description = Re-ranking pacman mirrors with rate-mirrors...
+      When = PostTransaction
+      Depends = rate-mirrors
+      Exec = /usr/local/lib/gatherd/scripts/gatherd-rerank-mirrors
+    mode: '0644'
+  notify: Etckeeper commit
+
 - name: Flush handlers
   ansible.builtin.meta: flush_handlers
 

@@ -1,0 +1,25 @@
+#!/bin/sh
+# Re-rank pacman mirrors with rate-mirrors. Invoked by a pacman PostTransaction
+# hook when the pacman-mirrorlist package updates — the moment the upstream
+# mirror set has shifted, which is a good time to refresh the ranking we froze
+# at install (postinstall) and evict any decommissioned mirror. rate-mirrors
+# pulls the current set live from Arch's mirror-status API, so we never merge the
+# package's stock list; we regenerate ours and drop the now-moot .pacnew. On
+# failure the existing mirrorlist is left untouched (and the .pacnew kept, to
+# handle by hand) rather than risk a broken pacman.
+set -eu
+
+flavor=arch
+[ "$(uname -m)" = aarch64 ] && flavor=archarm
+
+# Stage in the same directory so the final swap is an atomic rename — a failed or
+# interrupted rate-mirrors run never leaves pacman with a truncated mirrorlist.
+tmp=$(mktemp /etc/pacman.d/mirrorlist.XXXXXX)
+if rate-mirrors --per-mirror-timeout 1500 "$flavor" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    chmod 0644 "$tmp"
+    mv -f "$tmp" /etc/pacman.d/mirrorlist
+    rm -f /etc/pacman.d/mirrorlist.pacnew
+else
+    rm -f "$tmp"
+    echo "gatherd-rerank-mirrors: rate-mirrors failed; kept existing mirrorlist" >&2
+fi

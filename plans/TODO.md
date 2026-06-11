@@ -352,12 +352,6 @@ Still open on the T60:
 
 ## Setup
 
-- **pacman-mirrorlist .pacnew handling**: when the `pacman-mirrorlist` package ships
-  a new `/etc/pacman.d/mirrorlist.pacnew`, decide whether anything should merge into
-  our rate-mirrors-generated mirrorlist. We overwrite the mirrorlist with a
-  rate-mirrors ranking, so the stock list is normally irrelevant — but newly added
-  or removed upstream mirrors, or format changes, might matter. Determine whether to
-  ignore the .pacnew, periodically re-rank, or diff it for newly added mirrors.
 - **WiFi reconnect blip on re-run**: gatherd pushes a network config for the SSID
   you're already connected to, which bounces the connection. Diff the existing vs
   pushed config — if they're equivalent, make the task idempotent (skip the write,

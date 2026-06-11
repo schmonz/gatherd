@@ -69,11 +69,14 @@ Still open on the T60:
   the default browser — small footprint, fast launch, no profile/session baggage,
   and it keeps the portal's (often sketchy) login page out of the main browser
   profile. Confirm it renders typical captive portals well enough to authenticate.
-- **Netsurf preferences**: seed `~/.config/netsurf/Choices` so Netsurf comes up
-  configured — DuckDuckGo as the search provider, "search from URL bar" enabled,
-  dark mode, toolbar buttons set to small icons. Find the exact Choices keys (set
-  each in the GUI, then diff `Choices`) and template them via the dotfiles/desktop
-  role. Decide what else is worth setting while in there.
+- **Netsurf dark mode (blocked on package version)**: the search provider
+  (DuckDuckGo), search-from-URL-bar, and small toolbar icons are now seeded into
+  `~/.config/netsurf/Choices` by the desktop role. Dark mode is *not* — the
+  "prefer dark mode" core option was merged upstream after the 3.11 release and is
+  absent from the installed `netsurf-gtk3` 3.11 (the binary has no dark/scheme
+  option key, only CSS color names). Revisit when the package advances past 3.11:
+  find the new Choices key (grep the upgraded binary for a dark/scheme option) and
+  add it to the same loop. Also decide what else is worth seeding while in there.
 - need an email app. remember I'm the guy that loved MacSOUP. Also gonna want
   to preconfigure it with (explicitly hardwired for now) servers, other settings
 

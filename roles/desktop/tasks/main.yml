@@ -7,6 +7,7 @@
   loop:
     - .local/bin
     - .config/arch-update
+    - .config/netsurf
     - .config/systemd/user/timers.target.wants
     - .config/gtklock
     - .config/sway/config.d
@@ -307,6 +308,27 @@
     path: "{{ target_home }}/.config/foot/foot.ini"
     regexp: '^#?\s*launch=xdg-open \$\{url\}$'
     line: "launch=xdg-open ${url}"
+
+- name: Configure NetSurf preferences
+  # NetSurf rewrites Choices wholesale on exit, so seed only the keys we care
+  # about per-line rather than templating the file — that way neither a playbook
+  # re-run nor NetSurf itself clobbers prefs added later. search_provider:18 is
+  # DuckDuckGo on this build's SearchEngines list; search_url_bar:1 searches from
+  # the URL bar; button_type:1 is small toolbar icons. (A "prefer dark mode"
+  # option exists only post-3.11 upstream — absent from the installed
+  # netsurf-gtk3 3.11 — so it is intentionally not set here yet.)
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/netsurf/Choices"
+    regexp: "^{{ item.opt }}:"
+    line: "{{ item.opt }}:{{ item.val }}"
+    create: true
+    mode: '0644'
+  loop:
+    - { opt: search_provider, val: 18 }
+    - { opt: search_url_bar, val: 1 }
+    - { opt: button_type, val: 1 }
+  loop_control:
+    label: "{{ item.opt }}"
 
 - name: Replace sway default browser with xdg-open
   ansible.builtin.replace:

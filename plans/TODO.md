@@ -276,6 +276,16 @@ After each repave, process `~/.config/gatherd-post-setup.md` on the target.
 - **ThinkPad docking**: investigate `dockd` or udev rules for dock/undock events
   (display reconfiguration, power profile switch).
 
+- **IR receiver not detected on the T60**: `machine_facts` finds no `/dev/lirc*`
+  or `/sys/class/rc/rc*`, so `has_ir_receiver` stays false and the IR tasks and
+  verify steps are skipped. Unclear whether the T60 simply lacks a receiver or
+  it's disabled by a hardware/software kill switch or a missing kernel module.
+  Probe a live T60: `dmesg | grep -iE 'rc_core|lirc|cir|ir-|infrared'`,
+  `rfkill list`, BIOS settings, and whether modprobing the CIR/`rc_core` driver
+  surfaces a device. If the T60 has no usable receiver, drop it as the "e.g.
+  T60" example in the IR verify steps; if it just needs a module loaded, add it
+  to the hardware role gated on the machine.
+
 ## Multi-display
 
 - **Detection**: probe connected outputs, set a fact (e.g. `has_multiple_displays`) so tasks can condition on it
@@ -313,6 +323,14 @@ After each repave, process `~/.config/gatherd-post-setup.md` on the target.
   personal or system default wins and manage accordingly.
 - **More systray or waybar indicators**: LLM token usage and
   notifications. What else?
+- **1Password GUI quits when opening its first-run window (T60)**: the systray
+  icon appears, but a left-click or the tray context-menu's "open" makes the
+  1Password app exit instead of showing the unlock/first-run window. Reproduce on
+  the T60: launch `1password` from a terminal and read the stderr/exit code. Old
+  hardware suggests a GPU/EGL angle — try `1password --disable-gpu` (or the
+  Electron software-rendering flags) and check for a missing keyring/secret-store
+  dependency. If a flag fixes it, bake it into how we launch/configure 1Password
+  on GPU-poor machines.
 
 ## Setup
 
@@ -336,6 +354,19 @@ After each repave, process `~/.config/gatherd-post-setup.md` on the target.
 - **Swap for hibernate**: size swap partition appropriately; Chromebook may differ.
 - **TI calculator AUR packages**: create AUR packages for TI calculator backup
   programs; install here once they exist.
+- **Chromebook 100e: `postinstall` timed out (exit 28), failing the Calamares
+  install**: confirmed from the install log — `main()` runs
+  `setup_sway_community_edition` first, whose bare
+  `curl -fsSL .../setup_sway_isomode.bash | bash` (no
+  `--connect-timeout`/`--max-time`/`--retry`) hung on the connect phase and
+  failed with `curl: (28) Connection timed out after 300609 milliseconds`; with
+  `set -euo pipefail` that one fetch aborted the whole install ("Failed to run
+  script"). The 100e's install-time network was genuinely flaky — the same log
+  shows pacman mirror downloads (intel-ucode, vulkan-intel, libavtp) timing out
+  at 10s repeatedly. Fix: give our curl a short `--connect-timeout` plus
+  `--retry`/`--retry-all-errors` (and a `--max-time`) so a transient blip
+  retries instead of one ~300s hang turning fatal; consider which postinstall
+  steps may fail soft vs. must succeed. Re-test on the 100e.
 
 ## Portability
 

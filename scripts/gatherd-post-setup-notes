@@ -225,9 +225,7 @@ section_verify() {
     li 'WiFi no-blip on re-run: while connected to a managed WiFi network, trigger a gatherd re-run and confirm the connection stays up throughout — no disconnect, reconnect notification, or IP change. The network task should report `ok`, not `changed`, when the pushed config matches what NetworkManager already has.'
     li 'Early GRUB cmdline pre-seed (first-session usability): zswap is baked into /etc/default/grub by `postinstall` before the first boot, not applied later by gatherd. Confirm live in the running kernel from first boot on a sub-8GB machine: `cat /sys/module/zswap/parameters/enabled` is `Y` and `grep -o zswap.enabled=1 /proc/cmdline` is present.'
     li 'HiDPI scaling (HiDPI-panel machines only): run `swaymsg -t get_outputs | grep scale` — expect `"scale": 2`. Run `grep scale ~/.config/sway/config.d/outputs` — expect `output * scale 2`. Fonts in foot, waybar, and text apps should look appropriately sized for the screen, not enormous.'
-    li 'IR receiver (machines with an IR receiver, e.g. T60): run `ls /dev/lirc* /sys/class/rc/rc* 2>/dev/null` — should show at least one device'
-    li 'IR receiver: run `ir-keytable` — confirm device listed with a keymap loaded'
-    li 'IR receiver: run `ir-keytable -t -s rc0` and press remote buttons — should show scancode + keycode per press'
+    li 'IR receiver (machines with an IR receiver): `ls /dev/lirc* /sys/class/rc/rc* 2>/dev/null` shows at least one device; `ir-keytable` lists the device with a keymap loaded; and `ir-keytable -t -s rc0` while pressing remote buttons shows a scancode + keycode per press.'
 }
 
 # ---------------------------------------------------------------------------

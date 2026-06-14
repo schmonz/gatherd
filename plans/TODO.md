@@ -11,6 +11,7 @@ After each repave, process `~/.config/gatherd-post-setup.md` on the target.
 
 ## Potential work items
 
+- **Pre-configure more known WiFi networks**: Review other machines and add SSID/PSK pairs to the vault
 - **chsh to zsh**: make zsh the login shell as part of provisioning.
 - **Install mattwynne/yaks non-interactively**: want it installed without
   `curl | bash` and without interactive prompts. Find/derive a scriptable install

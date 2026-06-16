@@ -90,18 +90,26 @@
     marker: "# {mark} ANSIBLE MANAGED BLOCK: swayidle"
 
 # Replace EndeavourOS's polkit-gnome (its own GTK dialog) with our cmd-polkit
-# agent, so polkit password prompts come up in fuzzel like sudo/ssh/vault.
-- name: Point the polkit agent autostart at gatherd-polkit-agent
+# agent, so polkit password prompts come up in fuzzel like sudo/ssh/vault. Our
+# agent is launched by gatherd-session-helpers (the session-supervisor cohort),
+# NOT a standalone sway autostart exec: as a cohort child it shares the
+# supervisor's process group, so it is reaped on logout like the other helpers
+# and is skipped by the supervisor's stale-orphan sweep — a standalone exec sat
+# in its own process group and the sweep SIGKILL'd it every login. So here we
+# only strip EndeavourOS's polkit-gnome agent; the standalone gatherd-polkit-agent
+# line that older gatherd versions added is removed by the supervisor cleanup
+# loop below.
+- name: Remove EndeavourOS's polkit-gnome agent from sway autostart
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
     regexp: '^exec .*polkit-gnome-authentication-agent'
-    line: "exec {{ target_home }}/.local/bin/gatherd-polkit-agent"
+    state: absent
 
-- name: Fix the polkit autostart comment
+- name: Remove the now-orphaned polkit autostart comment
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
     regexp: '^# Auth with polkit'
-    line: "# Auth with polkit (fuzzel via gatherd-polkit-agent):"
+    state: absent
 
 - name: Add XF86PowerOff binding to sway config
   ansible.builtin.lineinfile:
@@ -903,6 +911,7 @@
     - '^exec conky$'
     - '^exec (?:.*/)?gatherd-prompt-(captiveportal|1password|tailscale|postsetup|vault|pia)$'
     - '^exec .*gatherd-systray '
+    - '^exec (?:.*/)?gatherd-polkit-agent$'
 
 - name: Add the session-helper supervisor autostart entry
   ansible.builtin.lineinfile:

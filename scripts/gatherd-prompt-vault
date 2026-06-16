@@ -2,5 +2,5 @@
 test -f /etc/gatherd/vault-complete && exit 0
 test -f /etc/gatherd/complete || exit 0
 
-vault_pass=$("${SUDO_ASKPASS:-/usr/local/bin/gatherd-askpass}" "Vault password:") || exit 0
+vault_pass=$("${SUDO_ASKPASS:-/usr/local/bin/gatherd-askpass}" "[vault]") || exit 0
 printf '%s' "$vault_pass" | sudo -n /usr/local/lib/gatherd/scripts/gatherd-write-vault-pass

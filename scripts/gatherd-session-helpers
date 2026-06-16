@@ -51,7 +51,15 @@ run() { sh -c "$1" & }
 # logins. Skip ourselves and our own setsid launcher by name.
 for _pid in $(pgrep -f "$bin/gatherd-" 2>/dev/null); do
     case "$(ps -o args= -p "$_pid" 2>/dev/null)" in
-        *gatherd-session-helpers*) continue ;;
+        # Also skip gatherd-show-slow-progress: it is a current-session sibling
+        # sway `exec` (not a cohort child, so in its own process group), and its
+        # `foot` wrapper's cmdline matches the glob above — without this skip the
+        # sweep SIGKILLs the live progress window. It self-terminates once
+        # async-complete exists, so a prior session never leaves a stale one.
+        # polkit-agent needs no skip: it is a cohort child (below), in our own
+        # process group, so the `!= $$` test already spares the live one — while a
+        # genuinely leaked one from a prior session still gets swept, as intended.
+        *gatherd-session-helpers* | *gatherd-show-slow-progress*) continue ;;
     esac
     _pgid=$(ps -o pgid= -p "$_pid" 2>/dev/null | tr -d ' ')
     [ -n "$_pgid" ] && [ "$_pgid" != "$$" ] && kill -KILL -- "-$_pgid" 2>/dev/null
@@ -60,6 +68,13 @@ done
 # The cohort: long-running session helpers gatherd autostarts. One-shots and
 # things with their own lifecycle (swayidle, gatherd-show-slow-progress) stay as
 # plain sway `exec` lines and are intentionally not listed here.
+# The polkit agent belongs here, not as a standalone sway `exec`: launched as a
+# cohort child it shares our process group, so the stale-orphan sweep above
+# spares it and we reap it on logout — a standalone exec sat in its own group and
+# the sweep SIGKILL'd the fresh agent every login (its `cmd-polkit-agent -c
+# .../gatherd-polkit-agent` cmdline matches the gatherd- glob). Launch it first so
+# it is registered before anything can trigger a polkit prompt.
+run "$bin/gatherd-polkit-agent"
 # xdg-desktop-portal's systemd unit has Requisite=graphical-session.target, which
 # we don't activate (init-agnostic design). Start it directly so the Requisite
 # check is bypassed; the backends (xdg-desktop-portal-gtk for Qt Settings/dark mode)

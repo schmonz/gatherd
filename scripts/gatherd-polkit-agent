@@ -4,7 +4,7 @@
 # speaks a tiny JSON protocol over stdio to a handler command. This script is both
 # the launcher and — re-invoked with --handle — that handler, so the whole agent
 # is one file. The password prompt reuses gatherd-askpass, so a polkit request
-# looks exactly like the sudo/ssh/vault fuzzel prompts and is tagged "polkit".
+# looks exactly like the sudo/ssh/vault fuzzel prompts and is tagged "[polkit]".
 
 # Overridable only so the handler can be exercised with a stub prompt in tests.
 askpass="${GATHERD_ASKPASS:-/usr/local/bin/gatherd-askpass}"
@@ -15,7 +15,7 @@ if [ "$1" = "--handle" ]; then
     # are ignored. We reply with the password or, on Escape, a cancel.
     while IFS= read -r msg; do
         [ "$(printf '%s' "$msg" | jq -r '.action')" = "request password" ] || continue
-        if password=$("$askpass" "polkit"); then
+        if password=$("$askpass" "[polkit]"); then
             # jq -Rs JSON-encodes the raw password, preserving any character that
             # naive quoting would mangle; printf avoids appending a newline to it.
             printf '%s' "$password" | jq -Rs '{action:"authenticate",password:.}'

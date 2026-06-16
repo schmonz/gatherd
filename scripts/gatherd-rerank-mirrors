@@ -12,10 +12,27 @@ set -eu
 flavor=arch
 [ "$(uname -m)" = aarch64 ] && flavor=archarm
 
+# rate-mirrors refuses to run as root ("do not run rate-mirrors with root
+# permissions"), yet the pacman hook — and a manual `sudo gatherd-rerank-mirrors`
+# — always invoke us as root, so a direct call always failed and silently kept
+# the stale list. Drop to `nobody`: rate-mirrors only needs to be unprivileged,
+# not any particular user, and nobody needs no home/cache (this hook wants a
+# fresh fetch against the shifted upstream set anyway). The redirect below is
+# opened by this root process, so the child writing the inherited fd still lands
+# in our root-owned temp. (postinstall uses the real target user instead, since
+# its first ranking runs while provisioning that user's machine.)
+rank_mirrors() {
+    if [ "$(id -u)" -eq 0 ]; then
+        runuser -u nobody -- rate-mirrors --per-mirror-timeout 1500 "$flavor"
+    else
+        rate-mirrors --per-mirror-timeout 1500 "$flavor"
+    fi
+}
+
 # Stage in the same directory so the final swap is an atomic rename — a failed or
 # interrupted rate-mirrors run never leaves pacman with a truncated mirrorlist.
 tmp=$(mktemp /etc/pacman.d/mirrorlist.XXXXXX)
-if rate-mirrors --per-mirror-timeout 1500 "$flavor" > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+if rank_mirrors > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
     chmod 0644 "$tmp"
     mv -f "$tmp" /etc/pacman.d/mirrorlist
     rm -f /etc/pacman.d/mirrorlist.pacnew

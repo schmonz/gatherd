@@ -1,14 +1,5 @@
 # TODO
 
-## Repave workflow
-
-After each repave, process `~/.config/gatherd-post-setup.md` on the target.
-
-1. Anything I've removed from the Verify section, remove corresponding item from
-  `scripts/gatherd-post-setup-notes`
-2. Any new notes I've written or any existing Verify entries marked
-   `ANTI-VERIFIED` turn into work items in this file
-
 ## Potential work items
 
 - **Pre-configure more known WiFi networks**: Review other machines and add SSID/PSK pairs to the vault
@@ -335,21 +326,6 @@ After each repave, process `~/.config/gatherd-post-setup.md` on the target.
 
 ## Setup
 
-- **WiFi reconnect blip on first vault run**: `site-vault.yml` writes
-  `.nmconnection` files via `ansible.builtin.copy` with exact content. On first
-  run, two differences from the Calamares-written file cause a blip:
-  (1) UUID: Calamares generates a random UUID; Ansible's `to_uuid` filter
-  produces a different deterministic one. NM identifies connections by UUID, so
-  it sees the old connection disappear and a new one appear on
-  `nmcli connection reload` — dropping and reconnecting the active link.
-  (2) `interface-name=wlan0` removed, `autoconnect=true` added (Calamares pins
-  to device; Ansible doesn't). After the first vault run the file is stable —
-  NM does not write `timestamp=` back into the keyfile — so subsequent runs are
-  already idempotent.
-  Fix: switch to `community.general.nmcli`, which manages connections via the NM
-  D-Bus API and identifies them by name, not UUID. It would see Calamares'
-  existing connection, compare SSID/PSK/method, find them already correct, and
-  report `ok` — no reload, no blip. Also handles future PSK changes correctly.
 - **Snapshots**: find CLI equivalent to Welcome-app GUI for Timeshift initial
   config. Decide snapper vs. Timeshift (snapper + pacman hooks?).
 - **Swap for hibernate**: size swap partition appropriately; Chromebook may differ.
@@ -373,6 +349,15 @@ After each repave, process `~/.config/gatherd-post-setup.md` on the target.
 
 - **arch-update timer**: currently a systemd user timer; will need a different
   mechanism on Artix/s6.
+- **gatherd-show-slow-progress display loop is systemd-coupled**: the gating is
+  now init-agnostic (sentinel file only), but the *display* half still calls
+  `journalctl -fn 50 -u gatherd-async.service` to tail and `systemctl is-failed`
+  to break on failure. When the async runner moves off systemd (s6, or Sway
+  launching it directly), replace these: have `gatherd-await-and-run` tee its
+  output to a logfile (e.g. `/var/log/gatherd-async.log`) for the progress
+  script to `tail -f`, and write an `async-failed` sentinel on non-zero exit so
+  the loop can break without `systemctl`. The runner currently `exec`s
+  ansible-playbook, so a failure sentinel needs a trap (drop the final `exec`).
 
 ## Configurability
 

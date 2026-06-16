@@ -4,4 +4,62 @@
 # box — fuzzel is already our launcher/prompt tool. --prompt-only skips the
 # stdin wait and the (empty) match list, so it behaves as a plain entry that
 # echoes the typed text on Enter and exits non-zero on Escape.
-exec fuzzel --dmenu --password --prompt-only "${1:-Password:} "
+
+prompt="${1:-Password:}"
+
+# ssh's first-contact (TOFU) host-key check reaches an askpass too, but it is a
+# multi-line security decision, not a password: ".. ED25519 key fingerprint is
+# SHA256:.. Are you sure you want to continue connecting (yes/no/[fingerprint])?".
+# fuzzel's one-line masked entry truncates the fingerprint and hides the typed
+# "yes", which is useless and alarming for the one prompt where reading the key
+# actually matters. Route confirmations to a real terminal instead, where the
+# whole prompt is legible. Only the host-key prompt contains "(yes/no"; every
+# password/passphrase/polkit/vault prompt does not, so the match is exact.
+#
+# OpenSSH shows confirmations with RP_ECHO (unmasked) and takes the answer —
+# yes/no or the fingerprint — from this program's stdout, treating a non-zero
+# exit or empty output as "abort". So we echo whatever the user types and exit
+# non-zero if they close the window without answering.
+case "$prompt" in
+*'(yes/no'*)
+    answer=$(mktemp)
+    # foot -e blocks until the inner shell exits (same pattern as
+    # gatherd-show-slow-progress); the shell prints the full prompt, reads the
+    # reply, and stashes it for us. Positional args avoid interpolating the
+    # untrusted prompt text into the script body.
+    # Per-invocation --override styling (the user's foot config is untouched):
+    # mirror fuzzel's palette and font — dark-indigo background, near-white text,
+    # salmon accent, JetBrains Mono — and reuse its "❯" prompt glyph, so this
+    # window reads as part of the same askpass family as the fuzzel password box,
+    # just rendered in a terminal because the fingerprint needs room to be read.
+    # Colors match ~/.config/fuzzel/fuzzel.ini (alpha dd ≈ 0.87; foot wants RGB).
+    # Set both colors-dark and colors-light to the same values: fuzzel does not
+    # switch with darkman, so this window shouldn't either. (Plain [colors] is
+    # deprecated in foot 1.27.)
+    foot \
+        --app-id 'gatherd-hostkey-verify' \
+        --title 'SSH host key verification' \
+        --override 'main.font=JetBrains Mono:size=10' \
+        --override colors-dark.alpha=0.87 \
+        --override colors-dark.background=08052b \
+        --override colors-dark.foreground=e3e3ea \
+        --override colors-light.alpha=0.87 \
+        --override colors-light.background=08052b \
+        --override colors-light.foreground=e3e3ea \
+        --override main.pad=30x18 \
+        -e sh -c '
+        printf "\033[1;38;2;255;127;127mSSH host key verification\033[0m\n\n"
+        printf "%s\n\n" "$1"
+        printf "\033[38;2;255;127;127m❯\033[0m  Type yes, no, or the fingerprint, then press Enter: "
+        read -r reply
+        printf "%s" "$reply" > "$2"
+    ' sh "$prompt" "$answer"
+    reply=$(cat "$answer")
+    rm -f "$answer"
+    [ -n "$reply" ] || exit 1
+    printf '%s\n' "$reply"
+    exit 0
+    ;;
+esac
+
+exec fuzzel --dmenu --password --prompt-only "$prompt "

@@ -25,10 +25,6 @@
     - vault/vault.yml
 
   handlers:
-    - name: Reload NetworkManager connections
-      ansible.builtin.command: nmcli connection reload
-      changed_when: false
-
     - name: Etckeeper commit
       ansible.builtin.command: "etckeeper commit -m 'Ansible: converge vault-protected configuration.'"
       changed_when: false

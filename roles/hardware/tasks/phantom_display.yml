@@ -6,9 +6,10 @@
 # the applier for machines that pull the fix after install, and is a no-op when
 # postinstall already added it (the negative-lookahead guard).
 - name: Disable phantom LVDS-2 display in GRUB
+  # Quote-agnostic (see zswap.yml): keep whichever quote style Calamares wrote.
   ansible.builtin.replace:
     path: /etc/default/grub
-    regexp: '^(GRUB_CMDLINE_LINUX="(?!.*video=LVDS-2:d).*)(")\s*$'
+    regexp: '^(GRUB_CMDLINE_LINUX=(["''])(?!.*video=LVDS-2:d).*)\2\s*$'
     replace: '\1 video=LVDS-2:d\2'
   notify: Rebuild grub
   when: has_grub

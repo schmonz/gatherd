@@ -1,36 +1,33 @@
 ---
+# Manage connections through NetworkManager's D-Bus API (by name), not by writing
+# keyfiles ourselves. Writing a keyfile gave each profile an Ansible-generated
+# UUID that differed from the one Calamares wrote, so `nmcli connection reload`
+# saw the active connection disappear and reappear and dropped the live WiFi link
+# on the first run. nmcli compares the existing connection in place: if SSID, PSK,
+# and method already match it reports ok and touches nothing — no reload, no blip.
 - name: Pre-configure known WiFi networks
-  ansible.builtin.copy:
-    dest: "/etc/NetworkManager/system-connections/{{ item.ssid }}.nmconnection"
-    mode: '0600'
-    content: |
-      [connection]
-      id={{ item.ssid }}
-      uuid={{ item.ssid | to_uuid }}
-      type=wifi
-      autoconnect=true
-
-      [wifi]
-      mode=infrastructure
-      ssid={{ item.ssid }}
-
-      [wifi-security]
-      auth-alg=open
-      key-mgmt=wpa-psk
-      psk={{ item.psk }}
-
-      [ipv4]
-      method=auto
-
-      [ipv6]
-      addr-gen-mode=default
-      method=auto
-
-      [proxy]
+  community.general.nmcli:
+    type: wifi
+    conn_name: "{{ item.ssid }}"
+    # Interface-independent so the profile roams across WiFi devices; a bare
+    # create would otherwise pin connection.interface-name to the SSID.
+    ifname: '*'
+    ssid: "{{ item.ssid }}"
+    autoconnect: true
+    wifi_sec:
+      key-mgmt: wpa-psk
+      psk: "{{ item.psk }}"
+    method4: auto
+    method6: auto
+    state: present
   loop: "{{ wifi_networks }}"
-  notify:
-    - Reload NetworkManager connections
-    - Etckeeper commit
+  loop_control:
+    label: "{{ item.ssid }}"
+  # The PSK is a vault secret and this play logs to the journal.
+  no_log: true
+  # nmcli applies the change live; NM rewrites the keyfile under /etc, so capture
+  # it in etckeeper, but no connection reload is needed.
+  notify: Etckeeper commit
 
 - name: Write manifest of Ansible-managed WiFi SSIDs
   ansible.builtin.copy:

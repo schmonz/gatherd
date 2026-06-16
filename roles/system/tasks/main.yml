@@ -508,6 +508,15 @@
     name: tailscaled
     state: started
 
+# Enabled (not started) in the loop above, so on a fresh first boot sshd would
+# otherwise not come up until the next reboot. Start it now so a just-installed
+# machine is reachable over SSH this boot. sshd is not ordered After=gatherd.service,
+# so a blocking start is safe here (unlike the vault/async services above).
+- name: Start sshd
+  ansible.builtin.systemd:
+    name: sshd
+    state: started
+
 - name: Configure firewall default zone
   ansible.builtin.command: firewall-cmd --set-default-zone=home
   changed_when: false

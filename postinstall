@@ -52,8 +52,13 @@ add_grub_cmdline() {
     # a later gatherd run sees the param already there and makes no change.
     local var="$1" params="$2" grub=/etc/default/grub
     local marker="${params%% *}"
-    grep -q "^${var}=\".*${marker}.*\"" "$grub" && return 0
-    sed -i -E "s|^(${var}=\".*)(\")[[:space:]]*\$|\1 ${params}\2|" "$grub"
+    # Match either quote style: Calamares writes GRUB_CMDLINE_LINUX_DEFAULT with
+    # single quotes on current EndeavourOS (other vars stay double-quoted), and a
+    # double-quote-only pattern silently no-ops — which is exactly how zswap kept
+    # missing the cmdline on low-RAM single-quoted installs. Capture the quote
+    # char and reuse it via the \2 backreference so the original style is kept.
+    grep -qE "^${var}=[\"'].*${marker}" "$grub" && return 0
+    sed -i -E "s|^(${var}=([\"']).*)\2[[:space:]]*\$|\1 ${params}\2|" "$grub"
 }
 
 preseed_grub_cmdline_fixes() {

@@ -62,6 +62,14 @@ case "$prompt" in
     ;;
 esac
 
+# sudo's default tty prompt is "[sudo] password for <user>:", which we keep
+# verbose on the terminal (no sudoers passprompt override truncating it). In the
+# fuzzel box that long form is noise, so collapse any sudo prompt to the bare tag
+# — the box just needs to name its source, the way [vault]/[polkit] do.
+case "$prompt" in
+'[sudo]'*) prompt='[sudo]' ;;
+esac
+
 # fuzzel --dmenu reads its menu list from stdin and blocks until EOF before it
 # draws. --password --prompt-only leaves that list empty but does NOT skip the
 # read, so an inherited never-closing stdin wedges fuzzel before the box appears.

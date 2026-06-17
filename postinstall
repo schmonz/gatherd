@@ -34,6 +34,20 @@ select_fastest_mirrors() {
     sudo -u "$1" rate-mirrors --per-mirror-timeout 1500 "$flavor" > /etc/pacman.d/mirrorlist
 }
 
+sync_db_to_new_mirrors() {
+    # rate-mirrors just rewrote the mirrorlist, but the sync db still reflects
+    # whatever the install ISO froze — by repave time some of those package
+    # versions have rotated out of the pools the freshly-ranked mirrors serve,
+    # so a later bare `pacman -S` 404s on a dependency that no longer exists
+    # upstream (first boot's slow play hit exactly this on libidn). Refresh and
+    # fully upgrade now, against the new mirrors, so first boot installs from a
+    # db that matches the pools. -Syu, not a bare -Sy, so this isn't a partial
+    # upgrade. This is the one re-rank where the db is dangerously stale; the
+    # later pacman-mirrorlist hook re-ranks during the user's own -Syu runs, so
+    # their db is already current there (and pacman can't run inside that hook).
+    pacman -Syu --noconfirm
+}
+
 register_boot_services() {
     ln -sf "$GATHERD_HOME/services/system/gatherd.service" /etc/systemd/system/gatherd.service
     systemctl enable gatherd.service
@@ -101,6 +115,7 @@ main() {
     install_prerequisites
     install_gatherd
     select_fastest_mirrors "$target_user"
+    sync_db_to_new_mirrors
     register_boot_services
     mask_conflicting_services
     preseed_grub_cmdline_fixes

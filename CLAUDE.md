@@ -47,7 +47,18 @@ Writes `/etc/gatherd/async-complete` when done.
 
 When a feature is implemented and working:
 
-1. Add a verification step to `section_verify` in `scripts/gatherd-post-setup-notes` — describe what to do and what to expect, in the same imperative style as the existing items.
+1. Add a verification step to `section_verify` in `scripts/gatherd-post-setup-notes`.
+   **Write it as a pure shell command sequence whenever possible** — commands the
+   reader can paste and run, each annotated with the expected output, rather than
+   prose describing what to do. The goal is a step that is mechanically checkable
+   (ideally with the pass condition as a command that succeeds or prints an
+   expected value), not one that relies on the reader's interpretation. Fall back
+   to prose only for the genuinely manual parts (look at the screen, click a GUI
+   toggle, plug in hardware), and keep those to the minimum the command sequence
+   can't cover. If a feature can only be observed in a fleeting state (e.g. a
+   window that only exists mid-install), add a flag or hook to the runtime script
+   that lets the verify step reproduce it on a converged machine, so the step is a
+   runnable sequence instead of "you had to be there on a fresh repave".
 2. Delete the item from `plans/TODO.md`.
 
 The post-setup notes are the living test suite for the playbook. TODO.md is not a record of what was done; git log is.

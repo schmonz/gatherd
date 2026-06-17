@@ -7,6 +7,10 @@
 #     exec gatherd-show-slow-progress
 # The outer instance gates, then re-execs itself inside foot only when there is
 # work to show; the inner instance (env flag set) skips the gate and displays.
+#
+# Pass --demo to bypass the async-complete gate so both display paths (in-place
+# tail in a foot tab, foot window otherwise) can be exercised on an already-
+# converged machine; the loop below then exits at once and reports completion.
 
 if [ -z "${GATHERD_SLOW_PROGRESS_TERM:-}" ]; then
     # The async-complete sentinel is the whole gate: it is absent only on the
@@ -17,15 +21,21 @@ if [ -z "${GATHERD_SLOW_PROGRESS_TERM:-}" ]; then
     # at autostart time that service may not have reached 'active' yet, so gating
     # on it raced the window away before async came up. Waiting for the sentinel
     # in the loop below is race-free and keeps this decision init-agnostic.
-    [ -f /etc/gatherd/async-complete ] && exit 0
-
-    # If already in a terminal, just display here; otherwise open a new foot
-    # window. Keep it open (waits for Enter) so it doesn't vanish.
-    if [ -t 1 ]; then
-        export GATHERD_SLOW_PROGRESS_TERM=1
-    else
-        exec foot -e env GATHERD_SLOW_PROGRESS_TERM=1 "$0"
+    if [ "${1:-}" != "--demo" ]; then
+        [ -f /etc/gatherd/async-complete ] && exit 0
     fi
+
+    # Display in-place only when stdout is a pseudo-terminal — i.e. the user ran
+    # this in a foot tab. Otherwise open our own foot window. We must NOT gate on
+    # a bare `[ -t 1 ]`: at sway autostart fd 1 is the login VT (/dev/tty1),
+    # which IS a tty yet is invisible (sway draws over it), so isatty quietly
+    # sent the journal tail to tty1 and no window ever appeared — the long-
+    # standing "it never opens, I run it by hand" bug. A real interactive
+    # terminal is always a /dev/pts/*; the VT and pipes are not.
+    case "$(readlink /proc/$$/fd/1 2>/dev/null)" in
+        /dev/pts/*) export GATHERD_SLOW_PROGRESS_TERM=1 ;;
+        *)          exec foot -e env GATHERD_SLOW_PROGRESS_TERM=1 "$0" ;;
+    esac
 fi
 
 printf '\033]0;Package Installation\007'

@@ -17,7 +17,10 @@
     # activate ("mismatching interface name"), the profile never autoconnects, you
     # join via the GUI, and NM saves a duplicate "<ssid> 1". ifname: '' is the
     # empty value NM wants. (Omitting it is also wrong: the module defaults
-    # connection.interface-name to conn_name.)
+    # connection.interface-name to conn_name.) NOTE: this only takes on CREATE —
+    # the module skips empty desired values in its change detection, so it cannot
+    # clear an interface-name an existing profile already carries; the reconcile
+    # pair below handles that.
     ifname: ''
     ssid: "{{ item.ssid }}"
     autoconnect: true
@@ -34,6 +37,29 @@
   no_log: true
   # nmcli applies the change live; NM rewrites the keyfile under /etc, so capture
   # it in etckeeper, but no connection reload is needed.
+  notify: Etckeeper commit
+
+# The task above can create an interface-independent profile but cannot UNbind
+# one that already names a device — the home network Calamares created at install
+# is pinned to whatever interface it first joined on (e.g. wlan0). Left bound, it
+# only autoconnects on a device of that exact name, defeating the roaming intent
+# for the one network that matters most. Reconcile it directly with nmcli, which
+# (unlike the module) does apply an empty connection.interface-name.
+- name: Read each known WiFi profile's bound interface
+  ansible.builtin.command:
+    cmd: nmcli -g connection.interface-name connection show "{{ item }}"
+  register: wifi_bound_iface
+  changed_when: false
+  loop: "{{ wifi_networks | map(attribute='ssid') | list }}"
+
+- name: Unbind known WiFi profiles from a specific interface so they roam and autoconnect
+  ansible.builtin.command:
+    cmd: nmcli connection modify "{{ item.item }}" connection.interface-name ""
+  loop: "{{ wifi_bound_iface.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stdout | trim | length > 0
+  changed_when: true
   notify: Etckeeper commit
 
 - name: Write manifest of Ansible-managed WiFi SSIDs

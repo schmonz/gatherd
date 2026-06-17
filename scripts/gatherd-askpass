@@ -62,4 +62,13 @@ case "$prompt" in
     ;;
 esac
 
-exec fuzzel --dmenu --password --prompt-only "$prompt "
+# fuzzel --dmenu reads its menu list from stdin and blocks until EOF before it
+# draws. --password --prompt-only leaves that list empty but does NOT skip the
+# read, so an inherited never-closing stdin wedges fuzzel before the box appears.
+# That is exactly the polkit case: the cmd-polkit agent hands its JSON message
+# pipe to the handler as stdin, gatherd-polkit-agent shells out to us, and fuzzel
+# then waits forever on a pipe that never closes — no box, and polkit hangs until
+# it times out. Force stdin from /dev/null so the box always draws regardless of
+# how the caller left fd 0; the password is typed into fuzzel directly, never
+# read from stdin, so nothing else changes.
+exec fuzzel --dmenu --password --prompt-only "$prompt " </dev/null

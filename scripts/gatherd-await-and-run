@@ -2,8 +2,9 @@
 # gatherd-await-and-run — wait for a gatherd play's preconditions, then run it once.
 #
 # Started once at boot by the init system, this blocks until the first-boot
-# gatherd run has finished and the vault password file exists, then runs the
-# given playbook. The waiting happens inside this one process, so there is no
+# gatherd run has finished and a vault password that decrypts the vault is
+# present, then runs the given playbook. The waiting happens inside this one
+# process, so there is no
 # file-watch / path unit to re-fire after the play finishes — which is what
 # used to loop a oneshot into systemd's start limit and leave it 'failed'.
 #
@@ -19,16 +20,30 @@ playbook="$2"
 
 gatherd_home=/usr/local/lib/gatherd
 vault_pass="$gatherd_home/.vault_pass"
+vault_file="$gatherd_home/vault/vault.yml"
 complete=/etc/gatherd/complete
 
 # Nothing to do if this play isn't deployed (e.g. no site-vault.yml).
 [ -f "$playbook" ] || exit 0
 
-# Block until the first-boot run has finished and the vault password is present.
-# Polling (rather than inotify) keeps this dependency-free and identical across
-# inits; 2s latency is irrelevant for setup work.
-while ! { [ -f "$complete" ] && [ -f "$vault_pass" ]; }; do
-    sleep 2
+# Block until the first-boot run has finished and a vault password that actually
+# decrypts the vault is present. A mistyped password is discarded right here so
+# the prompt side (gatherd-prompt-vault) re-asks; we never carry a bad password
+# into the play, where the decryption failure would fail the unit permanently
+# with no retry path. Polling (rather than inotify) keeps this dependency-free
+# and identical across inits; 2s latency is irrelevant for setup work.
+while :; do
+    while ! { [ -f "$complete" ] && [ -f "$vault_pass" ]; }; do
+        sleep 2
+    done
+    # No vault deployed → the password only needs to exist, not to decrypt.
+    if [ ! -f "$vault_file" ]; then
+        break
+    fi
+    if ansible-vault view --vault-password-file="$vault_pass" "$vault_file" >/dev/null 2>&1; then
+        break
+    fi
+    rm -f "$vault_pass"
 done
 
 # Skip if this play already converged at the deployed git HEAD.

@@ -2,5 +2,24 @@
 test -f /etc/gatherd/vault-complete && exit 0
 test -f /etc/gatherd/complete || exit 0
 
-vault_pass=$("${SUDO_ASKPASS:-/usr/local/bin/gatherd-askpass}" "[vault]") || exit 0
-printf '%s' "$vault_pass" | sudo -n /usr/local/lib/gatherd/scripts/gatherd-write-vault-pass
+vault_pass_file=/usr/local/lib/gatherd/.vault_pass
+
+# Re-ask whenever the password we wrote gets discarded: gatherd-await-and-run
+# removes a password that fails to decrypt the vault, which is our signal that
+# the user mistyped it. Stop once a play has accepted the password
+# (vault-complete appears) or the user cancels the prompt.
+#
+# Only ask when no password is present. A still-present .vault_pass means a
+# valid one is already in flight (await-and-run discards a bad one within
+# seconds), so re-logging in while the vault play runs must not re-prompt. We
+# can't validate the file ourselves — it is root-owned 0600 — so its persistence
+# is the signal.
+while ! test -f /etc/gatherd/vault-complete; do
+    if ! test -f "$vault_pass_file"; then
+        vault_pass=$("${SUDO_ASKPASS:-/usr/local/bin/gatherd-askpass}" "[vault]") || exit 0
+        printf '%s' "$vault_pass" | sudo -n /usr/local/lib/gatherd/scripts/gatherd-write-vault-pass
+    fi
+    while test -f "$vault_pass_file" && ! test -f /etc/gatherd/vault-complete; do
+        sleep 2
+    done
+done

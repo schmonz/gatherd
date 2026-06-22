@@ -26,5 +26,13 @@ if [ "$1" = "--handle" ]; then
     exit 0
 fi
 
-# Serial mode: fuzzel can only show one prompt at a time.
-exec cmd-polkit-agent -s -c "$0 --handle"
+# Parallel mode. In serial mode (-s) a single auth that never tears down — a
+# cancelled or stuck session whose polkit-agent-helper-1 lingers — occupies the
+# one slot, and every later polkit prompt then times out with NO box: a
+# session-long wedge that only an agent restart clears. Parallel mode handles
+# each request independently, so one stuck session can't block the rest. The
+# tradeoff is the reason -s was here: two *concurrent* prompts both reach for
+# fuzzel's single-instance lock and the second fails to draw (gatherd-askpass
+# logs the "fuzzel already running" miss). Concurrent polkit auths are rare, and
+# a rare lost prompt is far better than a wedge that kills every prompt.
+exec cmd-polkit-agent -p -c "$0 --handle"

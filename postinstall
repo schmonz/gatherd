@@ -90,6 +90,14 @@ preseed_grub_cmdline_fixes() {
         add_grub_cmdline GRUB_CMDLINE_LINUX 'video=LVDS-2:d'
     fi
 
+    # Chuwi MiniBook X rotated panel — the very first boot (LUKS prompt, tty,
+    # first session) is sideways without this. GRUB_CMDLINE_LINUX so every boot
+    # entry is rotated. Sync with roles/hardware/tasks/rotated_panel.yml.
+    if [[ "$(cat /sys/class/dmi/id/product_name 2>/dev/null)" == "MiniBook X" ]]; then
+        add_grub_cmdline GRUB_CMDLINE_LINUX \
+            'fbcon=rotate:1 video=DSI-1:panel_orientation=right_side_up'
+    fi
+
     # zswap on < 8 GB RAM — the first boot is the heaviest run (all the AUR
     # builds), exactly when a low-RAM machine most needs it. Sync with
     # roles/hardware/tasks/zswap.yml.

@@ -2,6 +2,29 @@
 
 ## Potential work items
 
+- Can we take the vault password much earlier? We need the LUKS passphrase early
+  and it'd be great if we could take the vault password shortly after (maybe from
+  GRUB somehow?) so that if it's entered correctly the plays can run to completion
+  unattended
+- **Sideways GRUB-stage display on the Chuwi MiniBook X (LUKS prompt + GRUB menu)**:
+  the kernel cmdline params (`fbcon=rotate:1` + `video=DSI-1:panel_orientation=right_side_up`,
+  now applied by `roles/hardware/tasks/rotated_panel.yml`) straighten the tty and
+  the Wayland session, but NOT anything drawn before the kernel loads. This box has
+  `GRUB_ENABLE_CRYPTODISK=y` with `/boot` inside the LUKS volume (only `/boot/efi`
+  is unencrypted), so GRUB does the LUKS unlock itself (`cryptomount`) before it can
+  read grub.cfg — the LUKS passphrase prompt AND the boot menu are both GRUB's own
+  `gfxterm`, rendering at the firmware's native (sideways) orientation. No kernel
+  param, initramfs change, or Plymouth helps; none of that exists yet at GRUB time.
+  Realistic options, none great: (a) live with it / hide just the menu
+  (`GRUB_TIMEOUT=0` hidden — but you still must SEE the LUKS prompt to type the
+  passphrase, so that stays sideways); (b) move `/boot` out of LUKS onto its own
+  unencrypted partition and drop `GRUB_ENABLE_CRYPTODISK` — then GRUB reads the
+  kernel in the clear (menu still sideways but hideable) and the LUKS prompt moves
+  into the initramfs, where `fbcon=rotate:1` (i915 is already force-loaded early via
+  `/etc/dracut.conf.d/eos_intel_i915.conf`) or Plymouth WOULD rotate it — at the
+  cost of an unencrypted /boot and a repartition/reinstall; (c) patch GRUB's
+  gfxterm to rotate (out-of-tree only, not durable). Decide whether a once-per-boot
+  sideways prompt is worth any of this.
 - **Pre-configure more known WiFi networks**: Review other machines and add SSID/PSK pairs to the vault
 - **chsh to zsh**: make zsh the login shell as part of provisioning.
 - **Install mattwynne/yaks non-interactively**: want it installed without

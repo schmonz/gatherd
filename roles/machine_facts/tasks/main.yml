@@ -167,6 +167,14 @@
     has_phantom_second_display: true
   when: _phantom.stdout == 'true'
 
+# Chuwi MiniBook X: the internal DSI panel is physically mounted rotated 90°,
+# so it scans out sideways for normal laptop use until the kernel cmdline
+# rotates both the framebuffer console and the DRM panel orientation.
+- name: Detect has_rotated_panel
+  ansible.builtin.set_fact:
+    has_rotated_panel: true
+  when: ansible_facts.product_name | default('') == 'MiniBook X'
+
 # >= 8 GB RAM → skip zswap.
 - name: Detect has_plenty_of_ram
   ansible.builtin.set_fact:

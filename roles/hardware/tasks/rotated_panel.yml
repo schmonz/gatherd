@@ -1,0 +1,24 @@
+---
+# Chuwi MiniBook X: the internal DSI panel is mounted rotated 90°. Two kernel
+# cmdline params straighten it: fbcon=rotate:1 turns the framebuffer text
+# console (which ignores the DRM panel_orientation quirk), and
+# video=DSI-1:panel_orientation=right_side_up tells the DRM layer the real
+# mounting so Wayland compositors scan out upright. Wayland needs only the
+# second; the tty needs only the first; both together give a correct console
+# AND a correct session.
+#
+# Targets GRUB_CMDLINE_LINUX (not _DEFAULT) so recovery/fallback boots are
+# rotated too — a permanently rotated panel is sideways in every boot entry,
+# same rationale as phantom_display.yml. Also pre-seeded in `postinstall`
+# (preseed_grub_cmdline_fixes) so the very first session is already upright;
+# keep the params in sync there. This task is the applier for machines that
+# pull the fix after install, and a no-op once postinstall added it.
+- name: Rotate the internal panel in GRUB
+  # Quote-agnostic (see zswap.yml): keep whichever quote style Calamares wrote.
+  # Guarded on the fbcon marker; both params are added as one unit.
+  ansible.builtin.replace:
+    path: /etc/default/grub
+    regexp: '^(GRUB_CMDLINE_LINUX=(["''])(?!.*fbcon=rotate:1).*)\2\s*$'
+    replace: '\1 fbcon=rotate:1 video=DSI-1:panel_orientation=right_side_up\2'
+  notify: Rebuild grub
+  when: has_grub

@@ -79,4 +79,28 @@ esac
 # it times out. Force stdin from /dev/null so the box always draws regardless of
 # how the caller left fd 0; the password is typed into fuzzel directly, never
 # read from stdin, so nothing else changes.
-exec fuzzel --dmenu --password --prompt-only "$prompt " </dev/null
+#
+# Instrumentation (diagnosis only, behavior unchanged): a "no box" failure is a
+# heisenbug — the prime suspect is fuzzel's single-instance lock
+# ("/run/user/<uid>/fuzzel-wayland-<n>.lock: failed to acquire lock: fuzzel
+# already running?"), which makes a second prompt exit non-zero WITHOUT drawing
+# while another fuzzel (a launcher, or a concurrent gatherd prompt) is on screen.
+# We can't reproduce it on demand, so leave a trail: capture fuzzel's stderr and
+# any non-zero exit to a state-dir log. The stdout password channel is untouched
+# (fd 3 passthrough), and every log write is best-effort — a missing/unwritable
+# log dir must never stop the box from drawing.
+log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd"
+log="$log_dir/askpass.log"
+exec 3>&1
+err=$(fuzzel --dmenu --password --prompt-only "$prompt " </dev/null 2>&1 1>&3)
+rc=$?
+exec 3>&-
+if [ "$rc" -ne 0 ]; then
+    # mkdir as its own statement: a redirect to "$log" is opened before the
+    # command runs, so creating the dir must happen first or the first write
+    # silently fails. Both steps best-effort — never block the prompt.
+    mkdir -p "$log_dir" 2>/dev/null
+    printf '%s prompt=%s exit=%s err=%s\n' \
+        "$(date '+%F %T')" "$prompt" "$rc" "$err" >>"$log" 2>/dev/null
+fi
+exit "$rc"

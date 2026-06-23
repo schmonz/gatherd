@@ -18,7 +18,15 @@ if [ "$1" = "--handle" ]; then
         if password=$("$askpass" "[polkit]"); then
             # jq -Rs JSON-encodes the raw password, preserving any character that
             # naive quoting would mangle; printf avoids appending a newline to it.
-            printf '%s' "$password" | jq -Rs '{action:"authenticate",password:.}'
+            # -c is load-bearing: cmd-polkit reads our stdout one physical line at
+            # a time and parses only the most recent line as a whole JSON object
+            # (see on_new_input in its polkit-auth-handler.service.c). jq's default
+            # pretty-print spreads the object over four lines, so cmd-polkit only
+            # ever sees the closing "}", fails to parse it, and never calls
+            # polkit_agent_session_response — the auth hangs forever with the box
+            # already dismissed. Compact output keeps it to the single line the
+            # parser expects. (The cancel reply below is already a single line.)
+            printf '%s' "$password" | jq -cRs '{action:"authenticate",password:.}'
         else
             printf '%s\n' '{"action":"cancel"}'
         fi

@@ -2,6 +2,19 @@
 
 ## Potential work items
 
+- **No swap / no hibernate on the Chuwi (check other installs too)**: the
+  MiniBook X repave came up with NO swap at all — `/proc/swaps` empty, nothing
+  in fstab, no swapfile, no `resume=` on the kernel cmdline — so it cannot
+  hibernate, and zswap (now enabled unconditionally) is inert with no backing
+  swap to compress into. This is a Calamares install-time outcome (dual-boot
+  beside Windows/BitLocker: EFI + MSR + BitLocker + Recovery + one LUKS ext4
+  root, no swap carved), and the usual "pick swap big enough to hibernate" step
+  didn't take. Decide whether gatherd should ensure a hibernate-sized swap
+  rather than rely on the installer: e.g. a swapfile on the LUKS ext4 root sized
+  >= RAM, with `resume=UUID` + `resume_offset=` on the cmdline and the `resume`
+  hook in the initramfs (the offset must be computed and the initramfs must
+  unlock root before resume — the fiddly part). At minimum, detect "no swap" and
+  surface it in the post-setup notes so a repave doesn't silently lose hibernate.
 - Can we take the vault password much earlier? We need the LUKS passphrase early
   and it'd be great if we could take the vault password shortly after (maybe from
   GRUB somehow?) so that if it's entered correctly the plays can run to completion

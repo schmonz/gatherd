@@ -1,5 +1,8 @@
 ---
-# Enable zswap for machines with limited RAM.
+# Enable zswap unconditionally — it is inert without memory pressure, so there
+# is no reason to gate it on RAM size; the heaviest run (first-boot AUR builds)
+# benefits most. No zpool= override: recent kernels default to zsmalloc and the
+# old z3fold is deprecated.
 # Targets GRUB_CMDLINE_LINUX_DEFAULT — performance optimization, not needed in recovery.
 # Also pre-seeded in `postinstall` (preseed_grub_cmdline_fixes) so zswap is live
 # for the heaviest run of all — the first boot's AUR builds. Keep the zswap.*
@@ -13,6 +16,6 @@
   ansible.builtin.replace:
     path: /etc/default/grub
     regexp: '^(GRUB_CMDLINE_LINUX_DEFAULT=(["''])(?!.*zswap\.enabled=1).*)\2\s*$'
-    replace: '\1 zswap.enabled=1 zswap.compressor=zstd zswap.zpool=z3fold zswap.max_pool_percent=20\2'
+    replace: '\1 zswap.enabled=1 zswap.compressor=zstd zswap.max_pool_percent=20\2'
   notify: Rebuild grub
   when: has_grub

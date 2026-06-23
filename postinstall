@@ -98,13 +98,13 @@ preseed_grub_cmdline_fixes() {
             'fbcon=rotate:1 video=DSI-1:panel_orientation=right_side_up'
     fi
 
-    # zswap on < 8 GB RAM — the first boot is the heaviest run (all the AUR
-    # builds), exactly when a low-RAM machine most needs it. Sync with
+    # zswap, unconditionally — the first boot is the heaviest run (all the AUR
+    # builds), and zswap is inert without memory pressure, so there's no reason
+    # to gate it on RAM size. No zpool= override: recent kernels default to
+    # zsmalloc, and the old z3fold is deprecated. Sync with
     # roles/hardware/tasks/zswap.yml.
-    if [[ "$(awk '/^MemTotal:/ {print ($2 < 8*1024*1024)}' /proc/meminfo)" == 1 ]]; then
-        add_grub_cmdline GRUB_CMDLINE_LINUX_DEFAULT \
-            'zswap.enabled=1 zswap.compressor=zstd zswap.zpool=z3fold zswap.max_pool_percent=20'
-    fi
+    add_grub_cmdline GRUB_CMDLINE_LINUX_DEFAULT \
+        'zswap.enabled=1 zswap.compressor=zstd zswap.max_pool_percent=20'
 
     # Regenerate only if grub.cfg already exists (Calamares ran its bootloader
     # step before this shellprocess). If it doesn't yet, Calamares will generate

@@ -1,8 +1,8 @@
 ---
-# Enable zswap for machines with limited RAM.
+# Enable zswap unconditionally (inert without memory pressure; see zswap.yml).
 # Targets the APPEND line — no rebuild step needed, extlinux reads the file directly.
 - name: Enable zswap in extlinux
   ansible.builtin.replace:
     path: /boot/extlinux/extlinux.conf
     regexp: '^(APPEND (?!.*zswap.enabled=1).+)$'
-    replace: '\1 zswap.enabled=1 zswap.compressor=zstd zswap.zpool=z3fold zswap.max_pool_percent=20'
+    replace: '\1 zswap.enabled=1 zswap.compressor=zstd zswap.max_pool_percent=20'

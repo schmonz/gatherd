@@ -43,11 +43,10 @@
 
     - name: Import zswap tasks
       ansible.builtin.import_tasks: zswap.yml
-      when: not has_plenty_of_ram
 
     - name: Import extlinux zswap tasks
       ansible.builtin.import_tasks: zswap_extlinux.yml
-      when: not has_plenty_of_ram and has_extlinux
+      when: has_extlinux
 
     - name: Import keyboard backlight tasks
       ansible.builtin.import_tasks: kbd_backlight.yml

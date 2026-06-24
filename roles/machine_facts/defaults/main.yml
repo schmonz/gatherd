@@ -26,5 +26,6 @@ has_thinkpad_hardware: false
 has_thinkpad_trackpoint: false
 is_aarch64: "{{ ansible_facts['architecture'] == 'aarch64' }}"
 foot_font_size: 14
+sway_output_scale: "1"
 timeshift_backup_device_uuid: ""
 timeshift_parent_device_uuid: ""

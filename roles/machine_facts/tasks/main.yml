@@ -344,6 +344,27 @@
     has_hidpi_display: true
   when: "'hidpi' in (_foot_font_size.stdout_lines | default([]))"
 
+# A HiDPI EDID panel (PPI >= 192) takes an integer 2x Sway scale; gatherd-font-size
+# already computed foot for that logical width. Most machines stay at "1".
+- name: Set Sway output scale from HiDPI detection
+  ansible.builtin.set_fact:
+    sway_output_scale: "2"
+  when: has_hidpi_display
+
+# The MiniBook X DSI panel exposes no EDID, so gatherd-font-size can't measure its
+# ~215 PPI and fell back to the 1920-wide/1x default. Integer 2x would be too
+# coarse here (960px logical); scale it fractionally instead — our Electron/
+# Chromium apps run native Wayland and so render crisp at 1.4 — and recompute foot
+# for the scaled logical width so the 80-col two-up layout and the matched app
+# font sizes still hold (same formula as gatherd-font-size).
+- name: Scale the MiniBook X dense panel fractionally
+  vars:
+    _scale: "1.4"
+  ansible.builtin.set_fact:
+    sway_output_scale: "{{ _scale }}"
+    foot_font_size: "{{ (((1920 / (_scale | float)) / 2 - 4) / 64) | int }}"
+  when: ansible_facts.product_name | default('') == 'MiniBook X'
+
 # Role defaults only apply within this role. This task promotes every has_* fact
 # to a host fact so later plays (system, desktop) can reference them without error.
 - name: Publish hardware facts for cross-play use
@@ -364,6 +385,7 @@
     has_kbd_backlight: "{{ has_kbd_backlight }}"
     has_luks_btrfs_root: "{{ has_luks_btrfs_root }}"
     has_hidpi_display: "{{ has_hidpi_display }}"
+    sway_output_scale: "{{ sway_output_scale }}"
     has_phantom_second_display: "{{ has_phantom_second_display }}"
     has_plenty_of_ram: "{{ has_plenty_of_ram }}"
     has_avx: "{{ has_avx }}"

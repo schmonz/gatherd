@@ -237,17 +237,20 @@
     regexp: '"icon-size":\s*\d+'
     replace: '"icon-size": {{ (16 * foot_font_size / 10) | round | int }}'
 
-- name: Configure Sway output scale for HiDPI panel
+- name: Configure Sway output scale for the internal panel
   # output * applies to all connected outputs; on a laptop this is the internal
   # panel. Users with external monitors at a different DPI should add a more
-  # specific override (e.g. output HDMI-1 scale 1) in config.d/outputs.
+  # specific override (e.g. output HDMI-1 scale 1) in config.d/outputs. The scale
+  # is 1 on most machines (task skipped), 2 on a HiDPI EDID panel, and a
+  # fractional value on dense EDID-less panels like the MiniBook X — see
+  # sway_output_scale in machine_facts.
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/outputs"
     create: true
     mode: '0644'
-    line: "output * scale 2"
+    line: "output * scale {{ sway_output_scale }}"
     regexp: '^\s*output\s+\*\s+scale\b'
-  when: has_hidpi_display
+  when: sway_output_scale != "1"
 
 - name: Configure foot font size for 80-col two-up layout
   ansible.builtin.lineinfile:

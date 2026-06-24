@@ -80,3 +80,52 @@ web_apps:
     url: https://poe.com
     comment: LLM
     codename: Poe
+  # iCloud/Apple + the rest below would otherwise get DuckDuckGo's 32-48px favicon
+  # — too blurry at the app-menu size — and the four iCloud apps share one host
+  # (icloud.com), so DDG would hand them all the same generic icon. Pin each to its
+  # official 512px App Store artwork instead (from the iTunes Search API,
+  # `itunes.apple.com/search?term=...&entity=software` -> artworkUrl512). These
+  # mzstatic URLs are versioned; if Apple reworks an icon the verify step catches
+  # the straggler and the URL is refreshed from the same API.
+  - name: iCloud Drive
+    url: https://www.icloud.com/iclouddrive
+    comment: iCloud
+    codename: iCloudDrive
+    # No standalone "iCloud Drive" App Store app; Files is Apple's file browser
+    # that fronts iCloud Drive and carries the recognizable icon.
+    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/cf/a1/e7/cfa1e733-abf2-2a89-394f-1de4a5043743/files-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.png
+  - name: Find My
+    url: https://www.icloud.com/find
+    comment: iCloud
+    codename: FindMy
+    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/e7/f8/dc/e7f8dca5-9326-58ce-a058-74269c035717/findmy-0-0-1x_U007epad-0-1-sRGB-85-220.png/512x512bb.png
+  - name: Notes
+    url: https://www.icloud.com/notes
+    comment: iCloud
+    codename: Notes
+    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/96/85/52/96855209-27d3-bfb0-0516-105a2223ef50/notes-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.png
+  - name: Reminders
+    url: https://www.icloud.com/reminders
+    comment: iCloud
+    codename: Reminders
+    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/47/ff/b4/47ffb497-6d42-0628-c5a3-fad0de052421/reminders-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.png
+  - name: Apple Maps
+    url: https://beta.maps.apple.com
+    comment: Maps
+    codename: AppleMaps
+    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/67/05/f8/6705f876-0db2-711d-0d42-524ef6432165/maps-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.png
+  - name: Amazon
+    url: https://www.amazon.com
+    comment: Shopping
+    codename: Amazon
+    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/77/6f/ab/776fabf0-b237-a350-3372-f7ee1250e493/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-0-85-220.png/512x512bb.png
+  - name: Duolingo
+    url: https://www.duolingo.com
+    comment: Learning
+    codename: Duolingo
+    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/68/f0/71/68f071b5-4124-7956-8e2d-c5e15472b120/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.png
+  - name: Reddit
+    url: https://www.reddit.com
+    comment: Social
+    codename: Reddit
+    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/bb/a4/0f/bba40f03-72fe-1616-8ad5-4604b6d30566/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.png

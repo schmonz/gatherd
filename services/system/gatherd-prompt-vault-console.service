@@ -1,0 +1,27 @@
+[Unit]
+Description=gatherd vault password (early console prompt)
+# Collect the vault password up front, before the long unattended first-boot
+# run, so the operator enters it right after LUKS and walks away. Ordered before
+# gatherd.service (and so, transitively, before greetd) to own a quiet console.
+# ExecCondition skips this on every boot where a valid password is already
+# stored, so it normally costs a couple of stats and never grabs the tty.
+Before=gatherd.service
+After=local-fs.target
+ConditionPathExists=/usr/local/lib/gatherd/site-vault.yml
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/local/lib/gatherd/scripts/gatherd-vault-pass-needed
+ExecStart=/usr/local/lib/gatherd/scripts/gatherd-prompt-vault-console
+# Hand the script the console; the script's own deadline_secs is the real bound
+# on how long it waits, so this is just a backstop above that.
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TimeoutStartSec=120s
+
+[Install]
+WantedBy=multi-user.target

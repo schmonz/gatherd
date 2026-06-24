@@ -1,0 +1,26 @@
+#!/bin/sh
+# Exit 0 if a vault password still needs to be collected, non-zero otherwise.
+#
+# Single source of truth for both the early console prompt
+# (gatherd-prompt-vault-console) and the in-session fuzzel prompt
+# (gatherd-prompt-vault), so the two can never drift on when to ask.
+#
+# A password is needed exactly when a vault-gated play is deployed AND none is
+# stored yet. The stored password is the whole signal: gatherd-await-and-run
+# only ever keeps one that decrypts the vault (it discards a bad one), so its
+# presence means a correct password was provided on some earlier occasion —
+# covering both a converged machine and a post-`git pull` boot where the play
+# re-runs but reuses the stored password unattended. Its absence means
+# await-and-run is (or will be) blocked waiting for one: precisely when a human
+# must be asked.
+
+# Overridable only so the predicate can be exercised against a sandbox in tests.
+gatherd_home="${GATHERD_HOME:-/usr/local/lib/gatherd}"
+
+# No vault-gated play deployed -> await-and-run never runs it -> no password.
+[ -f "$gatherd_home/site-vault.yml" ] || exit 1
+
+# A stored password already satisfies await-and-run; never re-ask.
+[ -f "$gatherd_home/.vault_pass" ] && exit 1
+
+exit 0

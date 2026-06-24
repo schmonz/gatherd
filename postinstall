@@ -51,6 +51,14 @@ sync_db_to_new_mirrors() {
 register_boot_services() {
     ln -sf "$GATHERD_HOME/services/system/gatherd.service" /etc/systemd/system/gatherd.service
     systemctl enable gatherd.service
+
+    # The early vault prompt must be enabled before the first boot so it runs
+    # Before=gatherd.service that boot — the playbook can't enable it for its own
+    # first run from inside gatherd.service. Bash twin of the idempotent Ansible
+    # task (keep in sync), the same preseed pattern as the GRUB cmdline fixes.
+    ln -sf "$GATHERD_HOME/services/system/gatherd-prompt-vault-console.service" \
+        /etc/systemd/system/gatherd-prompt-vault-console.service
+    systemctl enable gatherd-prompt-vault-console.service
 }
 
 mask_conflicting_services() {

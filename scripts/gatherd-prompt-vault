@@ -1,25 +1,27 @@
 #!/bin/sh
-test -f /etc/gatherd/vault-complete && exit 0
+# In-session fallback for the vault password. The early console prompt
+# (gatherd-prompt-vault-console) normally collects it before login, so on a
+# typical pave this self-skips. It still serves the cases where that prompt was
+# not answered in time but the operator reached the desktop anyway (autologin
+# landing them straight here), and a re-pave triggered from within a session.
+#
+# gatherd-vault-pass-needed is the single source of truth for whether to ask;
+# see it for why a stored password ends the asking. We only start once the
+# first-boot system run has finished — before that there is nothing to unblock.
+needed=/usr/local/lib/gatherd/scripts/gatherd-vault-pass-needed
+
 test -f /etc/gatherd/complete || exit 0
 
-vault_pass_file=/usr/local/lib/gatherd/.vault_pass
+while "$needed"; do
+    vault_pass=$("${SUDO_ASKPASS:-/usr/local/bin/gatherd-askpass}" "[vault]") || exit 0
+    printf '%s' "$vault_pass" | sudo -n /usr/local/lib/gatherd/scripts/gatherd-write-vault-pass
 
-# Re-ask whenever the password we wrote gets discarded: gatherd-await-and-run
-# removes a password that fails to decrypt the vault, which is our signal that
-# the user mistyped it. Stop once a play has accepted the password
-# (vault-complete appears) or the user cancels the prompt.
-#
-# Only ask when no password is present. A still-present .vault_pass means a
-# valid one is already in flight (await-and-run discards a bad one within
-# seconds), so re-logging in while the vault play runs must not re-prompt. We
-# can't validate the file ourselves — it is root-owned 0600 — so its persistence
-# is the signal.
-while ! test -f /etc/gatherd/vault-complete; do
-    if ! test -f "$vault_pass_file"; then
-        vault_pass=$("${SUDO_ASKPASS:-/usr/local/bin/gatherd-askpass}" "[vault]") || exit 0
-        printf '%s' "$vault_pass" | sudo -n /usr/local/lib/gatherd/scripts/gatherd-write-vault-pass
-    fi
-    while test -f "$vault_pass_file" && ! test -f /etc/gatherd/vault-complete; do
+    # The password is now in flight. gatherd-await-and-run discards it if it
+    # fails to decrypt the vault — re-arming the predicate so we re-ask — and
+    # keeps it if it works, leaving the predicate false so we stop. Wait on that
+    # verdict (or the vault play converging) rather than re-asking immediately.
+    while ! "$needed"; do
+        test -f /etc/gatherd/vault-complete && exit 0
         sleep 2
     done
 done

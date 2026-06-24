@@ -1,0 +1,64 @@
+#!/bin/sh
+# Collect the vault password on the console, early in boot, so the operator can
+# enter it up front — right after the LUKS passphrase — and then walk away while
+# the rest of the pave runs unattended. Ordered Before=gatherd.service by
+# gatherd-prompt-vault-console.service.
+#
+# Self-skips on every boot where a password is already stored (see
+# gatherd-vault-pass-needed) — nearly every boot, where this exits before ever
+# touching the tty. The in-session fuzzel prompt (gatherd-prompt-vault) is the
+# fallback for when this one is not answered in time (an unwatched console, or
+# autologin landing the operator straight at the desktop).
+#
+# POSIX sh with no init-specific bits: the service unit (or an eventual s6 run
+# script) only has to hand this the console on stdin/stdout. `timeout` rather
+# than `read -t` so it works under dash as well as bash.
+set -u
+
+# Overridable only so the loop can be exercised against a sandbox in tests.
+gatherd_home="${GATHERD_HOME:-/usr/local/lib/gatherd}"
+needed="$gatherd_home/scripts/gatherd-vault-pass-needed"
+vault_file="$gatherd_home/vault/vault.yml"
+vault_pass="$gatherd_home/.vault_pass"
+
+# Bounded so an unwatched or headless console defers to the desktop prompt
+# rather than stalling the whole pave: the operator is right here after LUKS, so
+# this only has to outlast a few seconds of walking up to the keyboard.
+deadline_secs=60
+
+"$needed" || exit 0
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+umask 077
+
+while "$needed"; do
+    printf '\n[vault] password (or wait %ss to use the desktop prompt instead): ' "$deadline_secs"
+
+    # Echo off for the entry; `timeout` bounds the read so a missing operator
+    # falls through instead of blocking boot. stty acts on this script's stdin,
+    # which the unit points at the console via StandardInput=tty.
+    stty -echo 2>/dev/null || true
+    pass=$(timeout "$deadline_secs" sh -c 'IFS= read -r p && printf %s "$p"')
+    rc=$?
+    stty echo 2>/dev/null || true
+    printf '\n'
+
+    if [ "$rc" -ne 0 ]; then
+        printf '[vault] no entry; deferring to the desktop prompt.\n'
+        exit 0
+    fi
+
+    # Validate before storing, so await-and-run never has to discard a bad one
+    # here. With no vault file deployed the password only has to exist (matches
+    # gatherd-await-and-run's own no-vault branch).
+    printf '%s' "$pass" > "$tmp"
+    if [ ! -f "$vault_file" ] || ansible-vault view --vault-password-file="$tmp" "$vault_file" >/dev/null 2>&1; then
+        cp -- "$tmp" "$vault_pass"
+        chmod 600 "$vault_pass"
+        printf '[vault] accepted.\n'
+        exit 0
+    fi
+
+    printf '[vault] that password did not decrypt the vault; try again.\n'
+done

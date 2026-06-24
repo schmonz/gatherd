@@ -29,103 +29,105 @@ wallpaper_dark_path: "{{ wallpaper_dir }}/wallpaper-dark"
 wallpaper_light_path: "{{ wallpaper_dir }}/wallpaper-light"
 
 web_apps:
+  # Each app's icon is resolved at provision time by gatherd-fetch-webapp-icon:
+  # an app_store_id pulls the official 512px artwork via the iTunes Lookup API
+  # (ids are permanent, so no brittle CDN URLs rot in the repo); an icon_url pins
+  # a source for apps not on the App Store; otherwise DuckDuckGo's low-res favicon
+  # is the fallback. Find an id at itunes.apple.com/search?term=NAME&entity=software.
   - name: ChatGPT
     url: https://chatgpt.com
     comment: LLM
     codename: ChatGPT
+    app_store_id: "6448311069"
   - name: Lumo
     url: https://lumo.proton.me
     comment: LLM
     codename: Lumo
+    app_store_id: "6746714949"
   - name: Grok
     url: https://grok.com
     comment: LLM
     codename: Grok
+    app_store_id: "6670324846"
   - name: Perplexity
     url: https://www.perplexity.ai
     comment: LLM
     codename: Perplexity
+    app_store_id: "1668000334"
   - name: Gemini
     url: https://gemini.google.com
     comment: LLM
     codename: Gemini
-    # DDG returns Google's generic favicon for gemini.google.com; pin the
-    # sparkle from gstatic instead.
-    icon_url: https://www.gstatic.com/lamda/images/gemini_sparkle_4g_512_lt_f94943af3be039176192d.png
+    app_store_id: "6477489729"
   - name: DeepSeek
     url: https://chat.deepseek.com
     comment: LLM
     codename: DeepSeek
-    # DDG has no icon for chat.deepseek.com; the apex domain works.
-    icon_url: https://icons.duckduckgo.com/ip3/deepseek.com.ico
+    app_store_id: "6737597349"
   - name: Copilot
     url: https://copilot.microsoft.com
     comment: LLM
     codename: Copilot
-    # DDG has no icon for copilot.microsoft.com; pull directly from the site.
-    icon_url: https://copilot.microsoft.com/favicon.ico
+    app_store_id: "6472538445"
   - name: Le Chat
     url: https://chat.mistral.ai
     comment: LLM
     codename: LeChat
+    # Mistral's App Store app is now "Vibe (ex-Le Chat)".
+    app_store_id: "6740410176"
   - name: Meta AI
     url: https://meta.ai
     comment: LLM
     codename: MetaAI
+    app_store_id: "1558240027"
   - name: HuggingChat
     url: https://huggingface.co/chat
     comment: LLM
     codename: HuggingChat
+    # No App Store app; the DuckDuckGo huggingface.co favicon (256px) is decent.
   - name: Poe
     url: https://poe.com
     comment: LLM
     codename: Poe
-  # iCloud/Apple + the rest below would otherwise get DuckDuckGo's 32-48px favicon
-  # — too blurry at the app-menu size — and the four iCloud apps share one host
-  # (icloud.com), so DDG would hand them all the same generic icon. Pin each to its
-  # official 512px App Store artwork instead (from the iTunes Search API,
-  # `itunes.apple.com/search?term=...&entity=software` -> artworkUrl512). These
-  # mzstatic URLs are versioned; if Apple reworks an icon the verify step catches
-  # the straggler and the URL is refreshed from the same API.
+    app_store_id: "1640745955"
   - name: iCloud Drive
     url: https://www.icloud.com/iclouddrive
     comment: iCloud
     codename: iCloudDrive
-    # No standalone "iCloud Drive" App Store app; Files is Apple's file browser
-    # that fronts iCloud Drive and carries the recognizable icon.
-    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/cf/a1/e7/cfa1e733-abf2-2a89-394f-1de4a5043743/files-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.png
+    # No standalone iCloud Drive app; Files is Apple's browser that fronts it.
+    app_store_id: "1232058109"
   - name: Find My
     url: https://www.icloud.com/find
     comment: iCloud
     codename: FindMy
-    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/e7/f8/dc/e7f8dca5-9326-58ce-a058-74269c035717/findmy-0-0-1x_U007epad-0-1-sRGB-85-220.png/512x512bb.png
+    app_store_id: "1514844621"
   - name: Notes
     url: https://www.icloud.com/notes
     comment: iCloud
     codename: Notes
-    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/96/85/52/96855209-27d3-bfb0-0516-105a2223ef50/notes-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.png
+    app_store_id: "1110145109"
   - name: Reminders
     url: https://www.icloud.com/reminders
     comment: iCloud
     codename: Reminders
-    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/47/ff/b4/47ffb497-6d42-0628-c5a3-fad0de052421/reminders-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.png
+    app_store_id: "1108187841"
   - name: Apple Maps
     url: https://beta.maps.apple.com
     comment: Maps
     codename: AppleMaps
-    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/67/05/f8/6705f876-0db2-711d-0d42-524ef6432165/maps-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.png
+    app_store_id: "915056765"
   - name: Amazon
     url: https://www.amazon.com
     comment: Shopping
     codename: Amazon
-    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/77/6f/ab/776fabf0-b237-a350-3372-f7ee1250e493/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-0-85-220.png/512x512bb.png
+    app_store_id: "297606951"
   - name: Duolingo
     url: https://www.duolingo.com
     comment: Learning
     codename: Duolingo
-    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/68/f0/71/68f071b5-4124-7956-8e2d-c5e15472b120/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.png
+    app_store_id: "570060128"
   - name: Reddit
     url: https://www.reddit.com
     comment: Social
     codename: Reddit
-    icon_url: https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/bb/a4/0f/bba40f03-72fe-1616-8ad5-4604b6d30566/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.png
+    app_store_id: "1064216828"

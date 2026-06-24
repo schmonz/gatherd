@@ -1,0 +1,41 @@
+#!/bin/sh
+# Resolve a web app's icon and write it as a PNG. Source preference:
+#   1. App Store id -> the official 512px artwork via the iTunes Lookup API.
+#      Track ids are permanent, and the artwork URL is resolved fresh each fetch,
+#      so there are no brittle hardcoded CDN URLs in the repo and an Apple icon
+#      refresh is picked up whenever the icon is refetched.
+#   2. icon_url -> a pinned source, for apps that aren't on the App Store.
+#   3. fallback -> DuckDuckGo's favicon service (low-res; last resort). Its single
+#      URL pattern also sidesteps the per-site bot blocking (Cloudflare etc.) that
+#      makes scraping a site's own favicon unreliable.
+# Pillow stays in the pipeline because any source can hand back an ICO.
+#
+# Usage: gatherd-fetch-webapp-icon <dest.png> <app_store_id> <icon_url> <fallback_url>
+#        Pass an empty string for any source that doesn't apply.
+set -eu
+
+dest="$1"
+app_id="${2:-}"
+icon_url="${3:-}"
+fallback="${4:-}"
+
+src=""
+if [ -n "$app_id" ]; then
+    art=$(curl -fsSL --max-time 10 "https://itunes.apple.com/lookup?id=$app_id" 2>/dev/null \
+        | python3 -c "import json,sys
+try:
+    r = json.load(sys.stdin)['results']
+    print(r[0]['artworkUrl512'] if r else '')
+except Exception:
+    print('')")
+    # artworkUrl512 ends in .../{N}x{N}bb.{fmt}; force a 512 PNG of it.
+    [ -n "$art" ] && src="${art%/*}/512x512bb.png"
+fi
+[ -n "$src" ] || src="$icon_url"
+[ -n "$src" ] || src="$fallback"
+[ -n "$src" ] || { echo "no icon source given for $dest" >&2; exit 1; }
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+curl -fsSL --max-time 10 -o "$tmp" "$src"
+python3 -c 'from PIL import Image; import sys; Image.open(sys.argv[1]).save(sys.argv[2])' "$tmp" "$dest"

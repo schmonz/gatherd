@@ -237,15 +237,6 @@
     the failed attempt, only caps the penalty. So if the cause is confirmed to
     be the negative cache, do **both**: (2) to avoid the failed attempt, (1) to
     bound any residual race.
-- **Hi-res icons for the original LLM web apps**: the newer web apps (iCloud
-  suite, Apple Maps, Amazon, Duolingo, Reddit) now pin official 512px App Store
-  artwork via the iTunes Search API (`itunes.apple.com/search?...&entity=software`
-  -> artworkUrl512), but most of the original LLM apps (ChatGPT, Grok, Perplexity,
-  Lumo, Le Chat, Meta AI, HuggingChat, Poe) still fall back to DuckDuckGo's
-  32-48px favicon and look blurry in the Mod-Shift-D menu. Give them the same
-  treatment — artworkUrl512 where an App Store app exists, else a pinned hi-res
-  source — so all web app icons are crisp and the verify step's 512px check can
-  cover them too.
 - **App menu needs horizontal scrolling**: the detailed app menu almost fills the
   screen and needs a little left-right scrolling to see everything — likely a side
   effect of font-size scaling (see the Scaling item). Figure out whether tuning the

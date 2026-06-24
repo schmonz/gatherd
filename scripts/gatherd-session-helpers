@@ -80,6 +80,11 @@ run "$bin/gatherd-polkit-agent"
 # check is bypassed; the backends (xdg-desktop-portal-gtk for Qt Settings/dark mode)
 # only have PartOf/After, not Requisite, so they D-Bus-activate fine once this runs.
 run "/usr/lib/xdg-desktop-portal"
+# wayvnc as a cohort child, not a plain sway `exec`: a plain exec would orphan on
+# logout (sway reaps nothing) and keep holding 127.0.0.1:5900, so the next
+# session's wayvnc could not bind. As a cohort child it dies with the group on
+# logout, freeing the port. VNC is localhost-only, reached over SSH — plans/VNC.md.
+run "wayvnc"
 run "$bin/gatherd-conky"
 run "$bin/gatherd-prompt-captiveportal"
 run "$bin/gatherd-prompt-1password"

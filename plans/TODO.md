@@ -241,7 +241,6 @@
   screen and needs a little left-right scrolling to see everything — likely a side
   effect of font-size scaling (see the Scaling item). Figure out whether tuning the
   menu geometry/font or the scaling fixes it so nothing is clipped.
-- Set up VNC (see `VNC.md`)
 - JetBrains IDE settings, starting with font size
 - **Auto git pull on a cadence**: the sentinels now record the git HEAD that
   ran to completion, and gatherd-needs-run re-runs a play when HEAD changes.

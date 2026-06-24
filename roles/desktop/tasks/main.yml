@@ -517,6 +517,17 @@
     src: /usr/lib/systemd/user/arch-update.timer
     state: link
 
+- name: Configure wayvnc to bind localhost without auth
+  # VNC is reached only through an SSH tunnel (plans/VNC.md), so wayvnc has no auth
+  # of its own — sshd is the boundary and 127.0.0.1 keeps the port off the network
+  # entirely. Started as a session cohort child by gatherd-session-helpers.
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.config/wayvnc/config"
+    mode: '0644'
+    content: |
+      address=127.0.0.1
+      enable_auth=false
+
 - name: Configure captive-browser to use Helium
   ansible.builtin.copy:
     dest: "{{ target_home }}/.config/captive-browser.toml"

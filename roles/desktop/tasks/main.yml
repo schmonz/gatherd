@@ -392,12 +392,20 @@
   loop:
     - dest: .config/net.imput.helium/initial_preferences
       content: '{"browser":{"check_default_browser":false},"extensions":{"theme":{"system_theme":1}},"helium":{"completed_onboarding":true,"services":{"schema_version":1,"user_consented":true}},"session":{"restore_on_startup":1}}'
-    - dest: .config/chromium/initial_preferences
-      content: '{"browser":{"check_default_browser":false},"distribution":{"skip_first_run_ui":true,"suppress_first_run_bubble":true,"show_welcome_page":false},"session":{"restore_on_startup":1}}'
     - dest: .config/helium-browser-flags.conf
       content: "--password-store=basic"
-    - dest: .config/chromium-flags.conf
-      content: "--password-store=basic"
+
+# Vestigial: gatherd installs only helium-browser-bin (a Chromium fork with its
+# own config dir), no chromium/ungoogled-chromium, so these files were written
+# for a browser that isn't here. Remove them on already-provisioned machines.
+- name: Remove vestigial Chromium browser config
+  ansible.builtin.file:
+    path: "{{ target_home }}/{{ item }}"
+    state: absent
+  loop:
+    - .config/chromium/initial_preferences
+    - .config/chromium-flags.conf
+    - .config/chromium
 
 - name: Seed Helium UI preferences on a fresh profile
   # system_theme 2 = Qt; dark mode follows color-scheme prefer-dark via the XDG
@@ -506,7 +514,7 @@
     src: /usr/lib/systemd/user/arch-update.timer
     state: link
 
-- name: Configure captive-browser to use Ungoogled Chromium
+- name: Configure captive-browser to use Helium
   ansible.builtin.copy:
     dest: "{{ target_home }}/.config/captive-browser.toml"
     mode: '0644'

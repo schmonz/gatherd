@@ -1,7 +1,12 @@
-# Remote GUI access via VNC — EndeavourOS Sway fleet
+# Remote GUI access via VNC over SSH — EndeavourOS Sway fleet
 
-Ansible-driven setup for the Sway fleet. Linux Mint mini handled
-separately and manually (see VNC-MINT.md).
+The machine side is now automated by gatherd: the `wayvnc` server, its
+`~/.config/wayvnc/config` (localhost, no auth), the session-cohort launch, and
+the Remmina client are installed and configured by the system + desktop roles.
+The checks live in the "Remote GUI via VNC over SSH" item of
+`scripts/gatherd-post-setup-notes`. What remains here is the human reference:
+the design rationale and how to set up the *clients*. The Linux Mint mini is
+handled separately and manually (see VNC-MINT.md).
 
 ## Architecture: VNC over SSH, no in-protocol TLS
 
@@ -14,60 +19,6 @@ The working answer is VNC bound to localhost + Screens via SSH tunnel.
 sshd is the auth boundary; VNC has no auth of its own because nothing
 can reach the port except SSH-authenticated processes. No PAM, no
 TLS certs, no second credential.
-
-## Ansible-relevant decisions and per-host state
-
-### Packages to install
-
-- `wayvnc`
-
-(No avahi, no nss-mdns, no openssl cert generation — none of it is
-needed in the SSH-tunnel model. Hostname resolution happens via
-Tailscale MagicDNS or /etc/hosts.)
-
-### Services to enable
-
-None. wayvnc is started from the Sway session config, not via systemd.
-
-### Per-user config files (~/.config/wayvnc/)
-
-`~/.config/wayvnc/config`:
-
-```
-address=127.0.0.1
-enable_auth=false
-```
-
-`127.0.0.1` is the explicit form; wayvnc's default is also localhost
-but being explicit makes intent obvious.
-
-### Sway config addition
-
-`~/.config/sway/config` needs:
-
-```
-exec wayvnc
-```
-
-Use a marker block (`# BEGIN ansible wayvnc` / `# END ansible wayvnc`)
-or a dedicated include file for idempotent management.
-
-### sshd
-
-Default sshd config with `AllowTcpForwarding yes` (the default) is
-fine. No changes needed unless a hardened sshd_config has disabled
-forwarding.
-
-### Verification tasks (post-deploy)
-
-- `~/.config/wayvnc/config` has expected contents.
-- Sway config contains `exec wayvnc` (in the marker block).
-- `sshd -T | grep allowtcpforwarding` returns `yes`.
-
-(There's no service to check until a Sway session is running. wayvnc
-only starts on next sway session anyway, which is fine since the
-whole arrangement requires being at the machine to start a sway
-session.)
 
 ## Client setup (Screens 5 on macOS)
 
@@ -106,7 +57,8 @@ first-class SSH-tunnel support — same conceptual model as Screens.
 KRDC is a decent second choice if you're already in KDE-land; it
 pulls in fewer dependencies on a KDE desktop than on Sway.
 
-Install:
+Install (gatherd already installs these on the EOS fleet; this is for
+other machines):
 
 ```
 sudo apt install remmina remmina-plugin-vnc     # Mint / Debian
@@ -194,4 +146,3 @@ If pre-login access ever becomes important: SSH in and fix it from the
 terminal, or run an SDDM-with-sway-as-greeter setup with its own
 wayvnc instance and accept the two-step handoff at login. Hasn't been
 necessary so far.
-

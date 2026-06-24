@@ -86,8 +86,13 @@
       - xdg-desktop-portal-wlr
       - xdg-desktop-portal-gtk
       # remote GUI: VNC bound to localhost, reached over an SSH tunnel (see
-      # plans/VNC.md). No service — launched as a session cohort child.
+      # plans/VNC.md). wayvnc serves this machine (no service — a session cohort
+      # child); remmina is the client for reaching other machines, with built-in
+      # SSH-tunnel support matching the same model. libvncserver is remmina's VNC
+      # plugin (an optdepend, so name it explicitly).
       - wayvnc
+      - remmina
+      - libvncserver
       # system tools
       - btop
       - conky

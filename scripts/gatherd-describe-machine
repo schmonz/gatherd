@@ -43,7 +43,10 @@ else
           sub(/^[^(]*\(/, "")
           sub(/\).*$/, "")
         } else {
-          sub(/ \([0-9][0-9.]*\)[[:space:]]*$/, "")
+          # Drop a trailing version in parens. [A-Z]? also catches vendor forms
+          # like "(V1.0)" (CHUWI product_version is "V1.0"), while the required
+          # leading digit keeps meaningful parentheticals ("(ThinkCentre M93p)").
+          sub(/ \([A-Z]?[0-9][0-9.]*\)[[:space:]]*$/, "")
         }
         sub(/ W[0-9][A-Z0-9]*$/, "")
         print

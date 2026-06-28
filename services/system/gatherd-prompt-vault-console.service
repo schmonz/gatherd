@@ -7,6 +7,13 @@ Description=gatherd vault password (early console prompt)
 # stored, so it normally costs a couple of stats and never grabs the tty.
 Before=gatherd.service
 After=local-fs.target
+# agetty on tty1 starts as part of multi-user.target and reads the same console.
+# Without these two lines it races us for /dev/tty1 and swallows the operator's
+# keystrokes (the read times out with nothing), and its "login:" banner scrolls
+# over our prompt. Stop and order after it so we own the console outright, exactly
+# as greetd.service does for the same reason. greetd re-conflicts getty later.
+After=getty@tty1.service
+Conflicts=getty@tty1.service
 ConditionPathExists=/usr/local/lib/gatherd/site-vault.yml
 
 [Service]

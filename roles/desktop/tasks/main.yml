@@ -19,6 +19,7 @@
     - .local/share/org.localsend.localsend_app
     - .cache/captive-browser/Default
     - .config/xdg-desktop-portal
+    - .config/wayvnc
 
 - name: Enable system dark mode
   # Without this, the default ('default') leaves GTK, Flutter, and other apps guessing.

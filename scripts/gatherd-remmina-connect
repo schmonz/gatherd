@@ -1,0 +1,80 @@
+#!/bin/sh
+# Open a VNC-over-SSH Remmina connection to a host typed at a fuzzel prompt,
+# without any saved per-machine profile. The VNC server is always the SSH host's
+# own localhost:5900 (wayvnc, no auth), so only the SSH tunnel host varies — a
+# fixed template with the host substituted is the whole difference between
+# machines. We drive Remmina with `remmina -c` against an ephemeral profile
+# (deleted on exit) rather than Remmina's GUI, which cannot set up an SSH tunnel
+# from its quick-connect bar. See
+# docs/superpowers/specs/2026-06-29-remmina-vnc-over-ssh-launcher-design.md.
+set -eu
+
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd"
+history_file="$state_dir/remmina-hosts"
+max_history=20
+
+# Emit a .remmina profile for one host on stdout. Args: user host port name.
+emit_profile() {
+    cat <<EOF
+[remmina]
+name=$4
+protocol=VNC
+server=localhost:5900
+username=
+password=
+ignore-tls-errors=1
+disablepasswordstoring=0
+colordepth=32
+quality=2
+viewmode=1
+ssh_tunnel_enabled=1
+ssh_tunnel_auth=2
+ssh_tunnel_username=$1
+ssh_tunnel_server=$2:$3
+ssh_tunnel_loopback=0
+EOF
+}
+
+# Parse [user@]host[:port] into globals user/host/port (user/port defaulted).
+parse_target() {
+    _spec=$1
+    user=${USER:-$(id -un)}
+    port=22
+    case $_spec in
+        *@*) user=${_spec%%@*}; _spec=${_spec#*@} ;;
+    esac
+    case $_spec in
+        *:*) port=${_spec##*:}; _spec=${_spec%:*} ;;
+    esac
+    host=$_spec
+}
+
+# --print [user@]host[:port]: emit the would-be profile and exit (no GUI deps).
+if [ "${1:-}" = "--print" ]; then
+    [ $# -ge 2 ] || { echo "usage: $0 --print [user@]host[:port]" >&2; exit 2; }
+    parse_target "$2"
+    emit_profile "$user" "$host" "$port" "$host"
+    exit 0
+fi
+
+# Prompt for a host, offering recent ones. fuzzel --dmenu returns the typed text
+# on Enter even when it matches no list entry (same behavior gatherd-askpass
+# relies on), so a brand-new host works alongside picking a remembered one.
+history=""
+[ -r "$history_file" ] && history=$(cat "$history_file")
+target=$(printf '%s\n' "$history" | fuzzel --dmenu --prompt 'host: ') || exit 0
+[ -n "$target" ] || exit 0
+
+parse_target "$target"
+
+# Record the raw target most-recent-first (dedup, cap). Best-effort.
+mkdir -p "$state_dir" 2>/dev/null && {
+    { printf '%s\n' "$target"; printf '%s\n' "$history"; } \
+        | awk 'NF && !seen[$0]++' | head -n "$max_history" > "$history_file.tmp" \
+        && mv "$history_file.tmp" "$history_file"
+} || true
+
+tmp=$(mktemp --suffix=.remmina) || exit 1
+trap 'rm -f "$tmp"' EXIT
+emit_profile "$user" "$host" "$port" "$host" > "$tmp"
+remmina -c "$tmp"

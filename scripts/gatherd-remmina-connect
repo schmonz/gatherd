@@ -14,6 +14,14 @@ history_file="$state_dir/remmina-hosts"
 max_history=20
 
 # Emit a .remmina profile for one host on stdout. Args: user host port name.
+# The security-relevant lines are the blank password= (no VNC secret is ever
+# written; the SSH tunnel is the sole auth boundary) and the localhost:5900
+# target reached only through that tunnel. The rest (disablepasswordstoring,
+# colordepth, quality, viewmode, ssh_tunnel_loopback) mirror the proven
+# pet-power-plant profile verbatim so Remmina behaves identically — they are
+# cosmetic/compat defaults, not security knobs. disablepasswordstoring=0 looks
+# odd next to "no stored secret" but is moot here: there is no password to store,
+# and the profile itself is a throwaway deleted on exit.
 emit_profile() {
     cat <<EOF
 [remmina]

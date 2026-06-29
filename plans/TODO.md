@@ -43,6 +43,9 @@
 - **Install mattwynne/yaks non-interactively**: want it installed without
   `curl | bash` and without interactive prompts. Find/derive a scriptable install
   path (clone + run a documented installer step, or package it) for gatherd to drive.
+  Decision (2026-06-29): yaks is adopted. Preferred path: **install from the AUR**;
+  if nobody has packaged it there yet, **create the AUR package** ourselves, then
+  install it like any other AUR package (ties into the offline prebuilt-AUR cache).
 - a cooler tmux status bar
 - arch-update: can running the update be less interactive? lots of reading and
   agreeing. Dunno if I want full automatic but fewer interactions for sure
@@ -60,6 +63,20 @@
   the default browser — small footprint, fast launch, no profile/session baggage,
   and it keeps the portal's (often sketchy) login page out of the main browser
   profile. Confirm it renders typical captive portals well enough to authenticate.
+- **Captive-portal auto-launch — latency remainder** (from the retired
+  CAPTIVE-PORTAL.md; Phase 1 portability restructure is DONE — watcher runs from
+  sway autostart, no systemd user service; trigger match `*Connectivity*Portal*`
+  confirmed correct at a café). What's left is latency (measured join→portal-page
+  ~70s): (1) `nmcli monitor` block-buffering fix (`stdbuf -oL nmcli monitor`)
+  **applied but not yet verified** — confirm on the next real portal; the watcher
+  logs detection time to `~/.cache/captive-browser.log`. (2) ~24s captive-browser
+  "Obtaining DHCP DNS" (browser-agnostic mystery) + ~44s navigation through the
+  SOCKS5 proxy — still open. Constraints (do NOT): don't disable Tailscale
+  `--accept-dns` (breaks the `~/trees` NFS mount — `nfs_server` resolves only via
+  MagicDNS); don't touch the tailnet "Override Local DNS" setting (not engaged).
+  Optional: version `~/.local/bin/gatherd-debug-captiveportal` into `scripts/`
+  (install to `~/.local/bin` — it must be on local disk; at a portal the NFS tree
+  is unreachable).
 - **Netsurf dark mode (blocked on package version)**: the search provider
   (DuckDuckGo), search-from-URL-bar, and small toolbar icons are now seeded into
   `~/.config/netsurf/Choices` by the desktop role. Dark mode is *not* — the
@@ -269,7 +286,15 @@
   To activate: enable clightd service, add `exec clight` to sway autostart, and
   set a brightness floor (e.g. `min_backlight_pct = 0.15` in `clight.conf`) and
   dimmer config (40% target, 60s battery timeout) — verify key names against
-  `man clight` or `/usr/share/clight/modules.conf.d/` on a live machine.
+  `man clight` or `/usr/share/clight/modules.conf.d/` on a live machine. Once it
+  behaves, these become the `section_verify` entry (post-reboot checklist, from
+  the retired CLIGHT.md): (1) **dark-room floor** — backlight stays ≥10% instead
+  of going to 0; (2) **DPMS recovery** — after a 10-min idle DPMS off, a
+  mouse/keypress wakes it normally (no `swaymsg` incantation, since clight now
+  starts cleanly); (3) **dimmer** — 60s on battery before dimming, dims to 40%
+  not invisibly low. Tuning: if the dark-room floor feels too low, raise the first
+  value in `ac_regression_points` (`/etc/clight/modules.conf.d/sensor.conf`) from
+  `0.10` toward `0.15`–`0.20`, then `etckeeper commit`.
 
 - **iSight camera**: detect and install `isight-firmware` (AUR).
 
@@ -399,3 +424,28 @@
   at an out-of-repo path; network-fetched config in `postinstall`. Add an
   early `assert` listing every required key so missing config fails fast
   instead of silently skipping tasks.
+
+## Quality and testing
+
+Live items harvested from the retired REVIEW.md (already-done observations —
+the update story via sentinel+git-HEAD+gatherd-needs-run, the git-SHA record,
+and `vm/test`'s twice-run `changed=0` check — were dropped as done):
+
+- **Shell-script tests with `bats`**: `bats` is installed but unused. The
+  `gatherd-show-slow-progress` logic, the `gatherd-prompt-*` scripts, and the
+  systray scripts have real, testable behavior. Add bats tests for them.
+- **`become: false` hygiene audit**: some tasks run as root that don't need to.
+  Audit which tasks don't need root and set `become: false` explicitly.
+- **Extract `machine_facts` as a standalone Galaxy role**: it has zero deps on
+  gatherd's packages/config — pure Arch-family hardware detection others would
+  want (Pinebook Pro, MacBook on Arch). Candidate to publish.
+- **Extract the `gatherd-*` scripts as a separate package / AUR entry**: they're
+  a small Sway session utility library (`gatherd-launch-systray`,
+  `gatherd-prompt-captiveportal`, …) independently useful to Sway-on-Arch users.
+- **Per-phase re-run (tags)**: no tags within phases, so you can't re-run just
+  the waybar config or just AUR without the full playbook. Revisit alongside the
+  CORE/REST split + converge story (the robust-convergence plan). (Note: CI lint
+  enforcement is already covered by that plan's Phase 5.)
+- **Doc-quality parity**: `machine_facts` documents *why* per probe; the rest of
+  the roles (esp. the long sequential `desktop` role) don't hold that standard —
+  hard to tell load-bearing tasks from cosmetic tweaks. Bring them up to par.

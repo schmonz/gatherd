@@ -5,7 +5,12 @@
 # saw the active connection disappear and reappear and dropped the live WiFi link
 # on the first run. nmcli compares the existing connection in place: if SSID, PSK,
 # and method already match it reports ok and touches nothing — no reload, no blip.
-- name: Pre-configure known WiFi networks
+# Two profile shapes share every field below except security: a personal network
+# carries a PSK (key_mgmt defaults to wpa-psk), an enterprise network sets
+# key_mgmt: wpa-eap and the 802-1x.* group reconciled further down. The split is
+# by task rather than an inline conditional so each play line stays readable and
+# the log says which kind it configured.
+- name: Pre-configure known WPA-PSK WiFi networks
   community.general.nmcli:
     type: wifi
     conn_name: "{{ item.ssid }}"
@@ -31,12 +36,74 @@
     method6: auto
     state: present
   loop: "{{ wifi_networks }}"
+  when: (item.key_mgmt | default('wpa-psk')) == 'wpa-psk'
   loop_control:
     label: "{{ item.ssid }}"
   # The PSK is a vault secret and this play logs to the journal.
   no_log: true
   # nmcli applies the change live; NM rewrites the keyfile under /etc, so capture
   # it in etckeeper, but no connection reload is needed.
+  notify: Etckeeper commit
+
+# The module's wifi_sec dict maps only to 802-11-wireless-security.*: it can set
+# key-mgmt: wpa-eap but has no field for the 802-1x.* group (EAP method, identity,
+# password, phase2 auth). So create the base enterprise profile here — same
+# roaming/autoconnect shape as PSK — and set the 802-1x.* properties with raw
+# nmcli in the reconcile pair below, the same module-can't-so-nmcli-does pattern
+# the interface-name unbind uses.
+- name: Pre-configure known WPA-Enterprise (802.1x) WiFi networks
+  community.general.nmcli:
+    type: wifi
+    conn_name: "{{ item.ssid }}"
+    ifname: ''
+    ssid: "{{ item.ssid }}"
+    autoconnect: true
+    wifi_sec:
+      key-mgmt: wpa-eap
+    method4: auto
+    method6: auto
+    state: present
+  loop: "{{ wifi_networks }}"
+  when: (item.key_mgmt | default('wpa-psk')) == 'wpa-eap'
+  loop_control:
+    label: "{{ item.ssid }}"
+  notify: Etckeeper commit
+
+- name: Read each WPA-Enterprise profile's current 802.1x settings
+  # -g prints the requested fields one value per line, in order — so stdout_lines
+  # is [eap, identity, phase2-auth] (each '' when unset, as on a freshly created
+  # base profile). changed_when false: read-only probe.
+  ansible.builtin.command:
+    cmd: nmcli -g 802-1x.eap,802-1x.identity,802-1x.phase2-auth connection show "{{ item.ssid }}"
+  register: wifi_eap_current
+  changed_when: false
+  loop: "{{ wifi_networks }}"
+  when: (item.key_mgmt | default('wpa-psk')) == 'wpa-eap'
+  loop_control:
+    label: "{{ item.ssid }}"
+
+- name: Configure 802.1x settings for WPA-Enterprise WiFi networks
+  ansible.builtin.command:
+    cmd: >-
+      nmcli connection modify "{{ item.item.ssid }}"
+      802-1x.eap {{ item.item.eap }}
+      802-1x.identity "{{ item.item.identity }}"
+      802-1x.phase2-auth {{ item.item.phase2_auth }}
+      802-1x.password "{{ item.item.password }}"
+  loop: "{{ wifi_eap_current.results }}"
+  # Skip the profiles the read task skipped (PSK entries), and skip when the
+  # readable fields already match — idempotent for the steady state. The password
+  # is a vault secret nmcli reports as <hidden>, so it can't join the comparison:
+  # it is (re)written whenever any structural field differs or the profile is new,
+  # but a password-only rotation won't re-trigger here — delete the profile and
+  # re-run to push a changed password.
+  when:
+    - item.skipped is not defined
+    - item.stdout_lines != [item.item.eap, item.item.identity, item.item.phase2_auth]
+  changed_when: true
+  no_log: true
+  loop_control:
+    label: "{{ item.item.ssid }}"
   notify: Etckeeper commit
 
 # The task above can create an interface-independent profile but cannot UNbind

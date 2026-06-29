@@ -239,3 +239,37 @@ Steps 1–4 leave systemd intact. The already-completed renames (`/etc/gatherd/c
 `/usr/local/lib/gatherd`) mean the first-boot marker and service directory are already
 init-system-neutral. Steps 1–3 do not add new systemd dependencies. Step 3's bootstrap
 script will need a parallel `bootstrap-artix.sh` when that migration happens.
+
+### Early vault-password prompt — the one console-coupled piece
+
+`gatherd-prompt-vault-console` collects the Ansible vault password on the console
+before the first-boot run, so the rest of the pave is unattended. Most of it is plain
+POSIX and ports unchanged: the `gatherd-vault-pass-needed` predicate, `.vault_pass`
+storage, `ansible-vault view` validation + retry loop, the `gatherd-await-and-run`
+consumer, and the in-session fuzzel fallback.
+
+Only the *prompt-on-the-console* primitive is init-coupled. Under systemd it is
+`systemd-ask-password --no-tty`, which hands the query to systemd's console
+ask-password agent (the same machinery as a `systemd-cryptsetup` LUKS prompt). This is
+a deliberate systemd dependency: an earlier hand-rolled `stty -echo` + `read` on the
+unit's inherited tty silently received **zero** keystrokes at boot — the read blocked
+on a visible, foreground tty1 yet no input arrived, because nothing had *claimed* the
+console (activate the VT, put it in text mode, become its foreground process group).
+The agent does all of that.
+
+For the s6/Artix port, swap just that one line. The portable replacement is **`openvt`**
+(from `kbd`, present on both inits), which does the same console-claiming without
+systemd:
+
+```sh
+openvt -s -w -- /usr/local/lib/gatherd/scripts/gatherd-prompt-vault-console
+```
+
+`openvt -s -w` allocates a free VT, switches to it, and runs the script as that VT's
+controlling process with the correct foreground process group — so the plain POSIX
+`stty -echo` + `read` loop works again behind it. (Equivalently, an s6-rc oneshot bound
+to a tty.) Ordering — prompt before greetd, before the main pave — moves from systemd
+`Before=`/`After=` to an s6-rc dependency edge; the systemd `ExecCondition=` self-skip
+is already mirrored by the script's own `"$needed" || exit 0`, so no s6 equivalent is
+needed. This dovetails with the `single-credential-bootstrap` and `vault-on-disk` items
+that Step 2 references.

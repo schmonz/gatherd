@@ -2,4 +2,13 @@
 # Sway-autostarted children don't inherit ~/.local/bin in PATH, so invoke
 # the sibling by absolute path.
 "$(dirname "$0")/gatherd-post-setup-notes"
-test -s "$HOME/.config/gatherd-post-setup.md" && xdg-open "$HOME/.config/gatherd-post-setup.md"
+# Open with `gio open`, not `xdg-open`. This bare greetd->sway session has no
+# XDG_CURRENT_DESKTOP, so xdg-open falls to its generic path, which routes by
+# `file` content-sniffing rather than the .md extension. As the notes grew shell
+# snippets and `#` headers, `file` started classifying them as
+# text/x-script.python (no handler), so xdg-open silently failed and the editor
+# never opened. gio open keys on the extension (-> text/markdown -> xed)
+# regardless of content, and is DE-independent. Note XDG_CURRENT_DESKTOP=sway
+# would NOT fix xdg-open: its detectDE only knows legacy DEs, not sway. See
+# plans/TODO.md "Session environment".
+test -s "$HOME/.config/gatherd-post-setup.md" && gio open "$HOME/.config/gatherd-post-setup.md"

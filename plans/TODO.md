@@ -1,6 +1,51 @@
-# TODO
+# gatherd backlog (TODO)
 
-## Potential work items
+> **For agents:** this is the raw backlog and the tracker of *intent* that isn't
+> derivable from the code or git log. Designed, in-flight work lives as specs and
+> plans under `docs/superpowers/` (indexed below); this file is where ideas start
+> and loose ends are recorded. When you finish an item, follow `CLAUDE.md`
+> ("Finishing a TODO item"): add a runnable check to `section_verify` in
+> `scripts/gatherd-post-setup-notes`, then delete the item here. git log is the
+> record of what was done; this file is not.
+
+## Status legend
+
+- `→ planned: <path>` — a written spec/plan exists; execute that, don't freelance.
+- `→ DONE` — landed; kept only for context or pending repave-verification.
+- `→ blocked: <what>` — waiting on a decision or another item.
+- untagged — raw backlog, not yet designed.
+
+## Plans in flight (`docs/superpowers/`)
+
+**Travel-repave program** — north-star spec
+`specs/2026-06-29-travel-repave-design.md`. Sub-projects (SP):
+
+| SP | What | Plan / status |
+|----|------|---------------|
+| 1 | Robustness floor — a task error never blocks boot/login | `plans/2026-06-29-robust-convergence.md` — ready; do Phase 0 first |
+| 2 | Offline survival kit (USB cache, captive portal, ride-along trees) | mostly inside SP1 Tasks 3–5; ride-along trees `→ blocked: SP6` |
+| 3 | Unattended completion (early secrets, self-naming, VPN cred) | `plans/2026-06-29-self-naming-hostname.md`; vault-early DONE; VPN cred ~done |
+| 4 | Credential lifecycle (no-plaintext, rotate/revoke, FIDO2) | unplanned — see **Secrets** below |
+| 5 | Config delivery (no me-specific defaults in repo) | unplanned — see **Configurability** below |
+| 6 | Data source: NFS→Syncthing | `plans/2026-06-29-syncthing-nfs-pilot.md` — **pilot first; decision NOT settled** |
+
+**Standalone plans:**
+
+| Plan | Status |
+|------|--------|
+| `plans/2026-06-29-arch-bootstrap-migration.md` — EOS→Arch; owns install-time disk/swap/hibernate | ready; Phase-0 archinstall spike first |
+| `plans/2026-06-29-quiet-boot.md` — GRUB quiet (Tier 1), optional Plymouth (Tier 2) | ready |
+| `plans/2026-06-29-remmina-vnc-over-ssh-launcher.md` | (separate work) |
+
+## Recently landed (pending repave verification)
+
+- **Early vault-password entry** — now collected on the console before `gatherd`
+  via `systemd-ask-password` (the in-session fuzzel box is the fallback). Verify
+  on the next repave, then prune this and the old "take the vault password
+  earlier" item below. The Artix/s6 `openvt` port is noted in
+  `plans/2026-06-29-arch-bootstrap-migration.md` (§Future).
+
+## Backlog (uncategorized)
 
 - **No swap / no hibernate on the Chuwi (check other installs too)**: the
   MiniBook X repave came up with NO swap at all — `/proc/swaps` empty, nothing
@@ -15,10 +60,13 @@
   hook in the initramfs (the offset must be computed and the initramfs must
   unlock root before resume — the fiddly part). At minimum, detect "no swap" and
   surface it in the post-setup notes so a repave doesn't silently lose hibernate.
+  → planned: `arch-bootstrap-migration` (Task 4 now owns install-time disk/swap/
+  hibernate — keyfile + crypttab + openswap/resume on a swap partition).
 - Can we take the vault password much earlier? We need the LUKS passphrase early
   and it'd be great if we could take the vault password shortly after (maybe from
   GRUB somehow?) so that if it's entered correctly the plays can run to completion
-  unattended
+  unattended → **DONE** this session (console `systemd-ask-password` before
+  gatherd; see "Recently landed" above). Prune once repave-verified.
 - **Sideways GRUB-stage display on the Chuwi MiniBook X (LUKS prompt + GRUB menu)**:
   the kernel cmdline params (`fbcon=rotate:1` + `video=DSI-1:panel_orientation=right_side_up`,
   now applied by `roles/hardware/tasks/rotated_panel.yml`) straighten the tty and
@@ -37,7 +85,9 @@
   `/etc/dracut.conf.d/eos_intel_i915.conf`) or Plymouth WOULD rotate it — at the
   cost of an unencrypted /boot and a repartition/reinstall; (c) patch GRUB's
   gfxterm to rotate (out-of-tree only, not durable). Decide whether a once-per-boot
-  sideways prompt is worth any of this.
+  sideways prompt is worth any of this. → partial lever: `quiet-boot` Tier 2
+  (Plymouth) could rotate the LUKS prompt via `fbcon=rotate:1` **only** under
+  option (b) — `/boot` out of LUKS, prompt moved into the initramfs.
 - **Pre-configure more known WiFi networks**: Review other machines and add SSID/PSK pairs to the vault
 - **chsh to zsh**: make zsh the login shell as part of provisioning.
 - **Install mattwynne/yaks non-interactively**: want it installed without
@@ -51,12 +101,15 @@
   agreeing. Dunno if I want full automatic but fewer interactions for sure
 - Automate preparing a local package mirror on a USB stick (such as Ventoy),
   for quicker bootstrapping on terrible/absent network
+  → planned: `robust-convergence` Phase 4 (offline USB cache); travel-repave SP2.
 - **Travel-repave behind a captive portal**: if repaving while on a captive-portal
   network, is there a bootstrap problem that stops the playbooks from completing
   (the portal not yet cleared when gatherd starts pulling packages/AUR)? Determine
   whether it actually blocks, and either way figure out how much of what a repave
   needs can ride along on a USB stick (ties into the package-mirror item above) to
   speed things up and survive a hostile/absent network.
+  → planned: `robust-convergence` Phases 3–4 (REST waits for real connectivity +
+  offline cache); travel-repave SP2.
 - **Try Netsurf as the captive-portal browser**: now that Netsurf is always
   installed (lightweight fallback), see whether the captive-portal flow
   (`gatherd-prompt-captiveportal`) should open the portal in Netsurf instead of
@@ -99,6 +152,12 @@
 
 ## Secrets
 
+> Most of this section is **travel-repave SP4 (credential lifecycle)** — see the
+> north-star spec `specs/2026-06-29-travel-repave-design.md` (decisions D4–D6).
+> It's unplanned; the single-credential bootstrap is its spine. Note D-decisions
+> locked: minimize-but-don't-force-one-root, "no plaintext at rest" is a goal,
+> FIDO2 stays optional.
+
 - **Single-credential first-run bootstrap**: a repave currently needs secrets
   supplied by several different paths — the Ansible vault password dropped as a
   plaintext `.vault_pass` file (awaited by the `gatherd-vault`/`gatherd-async`
@@ -115,6 +174,9 @@
   to land on the first autologin reliably and without eating CPU (the current path
   apparently does something costly). Find a lighter, more dependable delivery
   mechanism — ties into the single-credential bootstrap above.
+  → largely **DONE**: `scripts/gatherd-prompt-pia` (cheap "already" probe +
+  bounded poll) + `gatherd-pia-login`. The "eats CPU" framing looks stale; verify
+  it's moot, then prune. travel-repave SP3.
 - **Git SSH commit signing via the 1Password agent**: agent *auth* for git/ssh is
   wired (`roles/desktop/tasks/ssh-agent.yml` sets `IdentityAgent` for github.com;
   the "Use the SSH agent" GUI toggle is a documented post-setup step). Still to do:
@@ -146,6 +208,7 @@
   plaintext artifact — prompt once and cache in the kernel keyring, pass it as a
   systemd credential, or derive it from a hardware token — then remove the file.
   Keeps a long-lived secret out of the filesystem after first run.
+  → travel-repave SP4 / decision D5.
 - **Hardware-token-backed unlock (FIDO2)**: fits the existing smart-card and
   fingerprint threads. Support FIDO2 `sk-` SSH keys, and consider a hardware key
   as a second factor for the first-run bootstrap, so that neither possession of
@@ -196,6 +259,11 @@
   10+ min; needed `sudo umount -f -l` + `sudo systemctl restart autofs`, and it still
   wouldn't remount with ap-juicer at 4ms (NFSv4 server-side lease/state) — only a reboot
   cleared it.
+  → **NOT settled despite the 2026-06-01 "decided"**: reopened 2026-06-29 for the
+  heterogeneous fleet (Mavericks/NetBSD/Windows, where NFS is easy). Being
+  validated via a keep-NFS pilot — `plans/2026-06-29-syncthing-nfs-pilot.md`
+  (STOP if any of those three can't interoperate). travel-repave SP6; the Decision/
+  Migration/Caveats below are the *proposed* design the pilot is gating.
   - **Decision:** run Syncthing natively (local disk) on the NAS and every machine,
     peer-to-peer over Tailscale. Edits always target a local copy (fast, offline-tolerant,
     never WAN-blocked); changes propagate in seconds when connected. Every tree is a
@@ -401,6 +469,10 @@
 
 ## Portability
 
+> These are the init-coupling loose ends for the eventual Artix/s6 move; context
+> in `plans/2026-06-29-arch-bootstrap-migration.md` (§Future) and the travel-repave
+> spec's init-agnostic invariant.
+
 - **arch-update timer**: currently a systemd user timer; will need a different
   mechanism on Artix/s6.
 - **gatherd-show-slow-progress display loop is systemd-coupled**: the gating is
@@ -424,6 +496,7 @@
   at an out-of-repo path; network-fetched config in `postinstall`. Add an
   early `assert` listing every required key so missing config fails fast
   instead of silently skipping tasks.
+  → travel-repave SP5 (config delivery); the early `assert` is decision D11.
 
 ## Quality and testing
 

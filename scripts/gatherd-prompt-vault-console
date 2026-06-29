@@ -6,13 +6,22 @@
 #
 # Self-skips on every boot where a password is already stored (see
 # gatherd-vault-pass-needed) — nearly every boot, where this exits before ever
-# touching the tty. The in-session fuzzel prompt (gatherd-prompt-vault) is the
-# fallback for when this one is not answered in time (an unwatched console, or
-# autologin landing the operator straight at the desktop).
+# prompting. The in-session fuzzel prompt (gatherd-prompt-vault) is the fallback
+# for when this one is not answered in time (an unwatched console, or autologin
+# landing the operator straight at the desktop).
 #
-# POSIX sh with no init-specific bits: the service unit (or an eventual s6 run
-# script) only has to hand this the console on stdin/stdout. `timeout` rather
-# than `read -t` so it works under dash as well as bash.
+# The prompt is routed through systemd's console ask-password agent
+# (systemd-ask-password-console, the same machinery that asks for LUKS
+# passphrases under systemd-cryptsetup), NOT by reading the tty ourselves. An
+# earlier hand-rolled version did `stty -echo` + `read` on the unit's inherited
+# tty and silently received NO keystrokes in the early-boot console: the read
+# blocked on a visible, foreground tty1 yet no input arrived, because nothing
+# had claimed the console the way a getty or ask-password agent does (activate
+# the VT, put it in text mode, become its foreground process group). The agent
+# does all of that. PORTABILITY: this is now the one systemd-specific bit of the
+# vault flow — the predicate, storage and validation below stay POSIX. An s6 /
+# Artix port replaces only the `systemd-ask-password` call with that init's
+# console-prompt equivalent.
 set -u
 
 # Overridable only so the loop can be exercised against a sandbox in tests.
@@ -33,18 +42,19 @@ trap 'rm -f "$tmp"' EXIT
 umask 077
 
 while "$needed"; do
-    printf '\n[vault] password (or wait %ss to use the desktop prompt instead): ' "$deadline_secs"
+    # --echo=masked shows one * per keystroke so the operator can see input is
+    # registering (the old prompt gave no feedback and looked dead). --no-tty
+    # forces the broadcast/agent path even if the unit hands us a tty, so the
+    # console agent — not our process — owns the console. --timeout bounds the
+    # wait so a missing operator defers to the in-session desktop prompt.
+    pass=$(systemd-ask-password --no-tty --echo=masked --timeout="$deadline_secs" \
+        --icon=dialog-password --id=gatherd:vault \
+        '[gatherd] Ansible vault password (or wait to use the desktop prompt):') || {
+        printf '[vault] no entry; deferring to the desktop prompt.\n'
+        exit 0
+    }
 
-    # Echo off for the entry; `timeout` bounds the read so a missing operator
-    # falls through instead of blocking boot. stty acts on this script's stdin,
-    # which the unit points at the console via StandardInput=tty.
-    stty -echo 2>/dev/null || true
-    pass=$(timeout "$deadline_secs" sh -c 'IFS= read -r p && printf %s "$p"')
-    rc=$?
-    stty echo 2>/dev/null || true
-    printf '\n'
-
-    if [ "$rc" -ne 0 ]; then
+    if [ -z "$pass" ]; then
         printf '[vault] no entry; deferring to the desktop prompt.\n'
         exit 0
     fi

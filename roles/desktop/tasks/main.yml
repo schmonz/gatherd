@@ -936,3 +936,6 @@
     path: "{{ target_home }}/.config/sway/config.d/autostart_applications"
     regexp: "^exec .*gatherd-session-helpers$"
     line: "exec {{ target_home }}/.local/bin/gatherd-session-helpers"
+
+- name: Configure the Remmina VNC-over-SSH launcher
+  ansible.builtin.import_tasks: remmina.yml

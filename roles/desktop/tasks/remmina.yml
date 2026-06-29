@@ -1,0 +1,13 @@
+---
+- name: Install the Remmina VNC-over-SSH launcher
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-remmina-connect"
+    dest: "{{ target_home }}/.local/bin/gatherd-remmina-connect"
+    mode: '0755'
+    remote_src: true
+
+- name: Install the Remote Desktop app-menu entry
+  ansible.builtin.template:
+    src: remote-desktop-vnc-over-ssh.desktop.j2
+    dest: "{{ target_home }}/.local/share/applications/Remote Desktop (VNC over SSH).desktop"
+    mode: '0644'

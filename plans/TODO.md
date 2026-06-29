@@ -150,6 +150,47 @@
   from fully draining (state `closing`) until they are folded into the supervisor or handled
   separately. Moot on the Artix/s6 (seatd) target, which has no session scope.
 
+## Session environment
+
+- **Stand up a proper Wayland session instead of a bare greetd→sway launch.**
+  Today greetd starts sway directly with no login shell and no session wrapper, so
+  none of the usual session environment exists: `XDG_CURRENT_DESKTOP` is empty, and
+  nothing propagates the session env (`WAYLAND_DISPLAY`, `XDG_CURRENT_DESKTOP`, …)
+  into the systemd user manager or the D-Bus activation environment. We backfill
+  PATH/askpass/etc. piecemeal via pam_env and paper over the empty desktop name with
+  one surgical lie (`env XDG_CURRENT_DESKTOP=GNOME` on the systray line in
+  `gatherd-session-helpers`). The "proper" fix is to set it once and propagate it,
+  either manually — early in the session: `export XDG_CURRENT_DESKTOP=sway:wlroots`,
+  then `dbus-update-activation-environment --systemd XDG_CURRENT_DESKTOP WAYLAND_DISPLAY …`
+  and `systemctl --user import-environment …` — or via **uwsm** (Universal Wayland
+  Session Manager), the current community-recommended launcher, which sets
+  `XDG_CURRENT_DESKTOP=sway:wlroots` and propagates env as part of bringing sway up
+  under a proper `graphical-session.target`.
+
+  **What I'd notice if we did this:**
+  - The systray inline `XDG_CURRENT_DESKTOP=GNOME` workaround could be retired —
+    tray icons / apps that gate behavior on a recognized desktop would work honestly.
+  - A whole class of "works when I launch it from a terminal, breaks from autostart"
+    env-propagation bugs would close (same family as the PATH/askpass fixes), because
+    D-Bus-activated apps and `systemctl --user` services would inherit the session env.
+  - Portal-driven features (screen share, file chooser, notifications) become robust
+    even if we stop pinning backends in `portals.conf`; with uwsm they "just work."
+  - With uwsm managing the session scope, logout teardown gets cleaner — overlaps
+    with, and could subsume, the **Session teardown** supervisor item above.
+
+  **Caveats / why it's not free:**
+  - uwsm is **systemd-only**, which fights the init-agnostic design and the Artix/s6
+    (seatd) target — there the manual export + (no systemd) path is the only option,
+    and the systemd-user/D-Bus propagation benefits don't apply.
+  - **This does NOT fix the post-setup-notes / xed opener bug.** Verified locally:
+    `xdg-open`'s `detectDE()` does not recognize `sway` or `sway:wlroots` (only legacy
+    DEs like GNOME/KDE/XFCE), so even a correct `XDG_CURRENT_DESKTOP` leaves `xdg-open`
+    on its generic, content-sniffing path. That bug is fixed independently by opening
+    with `gio open` (extension-aware, DE-independent) in `gatherd-prompt-postsetup`.
+    The only `XDG_CURRENT_DESKTOP` value that would route `xdg-open` through `gio` is a
+    recognized-DE *lie* (`GNOME`), which we deliberately refuse session-wide. So treat
+    this item as a session-quality improvement, not a fix for that opener.
+
 ## Secrets
 
 > Most of this section is **travel-repave SP4 (credential lifecycle)** — see the

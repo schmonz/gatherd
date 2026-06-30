@@ -7,6 +7,19 @@ nfs_server: ap-juicer.taile54b91.ts.net
 # configurability; consumers reference these by name.
 hardcoded_dotfiles_repo: "https://github.com/schmonz/dotfiles.git"
 hardcoded_ssh_authorized_keys_dotfile: ssh-authorized-keys
+
+# Claude Code preconfiguration. The marketplace + plugin are written as
+# declarative intent into ~/.claude/settings.json (extraKnownMarketplaces +
+# enabledPlugins); Claude Code itself clones and installs them on the first
+# authenticated launch, as part of its normal plugin sync. The skill needs no
+# such trigger — a standalone SKILL.md dropped into ~/.claude/skills/ is live
+# immediately. The marketplace NAME (the key, and the @suffix on the plugin) is
+# the `name` field from the marketplace's marketplace.json, not the repo slug.
+claude_plugin_marketplace_name: superpowers-marketplace
+claude_plugin_marketplace_repo: obra/superpowers-marketplace
+claude_plugin_name: superpowers
+claude_skill_name: doubt-driven-development
+claude_skill_url: "https://raw.githubusercontent.com/addyosmani/agent-skills/main/skills/doubt-driven-development/SKILL.md"
 # wifi_networks is defined entirely in vault — SSIDs are personal data, not just PSKs.
 # Desktop wallpaper + gtklock background + GRUB menu background. Public images but
 # me-specific, so the URLs sit with the other hardcoded_* placeholders. Two variants

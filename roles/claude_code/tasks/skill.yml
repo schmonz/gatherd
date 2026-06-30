@@ -1,0 +1,12 @@
+---
+- name: Ensure the standalone skill directory exists
+  ansible.builtin.file:
+    path: "{{ target_home }}/.claude/skills/{{ claude_skill_name }}"
+    state: directory
+    mode: '0755'
+
+- name: Install standalone skill {{ claude_skill_name }}
+  ansible.builtin.get_url:
+    url: "{{ claude_skill_url }}"
+    dest: "{{ target_home }}/.claude/skills/{{ claude_skill_name }}/SKILL.md"
+    mode: '0644'

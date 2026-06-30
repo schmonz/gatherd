@@ -1,0 +1,6 @@
+---
+- name: Merge the Superpowers plugin into Claude Code settings
+  ansible.builtin.import_tasks: settings.yml
+
+- name: Install standalone Claude Code skills
+  ansible.builtin.import_tasks: skill.yml

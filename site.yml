@@ -76,6 +76,7 @@
     - dotfiles
     - aur
     - desktop
+    - claude_code
 
   post_tasks:
     - name: Grant NOPASSWD pacman for thinkfan install

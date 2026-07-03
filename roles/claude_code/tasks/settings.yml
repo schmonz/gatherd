@@ -14,8 +14,8 @@
   failed_when: false
   changed_when: false
 
-- name: Enable the Superpowers marketplace and plugin
-  # Merge ONLY these two keys; combine(recursive=true) preserves every other
+- name: Merge gatherd's Claude Code defaults into settings.json
+  # Merge ONLY these keys; combine(recursive=true) preserves every other
   # setting (model, theme, hooks) the user maintains by hand. to_nice_json sorts
   # keys, so the first run may reorder an existing file — stable and idempotent
   # thereafter.
@@ -30,8 +30,14 @@
     # Built as a single Jinja dict expression, not a YAML literal mapping, so the
     # marketplace/plugin names used as KEYS actually expand. Templated keys in a
     # plain YAML `vars:` mapping are left as literal "{{ ... }}" strings.
+    #
+    # disableClaudeAiConnectors turns off the claude.ai account's auto-connected
+    # MCP connectors (Gmail, Google Calendar, Google Drive, and any future ones),
+    # which arrive unauthenticated. One global switch; the per-project
+    # disabledMcpServers toggle does not cover projects that don't exist yet.
     required: >-
       {{ {
+           'disableClaudeAiConnectors': true,
            'extraKnownMarketplaces': {
              claude_plugin_marketplace_name: {
                'source': {'source': 'github', 'repo': claude_plugin_marketplace_repo}

@@ -50,9 +50,6 @@
     state: present
   when: has_ir_receiver
 
-- name: Cache wallpaper images for GRUB and the desktop
-  ansible.builtin.include_tasks: wallpaper_cache.yml
-
 - name: Install packages
   community.general.pacman:
     name:
@@ -574,7 +571,7 @@
     path: /etc/greetd/regreet.toml
     regexp: '^path\s*='
     line: 'path = "{{ wallpaper_cache_dark }}"'
-  when: hardcoded_wallpaper_dark_url | length > 0
+  when: wallpaper_cache_dark is exists
   notify: Etckeeper commit
 
 - name: Flush handlers

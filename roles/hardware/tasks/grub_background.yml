@@ -1,14 +1,13 @@
 ---
 # Reuse the dark desktop wallpaper as the GRUB menu background, replacing the
-# EndeavourOS splash. The image is fetched once into the system cache by the
-# system play (roles/system/tasks/wallpaper_cache.yml), which runs before this;
-# GRUB reads it straight from there at boot, off the root filesystem — same as the
-# old /usr/share splash. No light variant: GRUB runs before any session, so there's
-# no color-scheme to follow.
+# EndeavourOS splash. The image is committed to the repo under backgrounds/ and so
+# is already present at setup_dir/backgrounds; GRUB reads it straight from there at
+# boot, off the root filesystem — same as the old /usr/share splash. No light
+# variant: GRUB runs before any session, so there's no color-scheme to follow.
 - name: Point GRUB at the cached background image
   ansible.builtin.lineinfile:
     path: /etc/default/grub
     regexp: '^#?GRUB_BACKGROUND='
     line: "GRUB_BACKGROUND='{{ wallpaper_cache_dark }}'"
-  when: hardcoded_wallpaper_dark_url | length > 0
+  when: wallpaper_cache_dark is exists
   notify: Rebuild grub

@@ -1,0 +1,47 @@
+#!/bin/sh
+# DEV-TIME ONLY — this is NOT invoked by the playbook. It (re)populates the
+# committed desktop/GRUB background images from their upstream source. Run it on
+# a dev machine and commit the results; a fresh repave then finds the images
+# already present under backgrounds/ (= setup_dir/backgrounds), so provisioning
+# needs no network fetch — which also means a repave works offline or behind a
+# captive portal, where a runtime fetch from a moving GitHub raw URL would fail.
+#
+# The upstream originals are 5120x2880 (5K); downscaling to 2560 wide keeps them
+# sharp on any laptop panel and the GRUB menu (everything fill-scales) while
+# cutting the committed pair to ~1/4 the size. Uses Pillow (python-pillow),
+# already a gatherd package.
+set -eu
+
+# Upstream provenance: dharmx/walls (public). dark = blue sky, light = blue+pink
+# sky — same composition, so the wallpaper can follow the GTK light/dark scheme.
+dark_url="https://raw.githubusercontent.com/dharmx/walls/main/minimal/a_blue_sky_over_a_mountain_range.png"
+light_url="https://raw.githubusercontent.com/dharmx/walls/main/minimal/a_blue_and_pink_sky_over_a_mountain_range.png"
+
+target_width=2560
+
+repo_root=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
+out_dir="$repo_root/backgrounds"
+mkdir -p "$out_dir"
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+fetch_scaled() {
+    _url=$1
+    _dest=$2
+    curl -fsSL -o "$work/dl.png" "$_url"
+    python3 - "$work/dl.png" "$_dest" "$target_width" <<'PY'
+import sys
+from PIL import Image
+src, dest, width = sys.argv[1], sys.argv[2], int(sys.argv[3])
+img = Image.open(src)
+w, h = img.size
+if w > width:
+    img = img.resize((width, round(h * width / w)), Image.LANCZOS)
+img.save(dest, optimize=True)
+print(f"  {dest}  {img.size[0]}x{img.size[1]}")
+PY
+}
+
+fetch_scaled "$dark_url"  "$out_dir/wallpaper-dark.png"
+fetch_scaled "$light_url" "$out_dir/wallpaper-light.png"

@@ -1,10 +1,10 @@
 ---
-# Desktop wallpaper + gtklock background. Images are copied from the system cache
-# (populated once by roles/system/tasks/wallpaper_cache.yml; personal content, not
-# carried in this repo) into the user's data dir, replacing the EndeavourOS azote
-# leftover (~/.azotebg swaybg'ing a baked-in SpaceStation PNG). A launcher picks the
-# dark or light variant by the current GTK color scheme, so a future darkman hook can
-# re-run it on light/dark switch.
+# Desktop wallpaper + gtklock background. Images are copied from the committed
+# backgrounds/ under setup_dir (populated at dev time by scripts/gatherd-fetch-wallpapers)
+# into the user's data dir, replacing the EndeavourOS azote leftover (~/.azotebg
+# swaybg'ing a baked-in SpaceStation PNG). A launcher picks the dark or light variant
+# by the current GTK color scheme, so a future darkman hook can re-run it on
+# light/dark switch.
 
 - name: Create wallpaper directory
   ansible.builtin.file:

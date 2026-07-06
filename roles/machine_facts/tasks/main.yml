@@ -388,6 +388,7 @@
     sway_output_scale: "{{ sway_output_scale }}"
     has_phantom_second_display: "{{ has_phantom_second_display }}"
     has_plenty_of_ram: "{{ has_plenty_of_ram }}"
+    has_rotated_panel: "{{ has_rotated_panel }}"
     has_avx: "{{ has_avx }}"
     has_screen_backlight: "{{ has_screen_backlight }}"
     has_thinkpad_hardware: "{{ has_thinkpad_hardware }}"

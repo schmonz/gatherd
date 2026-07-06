@@ -89,6 +89,14 @@
   (Plymouth) could rotate the LUKS prompt via `fbcon=rotate:1` **only** under
   option (b) — `/boot` out of LUKS, prompt moved into the initramfs.
 - **Pre-configure more known WiFi networks**: Review other machines and add SSID/PSK pairs to the vault
+- **Mint machine's VNC *server* side (non-gatherd target)**: the outbound
+  `gatherd-remmina-connect` launcher works — VNC-over-SSH from this box tunnels to a
+  remote's `localhost:5900` and connects cleanly — but the Linux Mint target is
+  misconfigured on the *server* end: after login there's no window manager/desktop,
+  just an empty session. That's the remote's VNC-server/session wiring, not gatherd
+  (which provisions Arch/EndeavourOS, not Mint). Sort out Mint's VNC service so a
+  real desktop session comes up for an incoming connection (a WM/DE started for the
+  VNC seat). gatherd's own end (inbound wayvnc + outbound launcher) is verified working.
 - **chsh to zsh**: make zsh the login shell as part of provisioning.
 - **Install mattwynne/yaks non-interactively**: want it installed without
   `curl | bash` and without interactive prompts. Find/derive a scriptable install

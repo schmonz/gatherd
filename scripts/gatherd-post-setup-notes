@@ -7,6 +7,11 @@
 #     pruned, with no markers or special formatting to remember.
 # Safe to run at any time; gatherd-prompt-postsetup calls it at each login.
 
+# shellcheck disable=SC2016
+# The li/section strings deliberately hold literal `backtick` and $(...) command
+# text for the reader to paste into their own shell — it is documentation, never
+# meant to expand here.
+
 OUTPUT="$HOME/.config/gatherd-post-setup.md"
 
 # ---------------------------------------------------------------------------

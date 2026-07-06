@@ -105,6 +105,7 @@
       - xorg-xhost
       # dev tools
       - ansible-lint
+      - shellcheck
       - glow
       - tig
       - github-cli

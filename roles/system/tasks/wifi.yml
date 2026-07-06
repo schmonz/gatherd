@@ -46,27 +46,48 @@
   notify: Etckeeper commit
 
 # The module's wifi_sec dict maps only to 802-11-wireless-security.*: it can set
-# key-mgmt: wpa-eap but has no field for the 802-1x.* group (EAP method, identity,
-# password, phase2 auth). So create the base enterprise profile here — same
-# roaming/autoconnect shape as PSK — and set the 802-1x.* properties with raw
-# nmcli in the reconcile pair below, the same module-can't-so-nmcli-does pattern
-# the interface-name unbind uses.
-- name: Pre-configure known WPA-Enterprise (802.1x) WiFi networks
-  community.general.nmcli:
-    type: wifi
-    conn_name: "{{ item.ssid }}"
-    ifname: ''
-    ssid: "{{ item.ssid }}"
-    autoconnect: true
-    wifi_sec:
-      key-mgmt: wpa-eap
-    method4: auto
-    method6: auto
-    state: present
+# key-mgmt: wpa-eap but has NO field for the 802-1x.* group (EAP method, identity,
+# phase2 auth, password). That makes a module create impossible here: NetworkManager
+# refuses to ADD a wpa-eap connection unless the 802-1x group is already present
+# ("wpa-eap security requires 802-1x setting presence"), and for EAP-TTLS the add
+# further demands eap + identity + phase2-auth all set. So the profile has to be born
+# complete, via raw nmcli — the same module-can't-so-nmcli-does pattern the interface
+# unbind uses. Create only when missing (nmcli connection add errors on a duplicate
+# name); the read+modify reconcile pair below then updates identity/phase2/password
+# when the vault values change. Setting exactly eap/identity/phase2 (and no password)
+# would not work: the reconcile task keys idempotency on those three, so it would
+# skip and never write the password, leaving the profile unauthable — hence all four
+# go in at create. no_log: the command line carries the vault password.
+- name: Check whether each WPA-Enterprise profile already exists
+  ansible.builtin.command:
+    cmd: nmcli -g connection.id connection show "{{ item.ssid }}"
+  register: wifi_eap_exists
+  changed_when: false
+  failed_when: false
   loop: "{{ wifi_networks }}"
   when: (item.key_mgmt | default('wpa-psk')) == 'wpa-eap'
   loop_control:
     label: "{{ item.ssid }}"
+
+- name: Create missing WPA-Enterprise profiles complete (NM rejects a partial wpa-eap add)
+  ansible.builtin.command:
+    cmd: >-
+      nmcli connection add type wifi
+      con-name "{{ item.item.ssid }}" ssid "{{ item.item.ssid }}"
+      autoconnect yes
+      wifi-sec.key-mgmt wpa-eap
+      802-1x.eap {{ item.item.eap }}
+      802-1x.identity "{{ item.item.identity }}"
+      802-1x.phase2-auth {{ item.item.phase2_auth }}
+      802-1x.password "{{ item.item.password }}"
+  loop: "{{ wifi_eap_exists.results }}"
+  when:
+    - item.skipped is not defined
+    - item.rc != 0
+  changed_when: true
+  no_log: true
+  loop_control:
+    label: "{{ item.item.ssid }}"
   notify: Etckeeper commit
 
 - name: Read each WPA-Enterprise profile's current 802.1x settings

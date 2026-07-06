@@ -1,2 +1,15 @@
 #!/bin/sh
+# Sway autostart — runs every login. Opens the tailnet admin login page when not
+# yet connected, and idempotently asserts accept-dns + accept-routes so they no
+# longer need setting by hand. Relies on the operator pref (set to this user in
+# site.yml) so `tailscale set` needs no root; gatherd-set-tailscale-operator
+# re-asserts operator if it ever fails to stick. accept-dns=true is load-bearing
+# for the ~/trees NFS-over-MagicDNS mount (plans/TODO.md). Prefs are persistent
+# and `tailscale set` stores them even while logged out, so once set this is a
+# no-op and they take effect the moment SSO login completes.
 tailscale ip >/dev/null 2>&1 || xdg-open "https://login.tailscale.com/admin"
+
+prefs=$(tailscale debug prefs 2>/dev/null)
+printf '%s' "$prefs" | grep -qE '"CorpDNS":\s*true' \
+    && printf '%s' "$prefs" | grep -qE '"RouteAll":\s*true' && exit 0
+tailscale set --accept-dns=true --accept-routes

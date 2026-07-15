@@ -29,11 +29,13 @@ claude_skill_url: "https://raw.githubusercontent.com/addyosmani/agent-skills/mai
 # then commit. Two variants — same composition, dark-blue vs pink sky — so the
 # wallpaper can follow the GTK light/dark scheme; the lock screen and GRUB always
 # use the dark one. Both consumers read from the cache path below: GRUB at boot,
-# the desktop/lock screen via local copies in the user's home. The .png extension
-# matters because GRUB's 00_header picks its image loader by extension.
+# the desktop/lock screen via local copies in the user's home. The .jpg extension
+# matters because GRUB's 00_header picks its image loader by extension; it maps
+# .jpg to the jpeg reader, which decodes baseline JPEG only (see
+# scripts/gatherd-fetch-wallpapers, which encodes accordingly).
 wallpaper_cache_dir: "{{ setup_dir }}/backgrounds"
-wallpaper_cache_dark: "{{ wallpaper_cache_dir }}/wallpaper-dark.png"
-wallpaper_cache_light: "{{ wallpaper_cache_dir }}/wallpaper-light.png"
+wallpaper_cache_dark: "{{ wallpaper_cache_dir }}/wallpaper-dark.jpg"
+wallpaper_cache_light: "{{ wallpaper_cache_dir }}/wallpaper-light.jpg"
 wallpaper_dir: "{{ target_home }}/.local/share/backgrounds"
 wallpaper_dark_path: "{{ wallpaper_dir }}/wallpaper-dark"
 wallpaper_light_path: "{{ wallpaper_dir }}/wallpaper-light"

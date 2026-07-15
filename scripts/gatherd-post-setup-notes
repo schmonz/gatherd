@@ -213,6 +213,7 @@ section_verify() {
     section_present 'Verify' && return
     h 'Verify'
     li 'IR receiver (machines with an IR receiver): `ls /dev/lirc* /sys/class/rc/rc* 2>/dev/null` shows at least one device; `ir-keytable` lists the device with a keymap loaded; and `ir-keytable -t -s rc0` while pressing remote buttons shows a scancode + keycode per press.'
+    li 'GRUB background decodes (the wallpapers are JPEG, and GRUB'"'"'s jpeg reader takes baseline 4:2:0/4:4:4 only — a rejected image fails silently to a plain background): `grep GRUB_BACKGROUND /etc/default/grub` prints the .jpg under /usr/local/lib/gatherd/backgrounds; `grep -c "insmod jpeg" /boot/grub/grub.cfg` prints 1 or more; and the GRUB menu shows the Big Sur image, not a black screen, on the next boot.'
 }
 
 # ---------------------------------------------------------------------------

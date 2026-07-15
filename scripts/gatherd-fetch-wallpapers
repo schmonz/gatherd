@@ -4,18 +4,25 @@
 # a dev machine and commit the results; a fresh repave then finds the images
 # already present under backgrounds/ (= setup_dir/backgrounds), so provisioning
 # needs no network fetch — which also means a repave works offline or behind a
-# captive portal, where a runtime fetch from a moving GitHub raw URL would fail.
+# captive portal, where a runtime fetch from a moving URL would fail.
 #
-# The upstream originals are 5120x2880 (5K); downscaling to 2560 wide keeps them
-# sharp on any laptop panel and the GRUB menu (everything fill-scales) while
-# cutting the committed pair to ~1/4 the size. Uses Pillow (python-pillow),
-# already a gatherd package.
+# The upstream originals are 6016x6016 (6K, square — Apple ships one image for
+# every Mac aspect ratio and lets the compositor crop). Downscaling to 2560 wide
+# keeps them sharp on any laptop panel and the GRUB menu (everything fill-scales)
+# while cutting the committed pair to a fraction of the size. Uses Pillow
+# (python-pillow), already a gatherd package.
+#
+# Note the square source: on a 16:9 panel, fill-scaling shows only the middle
+# band of the image and crops the rest away. That's how macOS renders these too,
+# so the framing you see is the intended one.
 set -eu
 
-# Upstream provenance: dharmx/walls (public). dark = blue sky, light = blue+pink
-# sky — same composition, so the wallpaper can follow the GTK light/dark scheme.
-dark_url="https://raw.githubusercontent.com/dharmx/walls/main/minimal/a_blue_sky_over_a_mountain_range.png"
-light_url="https://raw.githubusercontent.com/dharmx/walls/main/minimal/a_blue_and_pink_sky_over_a_mountain_range.png"
+# Upstream provenance: 512pixels.net, Stephen Hackett's archive of the default
+# macOS wallpapers. dark = Big Sur Color Night, light = Big Sur Color Day — the
+# same composition at two times of day, so the wallpaper can follow the GTK
+# light/dark scheme.
+dark_url="https://media.512pixels.net/downloads/macos-wallpapers-6k/11-Big-Sur-Color-Night-6k.jpg"
+light_url="https://media.512pixels.net/downloads/macos-wallpapers-6k/11-Big-Sur-Color-Day-6k.jpg"
 
 target_width=2560
 
@@ -29,8 +36,8 @@ trap 'rm -rf "$work"' EXIT
 fetch_scaled() {
     _url=$1
     _dest=$2
-    curl -fsSL -o "$work/dl.png" "$_url"
-    python3 - "$work/dl.png" "$_dest" "$target_width" <<'PY'
+    curl -fsSL -o "$work/dl.img" "$_url"
+    python3 - "$work/dl.img" "$_dest" "$target_width" <<'PY'
 import sys
 from PIL import Image
 src, dest, width = sys.argv[1], sys.argv[2], int(sys.argv[3])
@@ -38,10 +45,15 @@ img = Image.open(src)
 w, h = img.size
 if w > width:
     img = img.resize((width, round(h * width / w)), Image.LANCZOS)
-img.save(dest, optimize=True)
+# GRUB_BACKGROUND points straight at these files, and GRUB's jpeg reader is
+# narrower than a normal decoder: baseline only (no progressive), and it rejects
+# 4:2:2 chroma subsampling. Pillow's subsampling default varies with quality, so
+# pin 4:2:0 rather than inherit whatever the quality knob implies today.
+img.convert("RGB").save(dest, "JPEG", quality=90, progressive=False,
+                        subsampling="4:2:0", optimize=True)
 print(f"  {dest}  {img.size[0]}x{img.size[1]}")
 PY
 }
 
-fetch_scaled "$dark_url"  "$out_dir/wallpaper-dark.png"
-fetch_scaled "$light_url" "$out_dir/wallpaper-light.png"
+fetch_scaled "$dark_url"  "$out_dir/wallpaper-dark.jpg"
+fetch_scaled "$light_url" "$out_dir/wallpaper-light.jpg"

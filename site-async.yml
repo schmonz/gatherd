@@ -132,8 +132,11 @@
     GOPATH: "{{ target_home }}/.local/share/go"
     GOBIN: "{{ target_home }}/.local/bin"
 
-  vars_files:
-    - vault/vault.yml
+  # No vars_files: vault/vault.yml. It was needed when PIA logged in from vault
+  # credentials; since those moved to 1Password this play has referenced nothing
+  # but the aur_slow_* package vars and target_user/target_home. Keeping it meant
+  # the whole REST tier could not be syntax-checked or linted without the vault
+  # password, and tests/test — which seeds a dummy one — could not run REST at all.
 
   tasks:
     - name: Install slow AUR packages

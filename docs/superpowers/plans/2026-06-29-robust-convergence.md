@@ -490,10 +490,11 @@ Nothing below has been observed, only reasoned about:
   fails — visibly, via the login notification, and without blocking the greeter.
 
 **Known coupling, not addressed here:** `gatherd-await-and-run` blocks until
-`.vault_pass` exists, so the whole REST tier now waits on the vault password, not
-just the slow AUR play that needs it. Early console vault entry usually satisfies
+`.vault_pass` exists, so the whole REST tier waits on the vault password even
+though — since the vestigial `vars_files` came off the slow-AUR play — no REST
+task reads a vault variable at all. Early console vault entry usually satisfies
 this before CORE finishes, but a machine that never gets a vault password never
-converges REST. Worth splitting the gate if that bites.
+converges REST. The gate is now pure legacy; worth removing if it bites.
 
 ---
 

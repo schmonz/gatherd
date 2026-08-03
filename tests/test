@@ -88,13 +88,14 @@ tar -C "$REPO" --exclude='.git' --exclude='tests' -c . \
 # ── Run 1 ─────────────────────────────────────────────────────────────────────
 
 echo "=== Run 1 ==="
-"${SSH[@]}" "cd /usr/local/lib/gatherd && ansible-playbook -e sway_guard_override=true site.yml"
+# Both tiers, in boot order: CORE gates the greeter, REST converges post-login.
+"${SSH[@]}" "cd /usr/local/lib/gatherd && ansible-playbook -e sway_guard_override=true site-core.yml site-async.yml"
 
 # ── Run 2: idempotency check ──────────────────────────────────────────────────
 
 echo "=== Run 2 (idempotency check) ==="
 run2_log=$(mktemp)
-"${SSH[@]}" "cd /usr/local/lib/gatherd && ansible-playbook -e sway_guard_override=true site.yml" | tee "$run2_log"
+"${SSH[@]}" "cd /usr/local/lib/gatherd && ansible-playbook -e sway_guard_override=true site-core.yml site-async.yml" | tee "$run2_log"
 
 if grep -qE 'changed=0[[:space:]].*failed=0' "$run2_log"; then
     echo "PASS: idempotent"

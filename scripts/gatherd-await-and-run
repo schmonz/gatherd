@@ -21,7 +21,7 @@ playbook="$2"
 gatherd_home=/usr/local/lib/gatherd
 vault_pass="$gatherd_home/.vault_pass"
 vault_file="$gatherd_home/vault/vault.yml"
-complete=/etc/gatherd/complete
+complete=/etc/gatherd/core-complete
 
 # Nothing to do if this play isn't deployed (e.g. no site-vault.yml).
 [ -f "$playbook" ] || exit 0

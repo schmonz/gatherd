@@ -1,18 +1,22 @@
 [Unit]
-Description=gatherd first-boot setup
-After=network-online.target nss-lookup.target systemd-user-sessions.service
+Description=gatherd first-boot setup (CORE tier)
+# No network-online.target: CORE is local-only by construction, so ordering the
+# greeter behind the network would reintroduce the ~60s NetworkManager-wait-online
+# stall on exactly the machines this design is for — offline, or behind a captive
+# portal that never satisfies it. REST does the networked half after login, from
+# gatherd-async.service.
+After=systemd-user-sessions.service
 Before=greetd.service
-Wants=network-online.target nss-lookup.target
-ConditionPathExists=/usr/local/lib/gatherd/site.yml
+ConditionPathExists=/usr/local/lib/gatherd/site-core.yml
 
 [Service]
 Type=oneshot
 WorkingDirectory=/usr/local/lib/gatherd
-ExecCondition=/usr/local/lib/gatherd/scripts/gatherd-needs-run /etc/gatherd/complete
+ExecCondition=/usr/local/lib/gatherd/scripts/gatherd-needs-run /etc/gatherd/core-complete
 # The wrapper owns galaxy install, sleep-inhibit, syntax gate, timeout, and
 # status recording — and always exits 0, so a playbook error or hang can never
 # fail this unit and block greetd. Real status: /etc/gatherd/last-run.
-ExecStart=/usr/local/lib/gatherd/scripts/gatherd-run-core /usr/local/lib/gatherd/site.yml
+ExecStart=/usr/local/lib/gatherd/scripts/gatherd-run-core /usr/local/lib/gatherd/site-core.yml
 RemainAfterExit=no
 StandardOutput=journal+console
 StandardError=journal+console

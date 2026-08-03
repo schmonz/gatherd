@@ -10,7 +10,7 @@
 # first-boot system run has finished — before that there is nothing to unblock.
 needed=/usr/local/lib/gatherd/scripts/gatherd-vault-pass-needed
 
-test -f /etc/gatherd/complete || exit 0
+test -f /etc/gatherd/core-complete || exit 0
 
 while "$needed"; do
     vault_pass=$("${SUDO_ASKPASS:-/usr/local/bin/gatherd-askpass}" "[vault]") || exit 0

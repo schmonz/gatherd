@@ -1,4 +1,13 @@
 ---
+# CORE: the only tier that gates greetd. Everything here converges with no
+# internet at all — no package manager, no AUR, no downloads, no dotfiles clone —
+# so a machine with a pulled cable, or trapped behind a captive portal, still
+# reaches a usable Sway session that looks like yours. Everything network-shaped
+# is REST and runs post-login from site-async.yml, where a portal can be cleared
+# and a retry is cheap.
+#
+# Run by gatherd.service via scripts/gatherd-run-core, which syntax-checks,
+# timeouts, records status to /etc/gatherd/last-run, and always exits 0.
 - name: Detect target user and hardware
   hosts: localhost
   connection: local
@@ -23,12 +32,12 @@
     - name: Refuse to run during a Sway session
       ansible.builtin.fail:
         msg: |
-          site.yml is designed to run before greetd starts (via
+          site-core.yml is designed to run before greetd starts (via
           gatherd.service before login). Running it inside a live
           Sway session restarts services Sway depends on and will
           end the session. To re-run safely:
-            - Reboot. gatherd.service re-runs if /etc/gatherd/complete is gone
-              or records a git HEAD other than the deployed tree's.
+            - Reboot. gatherd.service re-runs if /etc/gatherd/core-complete is
+              gone or records a git HEAD other than the deployed tree's.
             - Or switch to a console TTY (Ctrl+Alt+F2), stop greetd, then run.
             - Or pass -e sway_guard_override=true if you know what you're doing
               (e.g. an idempotency test inside a VM that's already past first boot).
@@ -50,9 +59,13 @@
   become: true
   any_errors_fatal: true
 
-  roles:
-    - system
-    - hardware
+  tasks:
+    # The hardware role is wholly REST: every capability it handles installs a
+    # package or writes a bootloader config that needs one.
+    - name: Converge the local-only system tier
+      ansible.builtin.import_role:
+        name: system
+        tasks_from: core
 
 
 - name: User configuration
@@ -72,67 +85,25 @@
     GOPATH: "{{ target_home }}/.local/share/go"
     GOBIN: "{{ target_home }}/.local/bin"
 
-  roles:
-    - dotfiles
-    - aur
-    - desktop
-    - claude_code
+  tasks:
+    # dotfiles (a git clone), aur, and claude_code (a get_url) are wholly REST.
+    - name: Converge the local-only desktop tier
+      ansible.builtin.import_role:
+        name: desktop
+        tasks_from: core
 
   post_tasks:
-    - name: Grant NOPASSWD pacman for thinkfan install
-      ansible.builtin.lineinfile:
-        path: /etc/sudoers
-        line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
-        validate: visudo -cf %s
-      when: has_thinkpad_hardware
-      become: true
-      become_user: root
-
-    - block: # noqa: name[missing]
-        - name: Install thinkfan
-          kewlfft.aur.aur:
-            name: thinkfan
-            use: yay
-            state: present
-          when: has_thinkpad_hardware
-      always:
-        - name: Revoke NOPASSWD pacman after thinkfan install
-          ansible.builtin.lineinfile:
-            path: /etc/sudoers
-            line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
-            state: absent
-            validate: visudo -cf %s
-          when: has_thinkpad_hardware
-          become: true
-          become_user: root
-
-    - name: Enable thinkfan service
-      ansible.builtin.systemd:
-        name: thinkfan
-        enabled: true
-        # thinkpad_acpi must load with fan_control=1 (set by modprobe.d) before
-        # thinkfan can start; that requires a reboot after first run.
-      when: has_thinkpad_hardware
-      become: true
-      become_user: root
-
-    - name: Set tailscale operator
-      ansible.builtin.command: "tailscale set --operator={{ target_user }}"
-      changed_when: false
-      become: true
-      become_user: root
-
     - name: Read deployed git HEAD  # noqa: command-instead-of-module
       ansible.builtin.command: "git -C {{ setup_dir }} rev-parse HEAD"
       register: _gatherd_head
       changed_when: false
       become: true
 
-    - name: Mark setup complete
+    - name: Mark core setup complete
       # Sentinel records the HEAD that ran to completion; gatherd-needs-run
       # re-runs the play when HEAD later changes (e.g. after a git pull).
       ansible.builtin.copy:
-        dest: /etc/gatherd/complete
+        dest: /etc/gatherd/core-complete
         content: "{{ _gatherd_head.stdout }}\n"
         mode: '0644'
       become: true

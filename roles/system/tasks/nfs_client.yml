@@ -67,19 +67,42 @@
   register: target_uid
   changed_when: false
 
-# Two ordering constraints for clean NFS unmount at shutdown (Before= reverses for stop):
-# 1. Before=user-<uid>.slice: all user processes (terminals, Sway, etc.) die first,
-#    releasing file handles on NFS mounts before autofs tries to unmount them.
-# 2. After=tailscaled.service: autofs stops before tailscaled, so umount.nfs4 can
+# Everything gatherd has to say about autofs ordering, in ONE drop-in. Splitting
+# it would mean relying on the alphabetical order in which systemd merges
+# drop-ins for the reset below to land before the additions — self-contained is
+# worth more than tidy filenames here.
+#
+# Wants=/After= with an empty value reset the inherited lists; the lines after
+# them re-state only what we actually want:
+#
+# 1. Dropping the stock Wants/After=network-online.target (and rpc-statd) is what
+#    finally takes the greeter off the network. gatherd.service no longer pulls
+#    network-online in, but graphical.target -> autofs.service still did, so an
+#    offline boot kept paying NetworkManager-wait-online's timeout. autofs mounts
+#    on demand and our only map is nfs4, which needs neither at start.
+# 2. Before=user-<uid>.slice (Before= reverses for stop): all user processes die
+#    first, releasing file handles on NFS mounts before autofs unmounts them.
+# 3. After=tailscaled.service: autofs stops before tailscaled, so umount.nfs4 can
 #    still reach the NFS server over Tailscale.
-- name: Order autofs shutdown after user session and before tailscaled
+- name: Order autofs, and take it off network-online
   ansible.builtin.copy:
-    dest: /etc/systemd/system/autofs.service.d/gatherd-tailscaled-ordering.conf
+    dest: /etc/systemd/system/autofs.service.d/gatherd-ordering.conf
     content: |
       [Unit]
-      Before=user-{{ target_uid.stdout }}.slice
+      Wants=
+      After=
+      After=network.target
       After=tailscaled.service
+      Before=user-{{ target_uid.stdout }}.slice
     mode: '0644'
+  notify:
+    - Reload systemd
+    - Etckeeper commit
+
+- name: Remove the superseded autofs ordering drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/system/autofs.service.d/gatherd-tailscaled-ordering.conf
+    state: absent
   notify:
     - Reload systemd
     - Etckeeper commit

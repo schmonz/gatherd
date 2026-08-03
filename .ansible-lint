@@ -9,8 +9,15 @@ skip_list:
   # between .ansible/collections/ and system site-packages
   - args[module]
 
+exclude_paths:
+  # macOS AppleDouble sidecars from the NFS working copy; not UTF-8, not YAML,
+  # and gitignored — but ansible-lint still tries to parse them by extension.
+  - "._*"
+  - "**/._*"
+
 mock_modules:
   # collections not installed in the lint environment
+  - ansible.posix.authorized_key
   - community.general.pacman
   - community.general.git_config
   - community.general.ini_file

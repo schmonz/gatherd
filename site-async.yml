@@ -1,4 +1,11 @@
 ---
+# REST: everything that touches the network. Runs after login, once CORE has
+# already delivered a usable session, so a captive portal can be cleared and a
+# failure is recoverable rather than a lockout.
+#
+# The REST plays deliberately carry no any_errors_fatal: one package that will
+# not install must not abort the remainder of a post-login convergence. CORE
+# keeps it, because CORE is small, local, and gates the greeter.
 - name: Detect target user and hardware
   hosts: localhost
   connection: local
@@ -14,12 +21,95 @@
     - machine_facts
 
 
+- name: System configuration
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Converge the network-dependent system tier
+      ansible.builtin.import_role:
+        name: system
+        tasks_from: rest
+
+  roles:
+    - hardware
+
+
+- name: User configuration
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  become_method: ansible.builtin.su
+  become_user: "{{ target_user }}"
+  environment:
+    PATH: "{{ target_home }}/.local/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl:{{ ansible_env.PATH }}"
+    GOPATH: "{{ target_home }}/.local/share/go"
+    GOBIN: "{{ target_home }}/.local/bin"
+
+  roles:
+    - dotfiles
+    - aur
+    - claude_code
+
+  tasks:
+    - name: Converge the network-dependent desktop tier
+      ansible.builtin.import_role:
+        name: desktop
+        tasks_from: rest
+
+  post_tasks:
+    - name: Grant NOPASSWD pacman for thinkfan install
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers
+        line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
+        validate: visudo -cf %s
+      when: has_thinkpad_hardware
+      become: true
+      become_user: root
+
+    - block: # noqa: name[missing]
+        - name: Install thinkfan
+          kewlfft.aur.aur:
+            name: thinkfan
+            use: yay
+            state: present
+          when: has_thinkpad_hardware
+      always:
+        - name: Revoke NOPASSWD pacman after thinkfan install
+          ansible.builtin.lineinfile:
+            path: /etc/sudoers
+            line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
+            state: absent
+            validate: visudo -cf %s
+          when: has_thinkpad_hardware
+          become: true
+          become_user: root
+
+    - name: Enable thinkfan service
+      ansible.builtin.systemd:
+        name: thinkfan
+        enabled: true
+        # thinkpad_acpi must load with fan_control=1 (set by modprobe.d) before
+        # thinkfan can start; that requires a reboot after first run.
+      when: has_thinkpad_hardware
+      become: true
+      become_user: root
+
+    - name: Set tailscale operator
+      ansible.builtin.command: "tailscale set --operator={{ target_user }}"
+      changed_when: false
+      become: true
+      become_user: root
+
+
 - name: Slow system packages
   hosts: localhost
   connection: local
   gather_facts: false
   become: true
-  any_errors_fatal: true
 
   tasks:
     - name: Install slow packages
@@ -33,7 +123,6 @@
   become: true
   become_method: ansible.builtin.su
   become_user: "{{ target_user }}"
-  any_errors_fatal: true
   environment:
     # perlbin dirs are normally added by /etc/profile.d/perlbin.sh, but `su`
     # (not a login shell) skips profile.d, so pod2man lands off PATH and AUR

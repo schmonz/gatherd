@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Fail if any package is installed without declaring a tier.
+
+The offline-core promise is complete-by-construction only if the cache builder
+can see every package the playbook installs. It reads the *_packages vars in
+group_vars/all/main.yml; a package named inline in a task file is invisible to
+it, so the stick silently drifts from the playbook. That must be a hard failure,
+not a comment nobody reads.
+
+A pacman/aur task is CLASSIFIED when its `name:` is a "{{ *_packages }}"
+reference. Anything else is a violation unless it appears in ALLOWED below.
+
+Usage: gatherd-check-package-tiers [repo-root]   (exit 0 clean, 1 on violations)
+"""
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+PKG_MODULES = ('community.general.pacman', 'kewlfft.aur.aur')
+TIER_VAR = re.compile(r'^\{\{\s*(\w*_packages)\s*\}\}$')
+
+# Deliberately inline, with the reason each is not a cache-stick concern.
+ALLOWED = {
+    'base-devel': 'yay build prerequisite, not a package set',
+    'firefox': 'removal, not an install',
+    'polkit-gnome': 'removal, not an install',
+    # Hardware-gated: each sits beside its has_* gate in its own tiny task file,
+    # and being per-machine a generic cache stick cannot predict it anyway.
+    'grub-btrfs': 'hardware-gated (has_grub)',
+    'v4l-utils': 'hardware-gated (has_ir_receiver)',
+    'keyd': 'hardware-gated (has_cros_fkeys)',
+    'thinkfan': 'hardware-gated (has_thinkpad_hardware)',
+    'mbpfan': 'hardware-gated (has_applesmc)',
+    'facetimehd-dkms': 'hardware-gated (has_facetimehd)',
+    'iio-sensor-proxy': 'hardware-gated (has_screen_backlight/has_kbd_backlight)',
+    'clight': 'hardware-gated (has_screen_backlight/has_kbd_backlight)',
+    'python-validity': 'hardware-gated (has_fingerprint_reader)',
+}
+
+
+def walk(node, found):
+    """Collect every (module, name-value) pair under a parsed YAML tree."""
+    if isinstance(node, list):
+        for n in node:
+            walk(n, found)
+    elif isinstance(node, dict):
+        for key, val in node.items():
+            if key in PKG_MODULES and isinstance(val, dict):
+                found.append((key, val.get('name')))
+            else:
+                walk(val, found)
+
+
+def main():
+    root = Path(sys.argv[1] if len(sys.argv) > 1 else '.')
+    declared = {
+        k for k, v in (yaml.safe_load((root / 'group_vars/all/main.yml').read_text()) or {}).items()
+        if k.endswith('_packages') and isinstance(v, list)
+    }
+    if not declared:
+        print('no *_packages vars found in group_vars/all/main.yml', file=sys.stderr)
+        return 1
+
+    violations = []
+    for path in sorted(root.glob('**/*.yml')):
+        if any(part in ('.git', '.ansible', 'docs') for part in path.parts):
+            continue
+        try:
+            doc = yaml.safe_load(path.read_text())
+        except (yaml.YAMLError, UnicodeDecodeError):
+            continue
+        found = []
+        walk(doc, found)
+        for module, name in found:
+            if isinstance(name, str):
+                m = TIER_VAR.match(name.strip())
+                if m:
+                    if m.group(1) not in declared:
+                        violations.append((path, module, f'{name} — no such var'))
+                    continue
+                names = [name]
+            elif isinstance(name, list):
+                names = name
+            else:
+                continue
+            for pkg in names:
+                if pkg not in ALLOWED:
+                    violations.append((path, module, pkg))
+
+    if violations:
+        print('Unclassified package(s) — add them to a *_packages var in '
+              'group_vars/all/main.yml, or to ALLOWED in this script with a reason:\n')
+        for path, module, pkg in violations:
+            print(f'  {path.relative_to(root)}: {module}: {pkg}')
+        return 1
+
+    print(f'All packages declare a tier ({", ".join(sorted(declared))}); '
+          f'{len(ALLOWED)} documented inline exception(s).')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

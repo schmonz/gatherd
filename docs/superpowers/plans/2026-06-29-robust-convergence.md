@@ -365,11 +365,11 @@ guarantee statically, so this does not gate Task 3.
 - Consumes: the `*_packages` vars (Task 2), the `gatherd-run-core` wrapper (Task 1).
 - Produces: `site-core.yml` (local-only), the expanded `site-async.yml` (REST), and two sentinels `/etc/gatherd/core-complete` + `/etc/gatherd/async-complete` (`gatherd-needs-run` already takes the sentinel path as an arg).
 
-- [ ] **Step 1: Split each role's tasks by the boundary table**
+- [x] **Step 1: Split each role's tasks by the boundary table**
 
 For every role, move tasks matching the **CORE** column into `roles/<role>/tasks/core.yml` and tasks matching the **REST** column into `roles/<role>/tasks/rest.yml` (honor "tiny task files" — keep already-split files as-is, just route their includes). Per the table: `dotfiles`-clone, all of `aur`, and all of `hardware` become **REST**; system `/etc` essentials and desktop config templates are **CORE**.
 
-- [ ] **Step 2: Add the tier-classification lint gate**
+- [x] **Step 2: Add the tier-classification lint gate**
 
 Add a check (a small task asserting at parse time, or a CI script) that **every** entry in `core_packages`+`rest_packages`+`aur_packages`+`aur_slow_packages` carries a tier and that no package is unclassified — an unclassified package is a **hard failure** (decision locked in the north-star spec: lint fails until classified, so offline-core stays complete-by-construction). Example assert:
 
@@ -385,15 +385,15 @@ Add a check (a small task asserting at parse time, or a CI script) that **every*
 
 (Refine the assertion to your chosen metadata representation; the requirement is: adding a package without a tier fails the run/CI.)
 
-- [ ] **Step 3: Create `site-core.yml` (local-only)**
+- [x] **Step 3: Create `site-core.yml` (local-only)**
 
 Three plays trimmed to CORE includes (detect + machine_facts; system `/etc` essentials; desktop config templates). No package, AUR, download, or dotfiles-clone task. Keep `any_errors_fatal: true` here is acceptable since CORE is small and local — but the wrapper's `exit 0` is the real safety net.
 
-- [ ] **Step 4: Fold REST into `site-async.yml`; drop `any_errors_fatal`**
+- [x] **Step 4: Fold REST into `site-async.yml`; drop `any_errors_fatal`**
 
 Expand `site-async.yml`'s existing three plays (which already pull `roles/system/tasks/slow.yml` + `roles/aur/tasks/slow.yml` and write `async-complete`) to include the new `rest.yml` files. **Remove `any_errors_fatal: true`** from the REST plays so one failed package doesn't abort the remainder of a post-login convergence.
 
-- [ ] **Step 5: Re-aim the wrapper and reset network ordering**
+- [x] **Step 5: Re-aim the wrapper and reset network ordering**
 
 ```ini
 # services/gatherd.service
@@ -409,7 +409,7 @@ systemctl list-dependencies --reverse network-online.target
 
 REST stays on `gatherd-async.service`/`gatherd-await-and-run` (already aimed at `site-async.yml`).
 
-- [ ] **Step 6: Verify — greeter comes up with the network cable pulled**
+- [x] **Step 6: Verify — greeter comes up with the network cable pulled**
 
 ```
 ansible-lint && ansible-playbook --syntax-check site-core.yml && ansible-playbook --syntax-check site-async.yml
@@ -423,7 +423,7 @@ head -1 /etc/gatherd/last-run   # ok (CORE)
 test -f /etc/gatherd/core-complete && test -f /etc/gatherd/async-complete && echo OK
 ```
 
-- [ ] **Step 7: Lint, add verify lines, prune TODO, commit**
+- [x] **Step 7: Lint, add verify lines, prune TODO, commit**
 
 ```bash
 ansible-lint
@@ -432,6 +432,68 @@ ansible-lint
 git add roles/ site-core.yml site-async.yml services/gatherd.service scripts/gatherd-post-setup-notes
 git commit -m "Phase 2: split convergence into CORE (gates greetd) and REST (post-login)"
 ```
+
+**As built — deviations from the draft above:**
+
+- **Landed as two commits**, not one. The first creates `core.yml`/`rest.yml` in
+  the `system` and `desktop` roles with `main.yml` importing both, so the tree
+  still converges exactly as before; the second is the small wiring flip
+  (`site-core.yml`, the unit, the sentinels). If the offline boot misbehaves, the
+  flip reverts on its own.
+- Only `system` and `desktop` are split. `dotfiles` (a git clone), `aur`,
+  `claude_code` (a `get_url`) and `hardware` are wholly REST, so they are routed
+  at the play level rather than given a one-line `rest.yml`.
+- **`site.yml` is deleted**, not left alongside. With role `main.yml` importing
+  both tiers it would have kept working as a second, drifting definition of the
+  same convergence. `tests/test` now runs `site-core.yml site-async.yml`.
+- `sshd`'s enable+start is **duplicated into `core.yml`**. The rest of the service
+  loop moved to REST with the packages providing those units, but openssh is on
+  the install medium — and if a machine boots to something unusable, SSH is the
+  recovery path. It must not wait on the one tier that is allowed to fail.
+- The **sentinel rename reaches further than the unit**: `gatherd-await-and-run`
+  and `gatherd-prompt-vault` both gated on `/etc/gatherd/complete` and now gate on
+  `core-complete`. Missing either would have left REST never starting.
+- The autofs `network-online` reset is **folded into the existing ordering
+  drop-in** (renamed `gatherd-ordering.conf`, with a task removing the old
+  `gatherd-tailscaled-ordering.conf`). A separate file would have depended on the
+  alphabetical order in which systemd merges drop-ins for the `After=`/`Wants=`
+  reset to land before the additions.
+- The tier gate is `scripts/gatherd-check-package-tiers`, not an in-play assert.
+  The drafted assert (`is iterable`) cannot actually fail. The script requires
+  every pacman/aur `name:` to be a `{{ *_packages }}` reference, with 12
+  documented inline exceptions (`base-devel`, two removals, nine hardware-gated).
+- `gatherd-run-core`'s timeout drops 3600s → 900s, as the draft anticipated: the
+  gated play is now CORE alone.
+- `.ansible-lint` gains `ansible.posix.authorized_key` to `mock_modules` and an
+  `exclude_paths` for `._*`. The first was masked until now — `site.yml` could
+  never be syntax-checked by ansible-lint (it dies on the encrypted vault), so
+  the `dotfiles` role was never reached through a playbook.
+
+**Verified:** no task lost or silently added on either side of either role split
+(the one deliberate addition is sshd); the tier gate exits 0 clean and was proven
+to exit 1 on a planted unclassified package; full-repo `ansible-lint` clean;
+`site-core.yml`, `site-async.yml`, `site-vault.yml` all `--syntax-check` clean;
+`shellcheck` clean on every touched script.
+
+**Still outstanding — the decisive test, an offline boot on a VM or test machine.**
+Nothing below has been observed, only reasoned about:
+
+- Greeter comes up with the cable pulled, with no `network-online` stall, and the
+  first session has fonts/keybindings/wallpaper/keyring.
+- A forced REST failure leaves the booted session usable.
+- Two CORE tasks assume schemas/files present on a bare EndeavourOS install that
+  no `rest_packages` entry provides: `Enable system dark mode` / `Configure system
+  monospace font` / `Reset GTK text scaling factor` need
+  `org.gnome.desktop.interface` (from `gsettings-desktop-schemas`, pulled in as a
+  dependency of gvfs/at-spi2-core), and `Point the regreet login greeter at our
+  wallpaper` needs `/etc/greetd/regreet.toml`. If a fresh ISO lacks either, CORE
+  fails — visibly, via the login notification, and without blocking the greeter.
+
+**Known coupling, not addressed here:** `gatherd-await-and-run` blocks until
+`.vault_pass` exists, so the whole REST tier now waits on the vault password, not
+just the slow AUR play that needs it. Early console vault entry usually satisfies
+this before CORE finishes, but a machine that never gets a vault password never
+converges REST. Worth splitting the gate if that bites.
 
 ---
 

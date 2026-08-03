@@ -24,11 +24,11 @@ log="${GATHERD_CORE_LOG:-/var/log/gatherd-core.log}"
 # /tmp, not /run: /tmp is a tmpfs that exists this early under every init, and
 # unlike /run it is writable by the unprivileged verify steps too.
 rc_file="${TMPDIR:-/tmp}/gatherd-core.rc.$$"
-# 3600s while this wraps the full monolith site.yml (a slow-network first boot
-# legitimately runs long); drop to 900s when the CORE split lands and the gated
-# play is local-only. Env-overridable so the hang-path verify step can fire the
-# timeout in seconds on a converged machine instead of "you had to be there".
-timeout_secs="${GATHERD_CORE_TIMEOUT:-3600}"
+# 900s now that the gated play is CORE alone: local-only, no downloads, so a run
+# that has not finished in fifteen minutes is wedged, not slow. Env-overridable so
+# the hang-path verify step can fire the timeout in seconds on a converged machine
+# instead of "you had to be there".
+timeout_secs="${GATHERD_CORE_TIMEOUT:-900}"
 
 [ -f "$playbook" ] || exit 0
 

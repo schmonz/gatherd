@@ -23,24 +23,38 @@ Do NOT open pull requests unless explicitly asked.
 ## What this is
 
 Two Ansible playbooks that configure an EndeavourOS/Arch desktop from first boot,
-each driven by its own systemd service in `services/`.
+each driven by its own systemd service in `services/`. They are split on the
+**network axis**: CORE is whatever converges with no internet at all and is the
+only thing that gates the greeter; REST is everything that touches the network
+and runs after login, where a captive portal can be cleared and a retry is cheap.
+Roles carry that split as `tasks/core.yml` + `tasks/rest.yml`.
 
-**`site.yml`** — run by `gatherd.service` before login (blocks greetd). Three plays:
+**`site-core.yml`** — run by `gatherd.service` before login (blocks greetd), via
+`scripts/gatherd-run-core`. Three plays:
 
 1. **Detect** (`machine_facts` role) — probes hardware, sets `has_*` boolean facts
-2. **System** (`system`, `hardware` roles) — packages, services, `/etc` config as root
-3. **User** (`dotfiles`, `aur`, `desktop` roles) — dotfiles, AUR packages, user config
-   via `become_user: target_user` using `su` (no sudo needed, runner is root)
+2. **System** (`system` role, `tasks_from: core`) — `/etc` config as root
+3. **User** (`desktop` role, `tasks_from: core`) — user config via
+   `become_user: target_user` using `su` (no sudo needed, runner is root)
 
-Writes `/etc/gatherd/complete` when done; service does not re-run after that.
+**No packages, no AUR, no downloads, no dotfiles clone** — that is the whole
+point, and `scripts/gatherd-check-package-tiers` enforces the package half of it.
+Writes `/etc/gatherd/core-complete` when done; the service does not re-run after
+that. The wrapper always exits 0, so a failure here still reaches the greeter;
+real status is in `/etc/gatherd/last-run`, surfaced at login.
 
 **`site-async.yml`** — run by `gatherd-async.service` after `gatherd.service`
-completes, in the background. Three plays:
+completes, in the background. Five plays:
 
-1. **Detect** (same pre_tasks + `machine_facts` as `site.yml`)
-2. **Slow system packages** — `roles/system/tasks/slow.yml`
-3. **Slow AUR packages** — `roles/aur/tasks/slow.yml`
+1. **Detect** (same pre_tasks + `machine_facts` as `site-core.yml`)
+2. **System** (`system` role `tasks_from: rest`, plus the `hardware` role)
+3. **User** (`dotfiles`, `aur`, `claude_code` roles, plus `desktop`
+   `tasks_from: rest`)
+4. **Slow system packages** — `roles/system/tasks/slow.yml`
+5. **Slow AUR packages** — `roles/aur/tasks/slow.yml`
 
+The REST plays deliberately carry **no `any_errors_fatal`**: one package that
+won't install must not abort the rest of a post-login convergence. CORE keeps it.
 Writes `/etc/gatherd/async-complete` when done.
 
 ## Finishing a TODO item

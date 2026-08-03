@@ -1,0 +1,180 @@
+---
+- name: Remove firefox
+  community.general.pacman:
+    name: firefox
+    state: absent
+  failed_when: false
+
+# Superseded by gatherd-polkit-agent (cmd-polkit driving fuzzel); the desktop
+# role swaps the sway autostart over to it. polkit-gnome is explicitly installed
+# by EndeavourOS, required by nothing and in no group, so removal is clean.
+- name: Remove polkit-gnome (replaced by our fuzzel polkit agent)
+  community.general.pacman:
+    name: polkit-gnome
+    state: absent
+  failed_when: false
+
+- name: Install grub-btrfs
+  community.general.pacman:
+    name: grub-btrfs
+    state: present
+  when: has_grub
+
+- name: Install IR remote control tools
+  community.general.pacman:
+    name: v4l-utils
+    state: present
+  when: has_ir_receiver
+
+- name: Install packages
+  community.general.pacman:
+    name: "{{ rest_packages }}"
+    state: present
+  retries: 3
+  delay: 10
+  register: _pkg_install
+  until: _pkg_install is succeeded
+
+- name: Initialize etckeeper
+  ansible.builtin.command: etckeeper init
+  args:
+    creates: /etc/.git
+  notify: Etckeeper commit
+
+- name: Rename etckeeper branch to hostname
+  ansible.builtin.shell: |
+    current=$(git -C /etc symbolic-ref --short HEAD 2>/dev/null)
+    target="{{ ansible_facts['hostname'] }}"
+    if [ "$current" != "$target" ]; then
+      git -C /etc branch -m "$target"
+      echo changed
+    fi
+  register: _branch_rename
+  changed_when: _branch_rename.stdout == 'changed'
+
+- name: Configure root git identity
+  community.general.git_config:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    scope: file
+    file: /root/.gitconfig
+  loop:
+    - key: user.email
+      value: "root@{{ ansible_facts['hostname'] }}"
+    - key: user.name
+      value: "root@{{ ansible_facts['hostname'] }}"
+
+- name: Configure git identity in /etc
+  community.general.git_config:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    repo: /etc
+    scope: local
+  loop:
+    - key: user.email
+      value: "root@{{ ansible_facts['hostname'] }}"
+    - key: user.name
+      value: "root@{{ ansible_facts['hostname'] }}"
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Symlink resolv.conf to stub resolver
+  ansible.builtin.file:
+    src: /run/systemd/resolve/stub-resolv.conf
+    dest: /etc/resolv.conf
+    state: link
+    force: true
+    follow: false
+  notify: Etckeeper commit
+
+- name: Enable system services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+  loop:
+    - sshd
+    - tailscaled
+    - cups
+    - cups-browsed
+    - bluetooth
+    - systemd-resolved
+    - paccache.timer
+    - cronie
+    - tlp
+
+- name: Create tailscaled drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/tailscaled.service.d
+    state: directory
+    mode: '0755'
+
+- name: Reduce tailscaled stop timeout to prevent multi-minute shutdown delay
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/tailscaled.service.d/gatherd-stop-timeout.conf
+    content: |
+      [Service]
+      TimeoutStopSec=10
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Etckeeper commit
+
+- name: Start tailscaled
+  ansible.builtin.systemd:
+    name: tailscaled
+    state: started
+
+# Enabled (not started) in the loop above, so on a fresh first boot sshd would
+# otherwise not come up until the next reboot. Start it now so a just-installed
+# machine is reachable over SSH this boot. sshd is not ordered After=gatherd.service,
+# so a blocking start is safe here (unlike the vault/async services above).
+- name: Start sshd
+  ansible.builtin.systemd:
+    name: sshd
+    state: started
+
+- name: Configure firewall default zone
+  ansible.builtin.command: firewall-cmd --set-default-zone=home
+  changed_when: false
+
+- name: Open LocalSend firewall ports
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+  loop:
+    - 53317/tcp
+    - 53317/udp
+  notify: Reload firewall
+
+- name: Configure ThinkPad battery charge thresholds
+  ansible.builtin.lineinfile:
+    path: /etc/tlp.conf
+    regexp: '^#?\s*{{ item.key }}='
+    line: "{{ item.key }}={{ item.value }}"
+  loop:
+    - key: START_CHARGE_THRESH_BAT0
+      value: 75
+    - key: STOP_CHARGE_THRESH_BAT0
+      value: 80
+  when: has_thinkpad_hardware
+  notify: Etckeeper commit
+
+- name: Configure NFS client automount
+  ansible.builtin.include_tasks: nfs_client.yml
+
+- name: Configure Timeshift snapshots
+  ansible.builtin.include_tasks: timeshift.yml
+  when: has_luks_btrfs_root
+
+- name: Configure fingerprint reader PAM
+  ansible.builtin.include_tasks: fingerprint.yml
+  when: has_fingerprint_reader
+
+- name: Run firmware updates
+  ansible.builtin.shell: |
+    fwupdmgr refresh || true
+    fwupdmgr get-updates || true
+    fwupdmgr update || true
+  changed_when: false

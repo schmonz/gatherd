@@ -1,0 +1,63 @@
+---
+- name: Configure xed font size for 80-col two-up layout
+  ansible.builtin.shell: |
+    font="JetBrains Mono {{ foot_font_size }}"
+    cur=$(dbus-run-session gsettings get org.x.editor.preferences.editor editor-font 2>/dev/null)
+    use=$(dbus-run-session gsettings get org.x.editor.preferences.editor use-default-font 2>/dev/null)
+    if [ "$cur" = "'$font'" ] && [ "$use" = "false" ]; then
+      echo ok
+    else
+      dbus-run-session gsettings set org.x.editor.preferences.editor use-default-font false
+      dbus-run-session gsettings set org.x.editor.preferences.editor editor-font "$font"
+      echo changed
+    fi
+  register: _xed_font
+  changed_when: _xed_font.stdout == 'changed'
+
+- name: Enable arch-update timer
+  # systemd-specific; will need a different mechanism on Artix/s6
+  ansible.builtin.file:
+    path: "{{ target_home }}/.config/systemd/user/timers.target.wants/arch-update.timer"
+    src: /usr/lib/systemd/user/arch-update.timer
+    state: link
+
+- name: Download and convert web app icons
+  # gatherd-fetch-webapp-icon resolves the best source per app: official 512px
+  # App Store artwork via the iTunes Lookup API (item.app_store_id), else a pinned
+  # item.icon_url, else DuckDuckGo's favicon (one URL pattern, sidesteps per-site
+  # bot blocking). A single failure must not abort site.yml — that would skip the
+  # gatherd-prompt-* installs and autostart entries later in this role — so
+  # failed_when is false; the next task reports stragglers, the creates guard
+  # refetches them next run, and fuzzel shows a generic glyph meanwhile.
+  ansible.builtin.command:
+    argv:
+      - "{{ setup_dir }}/scripts/gatherd-fetch-webapp-icon"
+      - "{{ target_home }}/.local/share/ice/icons/{{ item.codename }}.png"
+      - "{{ item.app_store_id | default('') }}"
+      - "{{ item.icon_url | default('') }}"
+      - "https://icons.duckduckgo.com/ip3/{{ item.url | urlsplit('hostname') }}.ico"
+    creates: "{{ target_home }}/.local/share/ice/icons/{{ item.codename }}.png"
+  loop: "{{ web_apps }}"
+  register: _favicon_dl
+  changed_when: _favicon_dl.rc == 0
+  failed_when: false
+
+- name: Report web app favicons that could not be fetched or converted
+  ansible.builtin.debug:
+    msg: "Favicon failed for {{ item.item.codename }}: {{ item.stderr | default('skipped') | trim }}"
+  loop: "{{ _favicon_dl.results }}"
+  loop_control:
+    label: "{{ item.item.codename | default('?') }}"
+  when:
+    - item.rc is defined
+    - item.rc != 0
+
+- name: Fix missing fuzzel icons
+  # Scans all .desktop entries and remediates known gap patterns: XPM-only icons
+  # in pixmaps (converted to PNG), SVGs filed under non-apps theme contexts
+  # (copied to hicolor/scalable/apps), and Icon= names with non-standard
+  # extensions (local .desktop override with the bare name). Idempotent.
+  ansible.builtin.script:
+    cmd: "{{ setup_dir }}/scripts/gatherd-fix-fuzzel-icons"
+  register: _fuzzel_icons
+  changed_when: "'changed' in _fuzzel_icons.stdout"

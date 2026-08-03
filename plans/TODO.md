@@ -22,7 +22,7 @@
 
 | SP | What | Plan / status |
 |----|------|---------------|
-| 1 | Robustness floor — a task error never blocks boot/login | `plans/2026-06-29-robust-convergence.md` — ready; do Phase 0 first |
+| 1 | Robustness floor — a task error never blocks boot/login | `plans/2026-06-29-robust-convergence.md` — Task 1 (Phase 0, fail-open wrapper) DONE; Task 2 (package lists) next |
 | 2 | Offline survival kit (USB cache, captive portal, ride-along trees) | mostly inside SP1 Tasks 3–5; ride-along trees `→ blocked: SP6` |
 | 3 | Unattended completion (early secrets, self-naming, VPN cred) | `plans/2026-06-29-self-naming-hostname.md`; vault-early DONE; VPN cred ~done |
 | 4 | Credential lifecycle (no-plaintext, rotate/revoke, FIDO2) | unplanned — see **Secrets** below |

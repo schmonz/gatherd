@@ -871,6 +871,13 @@
     mode: '0755'
     remote_src: true
 
+- name: Install gatherd-prompt-lastrun script
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-prompt-lastrun"
+    dest: "{{ target_home }}/.local/bin/gatherd-prompt-lastrun"
+    mode: '0755'
+    remote_src: true
+
 - name: Fix missing fuzzel icons
   # Scans all .desktop entries and remediates known gap patterns: XPM-only icons
   # in pixmaps (converted to PNG), SVGs filed under non-apps theme contexts

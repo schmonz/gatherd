@@ -64,17 +64,17 @@ The dotfiles *clone* moves to REST (it's network); gatherd's own templated confi
 **Interfaces:**
 - Produces: this plan as the single source of truth for the robustness floor.
 
-- [ ] **Step 1: Confirm this plan supersedes the source**
+- [x] **Step 1: Confirm this plan supersedes the source**
 
 Skim `plans/ROBUSTIFY.md` and confirm every section (Why, Diagnosis, Current state, Target state, Decisions locked, Phases 0–5, Portability, Cross-references, Out of scope) is represented in this document. It is — Decisions/boundary are copied verbatim; Phases 0–5 become Tasks 1–6.
 
-- [ ] **Step 2: Delete the source plan**
+- [x] **Step 2: Delete the source plan**
 
 ```bash
 git rm plans/ROBUSTIFY.md
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/superpowers/plans/2026-06-29-robust-convergence.md
@@ -97,7 +97,7 @@ git commit -m "Convert ROBUSTIFY.md into a superpowers plan"
 - Produces: `scripts/gatherd-run-core <playbook>` — does galaxy install, syntax-check, timeout'd non-interactive run, writes `/etc/gatherd/last-run` (status + log path), always `exit 0`. Tasks 3 re-aims it at `site-core.yml`.
 - Produces: `/etc/gatherd/last-run` marker (first line: `ok|failed|timeout|syntax-error`; second line: log path). Consumed by the login surface and by `section_verify`.
 
-- [ ] **Step 1: Write `scripts/gatherd-run-core`**
+- [x] **Step 1: Write `scripts/gatherd-run-core`**
 
 POSIX sh, mirrors `gatherd-await-and-run` (galaxy install + inhibit already proven there). Key differences: a `--syntax-check` gate, a `timeout`, and **always `exit 0`** with status recorded.
 
@@ -161,13 +161,13 @@ fi
 exit 0
 ```
 
-- [ ] **Step 2: Make it executable**
+- [x] **Step 2: Make it executable**
 
 ```bash
 chmod +x scripts/gatherd-run-core
 ```
 
-- [ ] **Step 3: Repoint `services/gatherd.service` at the wrapper**
+- [x] **Step 3: Repoint `services/gatherd.service` at the wrapper**
 
 The unit gets thin: the galaxy install (today's `ExecStartPre`) and the inhibit (today's `ExecStart`) move into the script. Keep `ExecCondition` and `Before=greetd.service`.
 
@@ -184,11 +184,11 @@ StandardError=journal+console
 
 (Leave `[Unit]` and `[Install]` unchanged for Task 1; the network-decoupling of the `[Unit]` lands in Task 3.)
 
-- [ ] **Step 4: Surface a recorded failure at login**
+- [x] **Step 4: Surface a recorded failure at login**
 
 Add a check that reads `/etc/gatherd/last-run`; when its first line is not `ok`, emit a desktop notification ("gatherd setup <status> — see <log>; re-run with `sudo systemctl start gatherd.service`") from the existing first-login prompt path (`scripts/gatherd-prompt-*`), and add a matching `section_verify` line (Step 6). This is the "stop hunting in journalctl" fix.
 
-- [ ] **Step 5: Verify — syntax error and hang are both survivable**
+- [x] **Step 5: Verify — syntax error and hang are both survivable**
 
 ```
 # Parse gate (no boot needed):
@@ -206,7 +206,7 @@ head -1 /etc/gatherd/last-run   # expect: syntax-error
 
 Also record the **empirical finding** from the source plan's Diagnosis: on a deliberately-broken boot, does greetd come up (clean failure passes through pure ordering) or hang (ansible blocked on a prompt)? Note the answer in this plan's history; the wrapper is robust to either.
 
-- [ ] **Step 6: Lint, add the verify line, commit**
+- [x] **Step 6: Lint, add the verify line, commit**
 
 ```bash
 ansible-lint
@@ -217,6 +217,41 @@ ansible-lint
 git add scripts/gatherd-run-core services/gatherd.service scripts/gatherd-post-setup-notes scripts/gatherd-prompt-*
 git commit -m "Phase 0: fail-open wrapper so a playbook error never blocks boot"
 ```
+
+**As built — deviations from the draft above:**
+
+- The unit is `services/system/gatherd.service` (the repo grew a `services/system/`
+  subdirectory after this plan was written), not `services/gatherd.service`.
+- The play's output goes through `tee -a "$log"`, not a bare `>>"$log"`. The unit's
+  `journal+console` stdout is a repave's only progress display while greetd is
+  blocked; swallowing it into the log alone makes a long first boot look bricked.
+  POSIX sh has no `pipefail`, so the play's exit code rides out through a status
+  file rather than `$?`.
+- `timeout_secs` defaults to 3600, not 900, while this still wraps the whole
+  monolith `site.yml` — a slow-network first boot legitimately runs that long.
+  Drop it to 900 in Task 3, when the gated play is local-only.
+- `GATHERD_CORE_TIMEOUT`, `GATHERD_CORE_MARKER`, `GATHERD_CORE_LOG` are
+  env-overridable so the verify step can fire all three failure paths on a
+  converged machine against a scratch marker, instead of "you had to be there on a
+  fresh repave" (`CLAUDE.md`, "Finishing a TODO item"). Nothing in the boot path
+  sets them.
+- The vault-password test is `-r`, not `-f`: the file is root-only, so an
+  unprivileged verify run sees it but cannot read it, and handing it to ansible
+  there is a guaranteed hard error.
+- The login surface is a new `scripts/gatherd-prompt-lastrun`, registered in
+  `scripts/gatherd-session-helpers` and installed by `roles/desktop/tasks/main.yml`.
+
+**Verified locally** (unprivileged, scratch marker): `syntax-error`, `timeout`
+(`GATHERD_CORE_TIMEOUT=5`), `ok`, and missing-playbook all exit `0` and record the
+expected status; `gatherd-prompt-lastrun` pops the critical toast on a non-`ok`
+marker and stays silent on `ok`. `shellcheck` clean on both scripts;
+`ansible-lint` clean on `roles/desktop/tasks/main.yml`.
+
+**Still outstanding — boot-level test on a VM or test machine:** deliberately break
+a peripheral task and confirm greetd still comes up with the notification showing;
+and record the source plan's empirical Diagnosis question (does a broken boot today
+reach greetd via pure ordering, or hang on an ansible prompt?). The wrapper is
+robust to either answer, so this does not gate Task 2.
 
 ---
 

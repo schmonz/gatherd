@@ -1,0 +1,19 @@
+#!/bin/sh
+# Surface a recorded gatherd run failure at login, so a broken converge is a
+# desktop notification instead of a journalctl hunt. gatherd-run-core always
+# exits 0 (a nonzero oneshot would block greetd); the real outcome lives in
+# /etc/gatherd/last-run, and this is where it reaches eyeballs. Re-notifies at
+# every login until a run records `ok` — silence would read as success.
+# Overridable for the same reason as in gatherd-run-core: so the verify step can
+# raise the notification from a scratch marker without faking the real status.
+marker="${GATHERD_CORE_MARKER:-/etc/gatherd/last-run}"
+
+[ -f "$marker" ] || exit 0
+status=$(head -n1 "$marker")
+[ "$status" = "ok" ] && exit 0
+log=$(sed -n 2p "$marker")
+
+notify-send --urgency=critical --icon=dialog-error \
+    --expire-time=300000 \
+    "gatherd setup: $status" \
+    "See $log for details; re-run with: sudo systemctl start gatherd.service"

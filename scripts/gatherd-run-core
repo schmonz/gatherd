@@ -1,0 +1,80 @@
+#!/bin/sh
+# gatherd-run-core — run a gatherd play fail-open: never block boot/login.
+#
+# A syntax error or a hang in the playbook must NOT brick the machine. We
+# syntax-check first (a bad parse never even attempts a run), bound the run with
+# `timeout` (a hang can't wedge boot), record the outcome to a marker, and ALWAYS
+# exit 0 — a nonzero exit from a oneshot blocks greetd under both systemd and
+# s6-rc, which is the very lockout we are eliminating. Real status lives in the
+# marker, surfaced at login, not in the unit's exit code.
+#
+# POSIX sh, no init-specific bits (model: gatherd-await-and-run) so the Artix/s6
+# port only has to `exec` this. Usage: gatherd-run-core <playbook>
+set -u
+
+playbook="${1:-}"
+gatherd_home=/usr/local/lib/gatherd
+vault_pass="$gatherd_home/.vault_pass"
+# Marker and log are env-overridable purely so the verify steps can exercise the
+# syntax-error and timeout paths on a converged machine without clobbering the
+# real status — a stray `syntax-error` in the live marker would nag at every
+# login forever. Nothing in the boot path sets them.
+marker="${GATHERD_CORE_MARKER:-/etc/gatherd/last-run}"
+log="${GATHERD_CORE_LOG:-/var/log/gatherd-core.log}"
+# /tmp, not /run: /tmp is a tmpfs that exists this early under every init, and
+# unlike /run it is writable by the unprivileged verify steps too.
+rc_file="${TMPDIR:-/tmp}/gatherd-core.rc.$$"
+# 3600s while this wraps the full monolith site.yml (a slow-network first boot
+# legitimately runs long); drop to 900s when the CORE split lands and the gated
+# play is local-only. Env-overridable so the hang-path verify step can fire the
+# timeout in seconds on a converged machine instead of "you had to be there".
+timeout_secs="${GATHERD_CORE_TIMEOUT:-3600}"
+
+[ -f "$playbook" ] || exit 0
+
+# The play itself creates /etc/gatherd later; on a fresh machine the marker
+# write must not silently vanish into a failed redirect.
+record() { mkdir -p "$(dirname "$marker")" && printf '%s\n%s\n' "$1" "$log" > "$marker"; }
+
+cd "$gatherd_home" || { record "failed"; exit 0; }
+
+# Galaxy install is best-effort; a missing collection surfaces as a play failure,
+# not a wrapper failure.
+ansible-galaxy collection install --requirements-file "$gatherd_home/requirements.yml" >>"$log" 2>&1 || true
+
+# 1) Parse gate: a syntax error records and exits WITHOUT attempting the run.
+if ! ansible-playbook --syntax-check "$playbook" >>"$log" 2>&1; then
+    record "syntax-error"
+    exit 0
+fi
+
+# 2) Non-interactive, bounded run. </dev/null so a stray prompt can't block;
+# --vault-password-file so vault never prompts; timeout so a hang can't wedge boot.
+# -r, not -f: the password file is root-only, so an unprivileged verify run sees
+# it but cannot read it — handing it to ansible there is a guaranteed hard error.
+if [ -r "$vault_pass" ]; then
+    set -- --vault-password-file="$vault_pass" "$playbook"
+else
+    set -- "$playbook"
+fi
+
+# tee, not plain redirection: the unit's journal+console stdout is the only
+# progress display a repave has while greetd is blocked — swallow it into the
+# log alone and a long first boot looks bricked. POSIX sh has no pipefail, so
+# the play's real exit code rides out through a status file instead of $?.
+if command -v systemd-inhibit >/dev/null 2>&1; then
+    { timeout "$timeout_secs" systemd-inhibit --what=sleep --who=gatherd \
+        --why="gatherd CORE provisioning in progress" --mode=block \
+        ansible-playbook "$@" </dev/null 2>&1; echo "$?" > "$rc_file"; } | tee -a "$log"
+else
+    { timeout "$timeout_secs" ansible-playbook "$@" </dev/null 2>&1; echo "$?" > "$rc_file"; } | tee -a "$log"
+fi
+rc=$(cat "$rc_file" 2>/dev/null || echo 1)
+rm -f "$rc_file"
+
+# 3) Record outcome; ALWAYS exit 0.
+if [ "$rc" -eq 0 ]; then record "ok"
+elif [ "$rc" -eq 124 ]; then record "timeout"
+else record "failed"
+fi
+exit 0

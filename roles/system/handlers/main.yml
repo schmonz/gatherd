@@ -1,4 +1,12 @@
 ---
+# Handlers fire in the order they are DEFINED here, not the order a task lists
+# them — so daemon-reload goes first, or any restart below would act on the unit
+# config systemd cached before the new file landed. No task notifies both today;
+# this is here so the next one that does gets the order for free.
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
 - name: Etckeeper commit
   ansible.builtin.command: "etckeeper commit -m 'Ansible: converge system configuration.'"
   changed_when: false
@@ -35,7 +43,3 @@
     name: autofs
     state: restarted
   failed_when: false
-
-- name: Reload systemd
-  ansible.builtin.systemd:
-    daemon_reload: true

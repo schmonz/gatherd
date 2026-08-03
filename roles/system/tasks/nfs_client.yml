@@ -67,42 +67,86 @@
   register: target_uid
   changed_when: false
 
-# Everything gatherd has to say about autofs ordering, in ONE drop-in. Splitting
-# it would mean relying on the alphabetical order in which systemd merges
-# drop-ins for the reset below to land before the additions — self-contained is
-# worth more than tidy filenames here.
+# A FULL unit override, not a drop-in, and that is forced on us: dependency
+# options are cumulative, and `Wants=`/`After=` with an empty value do NOT reset
+# the inherited list. systemd documents that reset for Condition*= only. A
+# drop-in can therefore ADD ordering but can never take autofs off
+# network-online.target — it silently keeps the stock dependency. A file at
+# /etc/systemd/system/autofs.service shadows the vendor unit entirely, which is
+# the only way to drop one.
 #
-# Wants=/After= with an empty value reset the inherited lists; the lines after
-# them re-state only what we actually want:
+# Why it has to go: gatherd.service is already off network-online, but autofs is
+# `WantedBy=multi-user.target` and `graphical.target` is `After=multi-user.target`,
+# so greetd waits on autofs waits on network-online. An offline boot pays
+# NetworkManager-wait-online's full timeout before reaching the greeter. autofs
+# mounts on demand and our only map is nfs4, which needs neither network-online
+# nor rpc-statd at start.
 #
-# 1. Dropping the stock Wants/After=network-online.target (and rpc-statd) is what
-#    finally takes the greeter off the network. gatherd.service no longer pulls
-#    network-online in, but graphical.target -> autofs.service still did, so an
-#    offline boot kept paying NetworkManager-wait-online's timeout. autofs mounts
-#    on demand and our only map is nfs4, which needs neither at start.
-# 2. Before=user-<uid>.slice (Before= reverses for stop): all user processes die
+# The rest of the file is the vendor unit verbatim, plus two shutdown-ordering
+# lines a drop-in did deliver correctly, kept here so it all lives in one place:
+#
+# 1. Before=user-<uid>.slice (Before= reverses for stop): all user processes die
 #    first, releasing file handles on NFS mounts before autofs unmounts them.
-# 3. After=tailscaled.service: autofs stops before tailscaled, so umount.nfs4 can
+# 2. After=tailscaled.service: autofs stops before tailscaled, so umount.nfs4 can
 #    still reach the NFS server over Tailscale.
-- name: Order autofs, and take it off network-online
+- name: Take autofs off network-online, and order it for clean shutdown
   ansible.builtin.copy:
-    dest: /etc/systemd/system/autofs.service.d/gatherd-ordering.conf
+    dest: /etc/systemd/system/autofs.service
     content: |
       [Unit]
-      Wants=
-      After=
-      After=network.target
+      Description=Automounts filesystems on demand
+      After=network.target remote-fs.target
       After=tailscaled.service
       Before=user-{{ target_uid.stdout }}.slice
+
+      [Service]
+      Type=notify
+      EnvironmentFile=-/etc/default/autofs
+      ExecStart=/usr/bin/automount $OPTIONS --systemd-service --dont-check-daemon
+      ExecReload=/usr/bin/kill -HUP $MAINPID
+      KillMode=process
+      TimeoutSec=180
+
+      [Install]
+      WantedBy=multi-user.target
     mode: '0644'
   notify:
+    # daemon-reload alone is enough here, and no autofs restart is wanted: this
+    # replaces the unit's FragmentPath outright, so systemd reloads it fresh and
+    # the new dependencies apply to the already-running autofs immediately
+    # (verified: the network-online edges clear before any restart). Restarting
+    # would drop the NFS automounts for no gain, and the [Service] block is
+    # byte-identical to the vendor unit anyway.
     - Reload systemd
     - Etckeeper commit
 
-- name: Remove the superseded autofs ordering drop-in
+# The override above is a snapshot of the vendor unit. Shadowing a packaged unit
+# means pacman can change it under us and we would silently keep running the
+# stale copy, so pin the version we copied from. Any upstream edit trips this —
+# coarse on purpose, since every change to those twelve lines deserves a look.
+- name: Read the vendor autofs unit
+  ansible.builtin.stat:
+    path: /usr/lib/systemd/system/autofs.service
+    checksum_algorithm: sha256
+  register: autofs_vendor_unit
+
+- name: Warn when the vendor autofs unit has drifted from our override
+  ansible.builtin.debug:
+    msg: >-
+      /usr/lib/systemd/system/autofs.service changed upstream (now
+      {{ autofs_vendor_unit.stat.checksum }}); re-check it against the override
+      in roles/system/tasks/nfs_client.yml and update autofs_vendor_sha256.
+  when:
+    - autofs_vendor_unit.stat.exists
+    - autofs_vendor_unit.stat.checksum != autofs_vendor_sha256
+
+- name: Remove the superseded autofs ordering drop-ins
   ansible.builtin.file:
-    path: /etc/systemd/system/autofs.service.d/gatherd-tailscaled-ordering.conf
+    path: "/etc/systemd/system/autofs.service.d/{{ item }}"
     state: absent
+  loop:
+    - gatherd-tailscaled-ordering.conf
+    - gatherd-ordering.conf
   notify:
     - Reload systemd
     - Etckeeper commit

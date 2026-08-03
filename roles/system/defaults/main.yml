@@ -1,0 +1,5 @@
+---
+# The vendor autofs unit our full override in tasks/nfs_client.yml was copied
+# from (autofs 5.1.9-7). Bump this only after re-reading the upstream unit and
+# folding any [Service] changes into the override.
+autofs_vendor_sha256: c970fcf47df3abfbc2b3c811e79d5ce64188f3c4227007f0c79ea48eb4487d2e

@@ -1,0 +1,61 @@
+#!/bin/sh
+# gatherd-selftest-failopen — prove on a converged machine that the fail-open
+# wrapper still fails open. Drives gatherd-run-core through every outcome it can
+# record and asserts that each one exits 0 (a nonzero oneshot blocks greetd,
+# which is the lockout the wrapper exists to prevent) and marks the right status.
+#
+# Runs entirely against a scratch marker and log, so the live /etc/gatherd/last-run
+# is untouched — a stray `syntax-error` there would nag at every login forever.
+# Safe to run unprivileged and at any time.
+#
+# Usage: gatherd-selftest-failopen [--toast]
+#   --toast  also raise the critical login notification a failed boot would show
+set -u
+
+runner="${GATHERD_RUN_CORE:-/usr/local/lib/gatherd/scripts/gatherd-run-core}"
+prompt="${GATHERD_PROMPT_LASTRUN:-/usr/local/lib/gatherd/scripts/gatherd-prompt-lastrun}"
+
+toast=no
+[ "${1:-}" = "--toast" ] && toast=yes
+
+[ -x "$runner" ] || { echo "FAIL: no runner at $runner"; exit 1; }
+
+work=$(mktemp -d) || exit 1
+trap 'rm -rf "$work"' EXIT
+marker="$work/marker"
+failures=0
+
+printf 'a: b: c:::\n' > "$work/broken.yml"
+printf -- '- {hosts: localhost, gather_facts: false, tasks: [{ansible.builtin.command: sleep 600, changed_when: false}]}\n' > "$work/hang.yml"
+printf -- '- {hosts: localhost, gather_facts: false, tasks: [{ansible.builtin.fail: {msg: selftest}}]}\n' > "$work/fail.yml"
+printf -- '- {hosts: localhost, gather_facts: false, tasks: []}\n' > "$work/ok.yml"
+
+# One case: run a playbook, assert the wrapper exited 0 and recorded $want.
+check() {
+    want=$1 playbook=$2 secs=$3
+    rm -f "$marker"
+    GATHERD_CORE_TIMEOUT="$secs" GATHERD_CORE_MARKER="$marker" \
+        GATHERD_CORE_LOG="$work/log" "$runner" "$work/$playbook" >/dev/null 2>&1
+    rc=$?
+    got=$(head -n1 "$marker" 2>/dev/null)
+    if [ "$rc" -eq 0 ] && [ "$got" = "$want" ]; then
+        echo "PASS  $want"
+    else
+        echo "FAIL  $want (exit=$rc marker=${got:-<none>})"
+        failures=$((failures + 1))
+    fi
+}
+
+check syntax-error broken.yml 900
+check timeout      hang.yml     5
+check failed       fail.yml   900
+check ok           ok.yml     900
+
+if [ "$toast" = yes ]; then
+    printf 'timeout\n%s\n' "$work/log" > "$marker"
+    GATHERD_CORE_MARKER="$marker" "$prompt" \
+        && echo 'SENT  critical "gatherd setup: timeout" notification'
+fi
+
+[ "$failures" -eq 0 ] || { echo "$failures check(s) failed"; exit 1; }
+echo 'All fail-open paths exit 0 and record the right status.'

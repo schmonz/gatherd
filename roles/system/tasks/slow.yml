@@ -1,18 +1,13 @@
 ---
 - name: Install slow x86-only packages
   community.general.pacman:
-    name:
-      - signal-desktop
-      - apostrophe
+    name: "{{ rest_slow_x86_packages }}"
     state: present
   when: not is_aarch64
 
 - name: Install slow packages
   community.general.pacman:
-    name:
-      - guvcview
-      - libreoffice-fresh
-      - abiword
+    name: "{{ rest_slow_packages }}"
     state: present
   retries: 3
   delay: 10

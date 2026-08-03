@@ -40,6 +40,147 @@ wallpaper_dir: "{{ target_home }}/.local/share/backgrounds"
 wallpaper_dark_path: "{{ wallpaper_dir }}/wallpaper-dark"
 wallpaper_light_path: "{{ wallpaper_dir }}/wallpaper-light"
 
+# Package sets — single source of truth. The offline-cache builder
+# (scripts/gatherd-build-offline-cache) downloads these exact lists, so the USB
+# stick can never drift from what the playbook installs. Tier (core/rest) is on
+# the *network* axis, not importance: CORE must converge with no internet at all.
+#
+# Hardware-gated packages deliberately stay inline in their own tiny task files
+# (roles/hardware/tasks/*.yml, plus grub-btrfs / v4l-utils / keyd / thinkfan /
+# python-validity), where the `has_*` gate and the package sit together. They are
+# per-machine, so a generic cache stick cannot predict them anyway.
+
+# Local-only essentials installed in CORE. Empty today: the monolith still runs
+# as one play, and CORE prefers packages the EndeavourOS ISO already left behind.
+# The CORE/REST split fills this in if anything turns out to be genuinely needed
+# before greetd.
+core_packages: []
+
+# Official repo packages, installed in the main run.
+rest_packages:
+  # version control + /etc tracking
+  - etckeeper
+  - git
+  - git-delta
+  # bluetooth
+  - blueman
+  # networking
+  - gvfs-dnssd
+  - nfs-utils
+  - tailscale
+  # firmware updates
+  - fwupd
+  # text editor
+  - xed
+  # lightweight fallback browser for low-end/constrained machines
+  - netsurf
+  # favicon conversion for web-app desktop entries (ICO→PNG for fuzzel)
+  - python-pillow
+  # printing
+  - cups
+  - cups-browsed
+  - system-config-printer
+  # desktop portals: wlr handles screenshot/screencast; gtk handles Settings
+  # only (for Qt dark mode via QT_QPA_PLATFORMTHEME=xdgdesktopportal). The
+  # Location (geolocation) interface is not implemented by wlr and is
+  # explicitly excluded from gtk via portals.conf, so geolocation stays off.
+  - xdg-desktop-portal
+  - xdg-desktop-portal-wlr
+  - xdg-desktop-portal-gtk
+  # remote GUI: VNC bound to localhost, reached over an SSH tunnel (see
+  # plans/VNC.md). wayvnc serves this machine (no service — a session cohort
+  # child); remmina is the client for reaching other machines, with built-in
+  # SSH-tunnel support matching the same model. libvncserver is remmina's VNC
+  # plugin (an optdepend, so name it explicitly).
+  - wayvnc
+  - remmina
+  - libvncserver
+  # system tools
+  - btop
+  - conky
+  - inotify-tools
+  # parses sway IPC events for gatherd-intercept-localsend-flash
+  - jq
+  - fastfetch
+  - tmux
+  - the_silver_searcher
+  - xorg-xhost
+  # dev tools
+  - ansible-lint
+  - shellcheck
+  - glow
+  - tig
+  - github-cli
+  - socat
+  - bats
+  # vm testing
+  - qemu-base
+  - qemu-ui-gtk
+  - mtools
+  # power management
+  - tlp
+  - tlp-rdw
+  - powertop
+  # pacman cache cleanup
+  - pacman-contrib
+  # cron daemon
+  - cronie
+
+# Big official-repo downloads, deferred to the async play (roles/system/tasks/slow.yml).
+rest_slow_packages:
+  - guvcview
+  - libreoffice-fresh
+  - abiword
+
+# Same, but with no aarch64 build in the official repos.
+rest_slow_x86_packages:
+  - signal-desktop
+  - apostrophe
+
+# Fast AUR builds, installed in the main run (roles/aur/tasks/main.yml).
+aur_packages:
+  # automount
+  - autofs
+  # password manager
+  - 1password
+  - 1password-cli
+  # web browsers
+  - helium-browser-bin
+  - captive-browser
+  # snapshots
+  - timeshift-autosnap
+  # update notifier
+  - arch-update
+  - xdg-terminal-exec
+  # polkit agent that drives any prompt command (we point it at fuzzel)
+  - cmd-polkit-git
+
+# Long AUR builds and big binary drops, deferred to the async play
+# (roles/aur/tasks/slow.yml).
+aur_slow_packages:
+  # file transfer
+  - localsend-bin
+  # communication
+  - piavpn-bin
+  - vesktop-bin
+  - slack-electron
+  - zoom
+  - teams-for-linux-electron-bin
+  # cloud sync
+  - rclone
+  # writing
+  - dawn-writer-bin
+  # AI tools (the Electron desktop app runs on any CPU; the native
+  # claude-code bundle needs AVX — see aur_slow_avx_packages)
+  - claude-desktop-bin
+  # IDE manager
+  - jetbrains-toolbox
+
+# Same, but SIGILLs on pre-AVX CPUs — gated on has_avx.
+aur_slow_avx_packages:
+  - claude-code
+  - claude-cowork-service
+
 web_apps:
   # Each app's icon is resolved at provision time by gatherd-fetch-webapp-icon:
   # an app_store_id pulls the official 512px artwork via the iTunes Lookup API

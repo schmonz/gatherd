@@ -266,14 +266,14 @@ robust to either answer, so this does not gate Task 2.
 **Interfaces:**
 - Produces: `core_packages`, `rest_packages`, `aur_packages`, `aur_slow_packages` list vars. Task 5's builder downloads the exact same lists — no drift.
 
-- [ ] **Step 1: Inventory inline package lists**
+- [x] **Step 1: Inventory inline package lists**
 
 ```bash
 grep -rnE 'name:\s*\[|with_items:|loop:' roles/*/tasks/*.yml | grep -iE 'pkg|package|pacman|aur' 
 grep -rn 'community.general.pacman\|ansible.builtin.package\|kewlfft.aur' roles/
 ```
 
-- [ ] **Step 2: Lift the lists into vars verbatim**
+- [x] **Step 2: Lift the lists into vars verbatim**
 
 Move each inline list into `group_vars/all/main.yml` under the four names, copying package names **verbatim** (no additions/removals — this step must not change what installs). Example shape:
 
@@ -293,11 +293,11 @@ aur_slow_packages:       # long AUR compiles (roles/aur/tasks/slow.yml)
   - …
 ```
 
-- [ ] **Step 3: Point the tasks at the vars**
+- [x] **Step 3: Point the tasks at the vars**
 
 Replace each inline list with the var (`loop: "{{ rest_packages }}"` etc.), keeping the module and options identical.
 
-- [ ] **Step 4: Verify — zero behavior change**
+- [x] **Step 4: Verify — zero behavior change**
 
 ```
 ansible-lint                                   # expect: clean
@@ -307,12 +307,46 @@ sudo systemctl start gatherd.service && head -1 /etc/gatherd/last-run   # ok
 # Idempotency: diff the resolved package set before/after the refactor is empty.
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add group_vars/all/main.yml roles/
 git commit -m "Phase 1: package lists as single source of truth"
 ```
+
+**As built — deviations from the draft above:**
+
+- Seven list vars, not four. The four named in Interfaces exist, but
+  `roles/system/tasks/slow.yml` and the AVX-gated AUR task hold lists with
+  distinct `when:`/retry semantics; folding them into `rest_packages` /
+  `aur_slow_packages` would have changed *what installs where*, which Step 2
+  forbids. The extras are `rest_slow_packages`, `rest_slow_x86_packages`
+  (no aarch64 build), and `aur_slow_avx_packages` (SIGILLs pre-AVX).
+- `core_packages` is `[]` — the monolith is still one play, so nothing installs
+  in a CORE tier yet. Task 3 fills it if anything turns out to be needed before
+  greetd.
+- **Left inline deliberately, so Task 5 knows what the vars do *not* cover:**
+  `base-devel` (the yay bootstrap dependency in `roles/aur/tasks/main.yml`, a
+  build prerequisite rather than a package set) and every hardware-gated package
+  — `grub-btrfs`, `v4l-utils`, `keyd`, `thinkfan`, `python-validity`, `mbpfan`,
+  `facetimehd-dkms`, `iio-sensor-proxy`+`clight`. Those sit beside their `has_*`
+  gate in their own tiny task files per `CLAUDE.md`, and being per-machine they
+  are not something a generic cache stick can predict.
+- The category comments moved with the lists, so `group_vars/all/main.yml` reads
+  the way the task files used to.
+
+**Verified:** a resolver script compared every `community.general.pacman` /
+`kewlfft.aur.aur` `name:` value at `HEAD` against the same value with the new
+vars expanded, task by task, across all four files — 12 package tasks, 75 package
+names, byte-identical sets in identical order. `ansible-lint` clean (production
+profile) on all four changed task files; `site.yml`, `site-async.yml` and
+`site-vault.yml` all `--syntax-check` clean.
+
+**Still outstanding:** the converged-machine re-run (`sudo systemctl start
+gatherd.service` → zero `changed` for package tasks). It needs the refactor
+deployed to `/usr/local/lib/gatherd` first, and it runs the whole playbook
+against the live desktop. The resolved-set comparison above is the same
+guarantee statically, so this does not gate Task 3.
 
 ---
 

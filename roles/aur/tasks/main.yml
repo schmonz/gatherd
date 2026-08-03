@@ -82,22 +82,7 @@
 
     - name: Install AUR packages
       kewlfft.aur.aur:
-        name:
-          # automount
-          - autofs
-          # password manager
-          - 1password
-          - 1password-cli
-          # web browsers
-          - helium-browser-bin
-          - captive-browser
-          # snapshots
-          - timeshift-autosnap
-          # update notifier
-          - arch-update
-          - xdg-terminal-exec
-          # polkit agent that drives any prompt command (we point it at fuzzel)
-          - cmd-polkit-git
+        name: "{{ aur_packages }}"
         use: yay
         state: present
         extra_args: "--mflags --skippgpcheck"

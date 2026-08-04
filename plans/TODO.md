@@ -449,6 +449,16 @@
   T60" example in the IR verify steps; if it just needs a module loaded, add it
   to the hardware role gated on the machine.
 
+- **`gatherd-font-size` is wrong standalone on the MiniBook X**: its DSI panel
+  exposes no EDID, so the script can't measure the panel and falls back to the
+  1920-wide/1x default, printing 14. The correct answer for that machine is 10,
+  and only the `product_name == 'MiniBook X'` override in
+  `roles/machine_facts/tasks/main.yml` supplies it — the script itself never
+  learns. Anything that shells out to `gatherd-font-size` directly (rather than
+  reading the `foot_font_size` fact) is therefore silently wrong on that machine,
+  a trap for future scripts and for anyone debugging sizing by hand. Consider
+  teaching the script the no-EDID cases itself, so the tool and the fact agree.
+
 ## Multi-display
 
 - **Detection**: probe connected outputs, set a fact (e.g. `has_multiple_displays`) so tasks can condition on it
@@ -571,3 +581,11 @@ and `vm/test`'s twice-run `changed=0` check — were dropped as done):
 - **Doc-quality parity**: `machine_facts` documents *why* per probe; the rest of
   the roles (esp. the long sequential `desktop` role) don't hold that standard —
   hard to tell load-bearing tasks from cosmetic tweaks. Bring them up to par.
+- **`askpass.log` records every ordinary cancel as a failure**: the
+  instrumentation in `gatherd-askpass` logs any non-zero fuzzel exit, but Escape
+  exits **2**, so every time you dismiss a password prompt it lands in the log
+  next to the rare "no box ever drew" event the log exists to catch. That's the
+  heisenbug the instrumentation was added for (fuzzel's single-instance lock),
+  and burying it in routine cancels defeats the purpose. Distinguish the cases —
+  cancel is expected and shouldn't be logged, or should be logged distinctly —
+  so the log is worth reading when the bug next appears.

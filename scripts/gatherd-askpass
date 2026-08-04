@@ -28,23 +28,40 @@ case "$prompt" in
     # reply, and stashes it for us. Positional args avoid interpolating the
     # untrusted prompt text into the script body.
     # Per-invocation --override styling (the user's foot config is untouched):
-    # mirror fuzzel's palette and font — dark-indigo background, near-white text,
-    # salmon accent, JetBrains Mono — and reuse its "❯" prompt glyph, so this
-    # window reads as part of the same askpass family as the fuzzel password box,
-    # just rendered in a terminal because the fingerprint needs room to be read.
-    # Colors match ~/.config/fuzzel/fuzzel.ini (alpha dd ≈ 0.87; foot wants RGB).
-    # Set both colors-dark and colors-light to the same values: fuzzel does not
-    # switch with darkman, so this window shouldn't either. (Plain [colors] is
-    # deprecated in foot 1.27.)
+    # mirror the credential palette — crimson background, near-white text, salmon
+    # accent — and reuse the "❯" prompt glyph, so this window reads as part of the
+    # same askpass family as the fuzzel password box, just rendered in a terminal
+    # because the fingerprint needs room to be read. Colors match the fuzzel box
+    # below (alpha dd ≈ 0.87; foot wants RGB). Set both colors-dark and
+    # colors-light to the same values: the password box does not switch with
+    # darkman, so this window shouldn't either. (Plain [colors] is deprecated in
+    # foot 1.27.)
+    #
+    # Deliberately no main.font override. The user's foot.ini is already
+    # JetBrains Mono at the size the playbook computed for this panel, so
+    # inheriting is right everywhere; the size=10 pinned here previously was too
+    # small on every panel whose computed size wasn't 10 — in the one window where
+    # a ~90-character fingerprint most needs to be legible.
+    # The fuzzel box's identity is as much its shape as its color: a compact
+    # dialog inside a heavy salmon border. A default foot window is neither —
+    # 700x500 of mostly-empty crimson with no border at all — so size it to its
+    # contents and draw the border with CSDs. csd.preferred=client is only a hint
+    # (sway would otherwise server-side-decorate this window and we'd get no
+    # border); csd.size=0 drops the titlebar so the border is all that's left.
+    # CSD colors are AARRGGBB, unlike the RRGGBB in the colors sections.
     foot \
         --app-id 'gatherd-hostkey-verify' \
         --title 'SSH host key verification' \
-        --override 'main.font=JetBrains Mono:size=10' \
+        --override main.initial-window-size-chars=84x11 \
+        --override csd.preferred=client \
+        --override csd.size=0 \
+        --override csd.border-width=4 \
+        --override csd.border-color=ffff7f7f \
         --override colors-dark.alpha=0.87 \
-        --override colors-dark.background=08052b \
+        --override colors-dark.background=2b0508 \
         --override colors-dark.foreground=e3e3ea \
         --override colors-light.alpha=0.87 \
-        --override colors-light.background=08052b \
+        --override colors-light.background=2b0508 \
         --override colors-light.foreground=e3e3ea \
         --override main.pad=30x18 \
         -e sh -c '
@@ -91,8 +108,33 @@ esac
 # log dir must never stop the box from drawing.
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd"
 log="$log_dir/askpass.log"
+#
+# Styling: the credential house style. The launcher's indigo 08052b is
+# channel-swapped to crimson 2b0508 — the same colors, red-shifted — so this box
+# reads as kin to the fuzzel launcher while being impossible to mistake for it
+# when you are about to type a root password. The heavy opaque salmon border and
+# the narrower box (24 chars against the launcher's 50) finish the separation.
+#
+# Font and padding are deliberately NOT set. fuzzel.ini already carries the size
+# the playbook computed for this panel, so inheriting keeps this box in step with
+# the launcher on every machine for free. text/prompt/input are pinned even
+# though they match fuzzel.ini today: a credential prompt shouldn't depend on the
+# launcher's config to stay legible.
+#
+# --prompt-only REPLACES fuzzel.ini's prompt rather than prefixing it, so the "❯"
+# has to be spelled out here — without it the box shows a bare "[sudo] " and
+# loses the glyph that ties it to the host-key window above.
 exec 3>&1
-err=$(fuzzel --dmenu --password --prompt-only "$prompt " </dev/null 2>&1 1>&3)
+err=$(fuzzel --dmenu --password --prompt-only "❯  $prompt " \
+    --width=24 \
+    --background-color=2b0508dd \
+    --text-color=e3e3eaff \
+    --prompt-color=ff7f7fff \
+    --input-color=ff7f7fff \
+    --border-width=4 \
+    --border-color=ff7f7fff \
+    --border-radius=10 \
+    </dev/null 2>&1 1>&3)
 rc=$?
 exec 3>&-
 if [ "$rc" -ne 0 ]; then

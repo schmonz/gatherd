@@ -218,6 +218,7 @@ section_verify() {
     li 'Both tiers converged: `head -1 /etc/gatherd/core-complete` and `head -1 /etc/gatherd/async-complete` each print the same commit as `git -C /usr/local/lib/gatherd rev-parse HEAD`, and `head -1 /etc/gatherd/last-run` prints `ok`.'
     li 'No package drifts from the offline-cache manifest: `/usr/local/lib/gatherd/scripts/gatherd-check-package-tiers /usr/local/lib/gatherd` exits `0`.'
     li 'GRUB background decodes: `grep GRUB_BACKGROUND /etc/default/grub` prints a .jpg under /usr/local/lib/gatherd/backgrounds, `sudo grep -c "insmod jpeg" /boot/grub/grub.cfg` prints 1 or more, and the next boot shows the image rather than a plain background.'
+    li 'Credential prompts wear the crimson house style: `/usr/local/bin/gatherd-askpass "[sudo]"` pops a crimson box with a salmon border and a `❯  [sudo]` prompt, in the same font as the fuzzel launcher (`grep ^font= ~/.config/fuzzel/fuzzel.ini`) — typing echoes to stdout, Escape exits non-zero and prints nothing. Then `/usr/local/bin/gatherd-askpass "Are you sure you want to continue connecting (yes/no/[fingerprint])?"` opens a crimson foot window titled `SSH host key verification`, in the same font as `grep ^font= ~/.config/foot/foot.ini`.'
 }
 
 # ---------------------------------------------------------------------------

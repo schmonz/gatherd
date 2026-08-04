@@ -130,6 +130,35 @@ password passthrough, and the failure logging all stay exactly as they are.
   member inherits its font rather than pinning it (with the reason — the
   fingerprint needs the room).
 
+Recoloring alone was tried first and was not enough: on screen the window was
+crimson but still read as a completely different thing, because the family's
+identity is as much its *shape* as its palette. A default foot window is 700x500
+of mostly-empty background with no border at all, next to a compact bordered
+dialog. Two more overrides close the gap:
+
+```
+--override main.initial-window-size-chars=84x11
+--override csd.preferred=client
+--override csd.size=0
+--override csd.border-width=4
+--override csd.border-color=ffff7f7f
+```
+
+- `initial-window-size-chars=84x11` sizes the window to its contents. 84 columns
+  keeps the longest fingerprint line unwrapped; 11 rows fits heading, prompt, and
+  input with slack.
+- foot has no window-border option, but its CSDs do. `csd.preferred=client` is
+  required because sway would otherwise server-side-decorate the window and no
+  CSD border would be drawn at all — the option is documented as only a *hint* to
+  the compositor, and sway honors it. `csd.size=0` drops the titlebar so the
+  border is all that remains.
+- CSD colors are `AARRGGBB`, unlike the `RRGGBB` used in the colors sections, so
+  the salmon border is `ffff7f7f` rather than `ff7f7f`.
+
+**Known and accepted difference:** the fuzzel box has `--border-radius=10`; foot's
+CSD border is square and foot offers no corner rounding. The two members match in
+color, border weight, and proportion but not in corner shape.
+
 ### `scripts/gatherd-post-setup-notes`
 
 One new `section_verify` item, bringing the count to 7 (under the 10-item repave

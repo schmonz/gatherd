@@ -67,10 +67,15 @@
   GRUB somehow?) so that if it's entered correctly the plays can run to completion
   unattended → **DONE** this session (console `systemd-ask-password` before
   gatherd; see "Recently landed" above). Prune once repave-verified.
-- **Sideways GRUB-stage display on the Chuwi MiniBook X (LUKS prompt + GRUB menu)**:
+- **Sideways GRUB-stage *text* on the Chuwi MiniBook X (LUKS prompt + GRUB menu)**:
   the kernel cmdline params (`fbcon=rotate:1` + `video=DSI-1:panel_orientation=right_side_up`,
   now applied by `roles/hardware/tasks/rotated_panel.yml`) straighten the tty and
-  the Wayland session, but NOT anything drawn before the kernel loads. This box has
+  the Wayland session, but NOT anything drawn before the kernel loads. The
+  *background art* half is solved — `roles/hardware/tasks/grub_background.yml`
+  bakes the compensating quarter-turn into the image itself (lossless `jpegtran
+  -rotate 90` into `/usr/local/share/gatherd/`), which GRUB's sideways scanout
+  then undoes. That trick does not extend to gfxterm text, so what remains below
+  is the prompt and the menu. This box has
   `GRUB_ENABLE_CRYPTODISK=y` with `/boot` inside the LUKS volume (only `/boot/efi`
   is unencrypted), so GRUB does the LUKS unlock itself (`cryptomount`) before it can
   read grub.cfg — the LUKS passphrase prompt AND the boot menu are both GRUB's own

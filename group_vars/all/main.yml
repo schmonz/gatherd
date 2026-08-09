@@ -36,6 +36,13 @@ claude_skill_url: "https://raw.githubusercontent.com/addyosmani/agent-skills/mai
 wallpaper_cache_dir: "{{ setup_dir }}/backgrounds"
 wallpaper_cache_dark: "{{ wallpaper_cache_dir }}/wallpaper-dark.jpg"
 wallpaper_cache_light: "{{ wallpaper_cache_dir }}/wallpaper-light.jpg"
+
+# Where roles/hardware/tasks/grub_background.yml drops a pre-turned copy of the
+# dark wallpaper on a machine whose panel is physically mounted rotated. Outside
+# setup_dir on purpose: that is a git clone, and a generated file has no business
+# dirtying it. Only GRUB reads this one — every other consumer draws after the
+# kernel has already straightened the panel.
+wallpaper_grub_rotated: /usr/local/share/gatherd/wallpaper-dark-rotated.jpg
 wallpaper_dir: "{{ target_home }}/.local/share/backgrounds"
 wallpaper_dark_path: "{{ wallpaper_dir }}/wallpaper-dark"
 wallpaper_light_path: "{{ wallpaper_dir }}/wallpaper-light"

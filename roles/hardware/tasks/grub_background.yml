@@ -4,10 +4,72 @@
 # is already present at setup_dir/backgrounds; GRUB reads it straight from there at
 # boot, off the root filesystem — same as the old /usr/share splash. No light
 # variant: GRUB runs before any session, so there's no color-scheme to follow.
+#
+# On a rotated panel (has_rotated_panel) GRUB gets none of the compensation the
+# kernel cmdline gives the tty and the session — it draws at the firmware's native
+# orientation, so the wallpaper lands sideways on the physical screen. The fix is
+# to bake the turn into the image itself: pre-rotate it by the same quarter-turn
+# rotated_panel.yml asks fbcon for, and GRUB's sideways scanout undoes it. This
+# straightens the art only; GRUB's own gfxterm text (menu, LUKS prompt) has no
+# rotation knob and stays sideways. See plans/TODO.md for why that half is hard.
+- name: Install jpegtran for the rotated GRUB background
+  # Lossless block transform: it turns the image without re-encoding, so the
+  # baseline/4:2:0 encoding that GRUB's narrow jpeg reader insists on survives
+  # by construction rather than by keeping a second set of encoder flags in sync
+  # with scripts/gatherd-fetch-wallpapers.
+  community.general.pacman:
+    name: libjpeg-turbo
+    state: present
+  when: has_rotated_panel
+
+- name: Create the generated-background directory
+  ansible.builtin.file:
+    path: "{{ wallpaper_grub_rotated | dirname }}"
+    state: directory
+    mode: '0755'
+  when: has_rotated_panel
+
+- name: Stat the committed GRUB background
+  ansible.builtin.stat:
+    path: "{{ wallpaper_cache_dark }}"
+  register: _grub_bg_src
+  when: has_rotated_panel
+
+- name: Stat the rotated GRUB background
+  ansible.builtin.stat:
+    path: "{{ wallpaper_grub_rotated }}"
+  register: _grub_bg_rot
+  when: has_rotated_panel
+
+- name: Rotate the GRUB background to counter the panel mounting
+  # -rotate 90 is clockwise, matching fbcon=rotate:1 in rotated_panel.yml — flip
+  # to 270 if a machine turns out to be mounted the other way. -copy none drops
+  # the Exif block so no stale orientation tag argues with the pixels.
+  ansible.builtin.command:
+    argv:
+      - jpegtran
+      - -rotate
+      - '90'
+      - -optimize
+      - -copy
+      - none
+      - -outfile
+      - "{{ wallpaper_grub_rotated }}"
+      - "{{ wallpaper_cache_dark }}"
+  # The when: below is the idempotency guard — the command only runs when the
+  # rotated copy is missing or stale, so running it always means a real change.
+  changed_when: true
+  when:
+    - has_rotated_panel
+    - _grub_bg_src.stat.exists
+    - not _grub_bg_rot.stat.exists or _grub_bg_rot.stat.mtime < _grub_bg_src.stat.mtime
+  # No Rebuild grub: GRUB_BACKGROUND puts a path into grub.cfg, not the pixels,
+  # so refreshing the file behind an unchanged path needs no regeneration.
+
 - name: Point GRUB at the cached background image
   ansible.builtin.lineinfile:
     path: /etc/default/grub
     regexp: '^#?GRUB_BACKGROUND='
-    line: "GRUB_BACKGROUND='{{ wallpaper_cache_dark }}'"
+    line: "GRUB_BACKGROUND='{{ has_rotated_panel | ternary(wallpaper_grub_rotated, wallpaper_cache_dark) }}'"
   when: wallpaper_cache_dark is exists
   notify: Rebuild grub

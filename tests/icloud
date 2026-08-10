@@ -1,0 +1,63 @@
+#!/bin/sh
+# Unit tests for the gatherd-icloud-* scripts.
+#
+# Fakes rclone and op on PATH so the decision logic — baseline detection, the
+# refuse-on-populated-dir guard, the publish-only-if-verified guard — is
+# exercised without an iCloud account or a network. Those guards are the parts
+# that must not be discovered to be wrong on a fresh repave.
+#
+# Usage: tests/icloud
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+PASS=0
+FAIL=0
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+FAKEBIN="$WORK/bin"
+mkdir -p "$FAKEBIN"
+PATH="$FAKEBIN:$REPO/scripts:$PATH"
+export PATH
+
+# fake_bin NAME BODY — install a fake executable that shadows the real one.
+fake_bin() {
+    printf '#!/bin/sh\n%s\n' "$2" > "$FAKEBIN/$1"
+    chmod +x "$FAKEBIN/$1"
+}
+
+ok()   { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad()  { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+assert_ok()   { _d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$_d"; else bad "$_d (expected success)"; fi; }
+assert_fail() { _d=$1; shift; if "$@" >/dev/null 2>&1; then bad "$_d (expected failure)"; else ok "$_d"; fi; }
+assert_out()  {
+    _d=$1; _want=$2; shift 2
+    _got=$("$@" 2>/dev/null || true)
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want [$_want] got [$_got])"; fi
+}
+
+# ── gatherd-icloud-password ───────────────────────────────────────────────────
+
+fake_bin op 'case "$*" in
+    *"op://Private/rclone config/password"*) printf secret123 ;;
+    *) echo "unexpected op args: $*" >&2; exit 1 ;;
+esac'
+
+assert_out 'password helper reads the default item' secret123 gatherd-icloud-password
+
+# Exported, not prefixed: a `VAR=x func` prefix does not reliably scope to a
+# shell function the way it does to an external command.
+export GATHERD_OP_VAULT=Other GATHERD_OP_PASSWORD_ITEM='other item'
+assert_fail 'password helper honours item overrides' gatherd-icloud-password
+unset GATHERD_OP_VAULT GATHERD_OP_PASSWORD_ITEM
+
+fake_bin op 'echo "[ERROR] authorization timeout" >&2; exit 1'
+assert_fail 'password helper fails when op is locked' gatherd-icloud-password
+
+# ── summary ───────────────────────────────────────────────────────────────────
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

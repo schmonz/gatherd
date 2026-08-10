@@ -4,7 +4,7 @@
 # (via system-login) before sway is exec'd, so sway and every process it spawns
 # — terminals, swayidle, autostarted apps — inherit these. It also fires for
 # console and SSH logins, so it covers the login shells profile.d used to.
-- name: Set user-session environment (PATH, Go, Qt theme, askpass) via pam_env
+- name: Set user-session environment (PATH, Go, Qt theme, askpass, rclone) via pam_env
   ansible.builtin.blockinfile:
     path: /etc/security/pam_env.conf
     # PATH base is set before the prepend so an unset PATH can never collapse to
@@ -23,6 +23,11 @@
       # prompts on the tty; only no-tty invocations reach for fuzzel.
       SUDO_ASKPASS    DEFAULT=/usr/local/bin/gatherd-askpass
       SSH_ASKPASS     DEFAULT=/usr/local/bin/gatherd-askpass
+      # rclone shells out to this for the config-encryption password. A one-word
+      # helper keeps pam_env from having to quote a value containing spaces and
+      # quotes. Absolute path because rclone execs the command directly rather
+      # than through a shell, so it does not get this file's own PATH edit.
+      RCLONE_PASSWORD_COMMAND  DEFAULT=@{HOME}/.local/bin/gatherd-icloud-password
     marker: "# {mark} ANSIBLE MANAGED BLOCK: gatherd user env"
   notify: Etckeeper commit
 

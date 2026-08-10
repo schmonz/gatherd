@@ -34,3 +34,10 @@
   loop: "{{ icloud_sync_folders }}"
   loop_control:
     label: "{{ item.remote }}"
+
+- name: Install the iCloud config-password helper
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-icloud-password"
+    dest: "{{ target_home }}/.local/bin/gatherd-icloud-password"
+    mode: '0755'
+    remote_src: true

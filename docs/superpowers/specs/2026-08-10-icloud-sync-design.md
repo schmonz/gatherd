@@ -17,6 +17,11 @@ follow prompts to add a remote named `icloud`; complete 2FA when prompted."* Syn
 is a hand-written one-liner, `~/.local/bin/fsnotes-sync`, that exists on one machine,
 covers one folder, is untracked by the playbook, and is run by hand.
 
+**Already done by hand** (as of 2026-08-10, on this machine only): `rclone.conf` is
+encrypted, the password lives at `op://Private/rclone config/password`, and
+`RCLONE_PASSWORD_COMMAND` is exported from `~/.bashrc`. §4.3 and §5 therefore describe
+partly-existing state, not greenfield work — see the notes there.
+
 Three gaps:
 
 1. **No first-run help.** Establishing the local copy means knowing to run
@@ -112,7 +117,11 @@ gives a place to add a session-lifetime cache later.
 - `RCLONE_PASSWORD_COMMAND=gatherd-icloud-password` in `/etc/security/pam_env.conf`, via
   the mechanism in `roles/system/tasks/user_path.yml`. Per CLAUDE.md, session env vars
   go through `pam_env` and never `environment.d` — greetd launches sway with no login
-  shell.
+  shell. **This is a migration, not a new setting:** the variable is currently exported
+  from `~/.bashrc` as `op read --no-newline "op://Private/rclone config/password"`, which
+  reaches bash shells but *not* the sway session or the autostart scripts that will call
+  this — exactly the trap CLAUDE.md's pam_env convention exists to prevent. The
+  `.bashrc` export is removed as part of the migration.
 - `unlock-command=gatherd-icloud-sync --if-due` in `gtklock-config.ini.j2`.
 
 ## 5. Config and credential lifecycle
@@ -121,7 +130,9 @@ gives a place to add a session-lifetime cache later.
 
 - **`rclone config`** — Password item, the config encryption password. Created with
   `op item create --generate-password` if absent; never typed or chosen by a human.
-- **`rclone.conf`** — Document item, the **already-encrypted** config.
+  **Already exists** at `op://Private/rclone config/password`.
+- **`rclone.conf`** — Document item, the **already-encrypted** config. Does not exist
+  yet; creating it is the substantive part of `bootstrap`.
 
 "Already-encrypted" is load-bearing. Encryption happens exactly once, on the first
 machine; every other machine only ever decrypts. No machine needs to drive
@@ -137,6 +148,12 @@ token.
 
 `rclone config` with 2FA → `rclone config encryption set` → create both 1Password items.
 The only step in this design a human performs.
+
+Each stage must be **idempotent against work already done by hand**: this machine already
+has a working remote, an encrypted config, and the password item, so on it `bootstrap`
+does nothing but upload the document. A `bootstrap` that assumes greenfield would
+re-encrypt a config that is already encrypted, or overwrite a password item that other
+machines will later depend on.
 
 ### 5.3 `pull` (login, and on demand)
 
@@ -258,10 +275,20 @@ repave-suggestion threshold but only just.
 
 ## 10. Risks
 
-**R1 — Shared session token across machines (blocking).** Whether iCloud tolerates one
-session token in use from several machines, or invalidates on concurrent use, is not
-settleable on paper. **Test on two machines before the fleet depends on it.** If it does
-not hold, the fallback is shared-password/per-machine-config; because
+**R1 — Shared session token across machines (informational, not blocking).** Whether
+iCloud tolerates one session token in use from several machines is not settleable on
+paper, and there is no second machine available to test on. §11 substitutes a
+single-machine shadow-config test.
+
+R1 is **informational** because the acceptance criterion was never "Apple never
+invalidates a shared session" — it is "when it does, the fleet heals without a human,"
+which the pull-and-retest path in §5.3 already implements. If refresh turns out to kill
+sibling sessions, the consequence is not a redesign: machines re-pull more often, and
+human 2FA frequency lands somewhere between "once per fleet" and "once per machine."
+
+Only one outcome actually breaks D5: **hard revocation of the trust token on concurrent
+use**, forcing fresh 2FA. That failure appears within minutes of T2/T3, not weeks. If it
+occurs, the fallback is shared-password/per-machine-config — and because
 `gatherd-icloud-config` is the only component that knows where configs come from, that
 fallback rewrites one script, not the design.
 
@@ -274,11 +301,39 @@ per expiry, rather than once per machine per repave — not whether.
 
 ## 11. Pre-completion testing
 
-In order:
+### 11.1 The shadow-config test (replaces the two-machine test)
 
-1. **R1's two-machine token test** — the one result that can invalidate the approach.
-2. `--init-if-empty` against an empty dir.
-3. Push-back guard: deliberately break the local config, confirm nothing is published.
+No second machine is available. Substitute this, which is stronger than it sounds: under
+D5 a fleet machine holds a **byte-identical copy** of the encrypted config — same
+`client_id`, same trust token, same cookies. So a second config directory driven via
+`RCLONE_CONFIG=` is not an approximation of a second machine; on every axis Apple can
+see except the network, it *is* one. Two rclone processes hold the same session
+independently, each free to refresh and rewrite its own file.
+
+| | What it tests | Time |
+|---|---|---|
+| **T1** Copy authenticates | `RCLONE_CONFIG=<shadow> rclone lsd icloud:` succeeds alongside the real one | minutes |
+| **T2** Concurrent use | Repeated simultaneous operations from both; neither errors, neither is forced to re-auth | minutes |
+| **T3** Divergent egress | T2 again with the shadow's traffic over PIA, so the sessions arrive from different public IPs | minutes |
+| **T4** Refresh/rotation | Both copies exercised on a cadence for 1–2 weeks: does rclone rewrite either config, does one side's refresh kill the other | weeks |
+| **T5** Self-healing | Stale-ify one copy's session; confirm `gatherd-icloud-config pull` restores it from the fleet copy with no 2FA | minutes |
+
+T3 covers the one axis a same-machine shadow genuinely misses: Apple's fraud heuristics
+may key on source IP, and PIA supplies a second egress without a second computer. A qemu
+VM would add hostname and MAC divergence, which the iCloud session layer is unlikely to
+observe — not worth the setup unless T1–T3 come back ambiguous.
+
+**Sequencing: do not block on T4.** Run T1–T3 and T5 in an afternoon; let T4 accumulate
+in the background while implementation proceeds. T4 piggybacks on the unlock trigger from
+§6.1 — the shadow syncs on unlock and appends a timestamped line to its own log, so
+evidence gathers without attention. Remove the shadow once T4 concludes.
+
+### 11.2 Remaining tests
+
+1. `--init-if-empty` against an empty dir.
+2. Push-back guard: deliberately break the local config, confirm nothing is published.
+3. 1Password locked (not merely absent) produces "not ready," not a failure notification
+   — the `authorization timeout` case, observed live on 2026-08-10.
 
 ## 12. Out of scope
 

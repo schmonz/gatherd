@@ -291,3 +291,20 @@ web_apps:
     comment: Social
     codename: Reddit
     app_store_id: "1064216828"
+
+# iCloud Drive sync. The folder list is data on purpose: widening coverage is a
+# list edit, not a code change. Downloads is excluded on the merits — 310 MB of
+# constantly-churning share-sheet detritus is a poor fit for a bisync pair with a
+# max-delete tripwire.
+icloud_remote: icloud
+icloud_sync_root: "{{ target_home }}/Documents/iCloud"
+icloud_filters_base:
+  - "- .DS_Store"
+  - "- ._*"
+  - "- *.icloud"
+icloud_sync_folders:
+  - remote: FSNotes
+    filters:
+      - "- projects.state"
+      - "- *.textbundle"
+      - "- /Trash/**"

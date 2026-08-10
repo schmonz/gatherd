@@ -1,0 +1,36 @@
+---
+- name: Create iCloud sync directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ target_home }}/.config/gatherd"
+    - "{{ target_home }}/.config/rclone/filters"
+    - "{{ icloud_sync_root }}"
+    - "{{ target_home }}/.local/state/gatherd"
+    - "{{ target_home }}/.local/share/gatherd/icloud-backup"
+
+- name: Create the local directory for each synced iCloud folder
+  ansible.builtin.file:
+    path: "{{ icloud_sync_root }}/{{ item.remote }}"
+    state: directory
+    mode: '0755'
+  loop: "{{ icloud_sync_folders }}"
+  loop_control:
+    label: "{{ item.remote }}"
+
+- name: Render the iCloud folder manifest
+  ansible.builtin.template:
+    src: icloud.conf.j2
+    dest: "{{ target_home }}/.config/gatherd/icloud.conf"
+    mode: '0644'
+
+- name: Render the rclone filter file for each synced folder
+  ansible.builtin.template:
+    src: folder.filter.j2
+    dest: "{{ target_home }}/.config/rclone/filters/{{ item.remote }}.filter"
+    mode: '0644'
+  loop: "{{ icloud_sync_folders }}"
+  loop_control:
+    label: "{{ item.remote }}"

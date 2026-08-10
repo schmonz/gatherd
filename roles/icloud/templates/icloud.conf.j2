@@ -1,0 +1,4 @@
+# Managed by gatherd (roles/icloud). Sourced by gatherd-icloud-sync.
+ICLOUD_REMOTE={{ icloud_remote }}
+ICLOUD_ROOT={{ icloud_sync_root }}
+ICLOUD_FOLDERS="{{ icloud_sync_folders | map(attribute='remote') | join(' ') }}"

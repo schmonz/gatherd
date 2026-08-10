@@ -92,6 +92,11 @@
         name: desktop
         tasks_from: core
 
+    - name: Converge the offline iCloud sync tier
+      ansible.builtin.import_role:
+        name: icloud
+        tasks_from: core
+
   post_tasks:
     - name: Read deployed git HEAD  # noqa: command-instead-of-module
       ansible.builtin.command: "git -C {{ setup_dir }} rev-parse HEAD"

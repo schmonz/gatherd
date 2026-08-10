@@ -1,0 +1,7 @@
+# Managed by gatherd (roles/icloud).
+{% for line in icloud_filters_base %}
+{{ line }}
+{% endfor %}
+{% for line in item.filters | default([]) %}
+{{ line }}
+{% endfor %}

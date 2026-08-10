@@ -33,10 +33,20 @@ bad()  { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
 
 assert_ok()   { _d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$_d"; else bad "$_d (expected success)"; fi; }
 assert_fail() { _d=$1; shift; if "$@" >/dev/null 2>&1; then bad "$_d (expected failure)"; else ok "$_d"; fi; }
+# assert_out uses $() which strips trailing newlines; byte-exact expectations must use assert_bytes.
 assert_out()  {
     _d=$1; _want=$2; shift 2
     _got=$("$@" 2>/dev/null || true)
     if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want [$_want] got [$_got])"; fi
+}
+# assert_bytes DESC EXPECTED CMD… — compares output byte-exactly by redirecting to files and using cmp.
+assert_bytes() {
+    _d=$1; _want=$2; shift 2
+    _got_f="$WORK/got-bytes"
+    _want_f="$WORK/want-bytes"
+    printf '%s' "$_want" > "$_want_f"
+    "$@" > "$_got_f" 2>/dev/null || true
+    if cmp -s "$_want_f" "$_got_f"; then ok "$_d"; else bad "$_d (byte mismatch)"; fi
 }
 
 # ── gatherd-icloud-password ───────────────────────────────────────────────────
@@ -47,6 +57,7 @@ fake_bin op 'case "$*" in
 esac'
 
 assert_out 'password helper reads the default item' secret123 gatherd-icloud-password
+assert_bytes 'password helper emits no trailing newline' secret123 gatherd-icloud-password
 
 # Exported, not prefixed: a `VAR=x func` prefix does not reliably scope to a
 # shell function the way it does to an external command.

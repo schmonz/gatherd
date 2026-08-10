@@ -1,0 +1,91 @@
+#!/bin/sh
+# Shadow-config probe for the shared-session-token question (spec §11.1).
+#
+# Under D5 every fleet machine holds a byte-identical copy of the encrypted
+# rclone.conf — same client_id, same trust token, same cookies. So a second
+# config directory driven via RCLONE_CONFIG differs from a second machine only
+# in source IP, which `probe --vpn` covers by requiring PIA to be up. Two rclone
+# processes then hold the same session independently, each free to refresh and
+# rewrite its own copy.
+#
+# Usage:
+#   tests/icloud-shadow probe        T1+T2: copy authenticates, concurrent use
+#   tests/icloud-shadow probe --vpn  T3:    same, asserting a different egress IP
+#   tests/icloud-shadow log          T4:    one timestamped datapoint, appended
+#
+# Delete this script once T4 concludes.
+
+set -eu
+
+REAL="${RCLONE_CONFIG:-$HOME/.config/rclone/rclone.conf}"
+SHADOW_DIR="${GATHERD_SHADOW_DIR:-$HOME/.local/state/gatherd/icloud-shadow}"
+SHADOW="$SHADOW_DIR/rclone.conf"
+LOG="$SHADOW_DIR/probe.log"
+REMOTE="${GATHERD_ICLOUD_REMOTE:-icloud}"
+
+mkdir -p "$SHADOW_DIR"
+chmod 700 "$SHADOW_DIR"
+
+sync_shadow() {
+    # Byte copy, deliberately: divergence here would test something other than
+    # what a fleet machine actually holds.
+    cp -p "$REAL" "$SHADOW"
+    chmod 600 "$SHADOW"
+}
+
+real_ls()   { rclone lsd "$REMOTE:" >/dev/null 2>&1; }
+shadow_ls() { RCLONE_CONFIG="$SHADOW" rclone lsd "$REMOTE:" >/dev/null 2>&1; }
+
+egress_ip() { curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || echo unknown; }
+
+probe() {
+    _vpn=${1:-}
+
+    sync_shadow
+
+    printf 'T1 copy authenticates ... '
+    if shadow_ls; then echo PASS; else echo FAIL; return 1; fi
+
+    printf 'T1 real still authenticates ... '
+    if real_ls; then echo PASS; else echo 'FAIL (shadow use killed the real session)'; return 1; fi
+
+    if [ "$_vpn" = "--vpn" ]; then
+        printf 'T3 egress IP ... '
+        _ip=$(egress_ip)
+        echo "$_ip"
+        [ "$_ip" != unknown ] || { echo 'T3 FAIL: could not determine egress IP'; return 1; }
+        echo "T3 note: confirm this differs from the non-VPN run's IP"
+    fi
+
+    printf 'T2 concurrent use (10 rounds) ... '
+    _i=0
+    while [ "$_i" -lt 10 ]; do
+        real_ls & _r=$!
+        shadow_ls & _s=$!
+        wait "$_r" || { echo "FAIL: real session died on round $_i"; return 1; }
+        wait "$_s" || { echo "FAIL: shadow session died on round $_i"; return 1; }
+        _i=$((_i + 1))
+    done
+    echo PASS
+
+    printf 'T2 configs unchanged by use ... '
+    if cmp -s "$REAL" "$SHADOW"; then
+        echo 'PASS (neither side rotated)'
+    else
+        echo 'DIVERGED — a refresh rewrote one side; this is T4 territory, not a failure'
+    fi
+}
+
+log() {
+    _when=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    _real=fail; real_ls   && _real=ok
+    _shadow=fail; shadow_ls && _shadow=ok
+    _same=differ; cmp -s "$REAL" "$SHADOW" && _same=identical
+    printf '%s real=%s shadow=%s configs=%s\n' "$_when" "$_real" "$_shadow" "$_same" >> "$LOG"
+}
+
+case "${1:-probe}" in
+    probe) shift 2>/dev/null || true; probe "${1:-}" ;;
+    log)   log ;;
+    *)     echo "usage: $0 [probe [--vpn] | log]" >&2; exit 2 ;;
+esac

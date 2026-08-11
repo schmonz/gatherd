@@ -48,3 +48,10 @@
     dest: "{{ target_home }}/.local/bin/gatherd-icloud-sync"
     mode: '0755'
     remote_src: true
+
+- name: Install the iCloud config plumbing
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-icloud-config"
+    dest: "{{ target_home }}/.local/bin/gatherd-icloud-config"
+    mode: '0755'
+    remote_src: true

@@ -1,0 +1,164 @@
+#!/bin/sh
+# The 1Password half of gatherd's iCloud sync: moves the encrypted rclone.conf
+# between this machine and the fleet copy. Knows nothing about folders or bisync.
+#
+# The distributed artifact is already encrypted, so no machine ever has to drive
+# `rclone config encryption set` non-interactively — encryption happens once, in
+# `bootstrap`, and every other machine only decrypts. rclone preserves existing
+# encryption when it rewrites the file after a token refresh, so refreshed
+# configs stay distributable.
+#
+# Usage: gatherd-icloud-config {bootstrap|pull|push|status}
+
+set -eu
+
+STATE="${GATHERD_ICLOUD_STATE:-$HOME/.local/state/gatherd}"
+CONFIG="${RCLONE_CONFIG:-$HOME/.config/rclone/rclone.conf}"
+REMOTE="${GATHERD_ICLOUD_REMOTE:-icloud}"
+
+: "${GATHERD_OP_VAULT:=Private}"
+: "${GATHERD_OP_DOCUMENT:=rclone.conf}"
+: "${GATHERD_OP_PASSWORD_ITEM:=rclone config}"
+
+FLEET_OK="$STATE/icloud-fleet-ok"
+
+mkdir -p "$STATE"
+
+# A decrypted config is a live iCloud token in plaintext, so scratch space is
+# tmpfs (per-user, gone at logout) and never the disk.
+TMP=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/gatherd-icloud.XXXXXX")
+chmod 700 "$TMP"
+trap 'rm -rf "$TMP"' EXIT
+
+die() { printf 'gatherd-icloud-config: %s\n' "$1" >&2; exit 1; }
+
+doc_get()    { op document get "$GATHERD_OP_DOCUMENT" --vault "$GATHERD_OP_VAULT"; }
+doc_exists() { doc_get >/dev/null 2>&1; }
+doc_put() {
+    if doc_exists; then
+        op document edit "$GATHERD_OP_DOCUMENT" --vault "$GATHERD_OP_VAULT" - < "$1"
+    else
+        op document create - --title "$GATHERD_OP_DOCUMENT" --vault "$GATHERD_OP_VAULT" < "$1"
+    fi
+}
+
+# Reachability is the only definition of "this config works" that matters here.
+config_works() { RCLONE_CONFIG="$1" rclone lsd "$REMOTE:" >/dev/null 2>&1; }
+
+install_config() {
+    mkdir -p "$(dirname "$CONFIG")"
+    cp "$1" "$CONFIG"
+    chmod 600 "$CONFIG"
+}
+
+cmd_pull() {
+    if [ ! -s "$CONFIG" ]; then
+        doc_get > "$TMP/fleet" 2>/dev/null || die "no fleet config yet; run: gatherd-icloud-config bootstrap"
+        install_config "$TMP/fleet"
+        : > "$FLEET_OK"
+        return 0
+    fi
+
+    if config_works "$CONFIG"; then
+        cmd_push
+        return $?
+    fi
+
+    doc_get > "$TMP/fleet" 2>/dev/null || die "local config does not work and no fleet config exists"
+    if config_works "$TMP/fleet"; then
+        install_config "$TMP/fleet"
+        : > "$FLEET_OK"
+        return 0
+    fi
+
+    # Both copies are dead. Overwriting one with the other would look like
+    # progress and be none, and would destroy the only config a human could
+    # still repair with `rclone config reconnect`.
+    die "neither the local nor the fleet config authenticates; iCloud needs re-authentication"
+}
+
+cmd_push() {
+    [ -s "$CONFIG" ] || die "no local config to publish"
+    config_works "$CONFIG" || die "refusing to publish a config that cannot reach iCloud"
+
+    if doc_get > "$TMP/fleet" 2>/dev/null; then
+        # Compare decrypted contents: rclone's config encryption is
+        # nonce-randomised, so two encryptions of identical content differ
+        # byte-for-byte and a ciphertext comparison would re-upload every run.
+        RCLONE_CONFIG="$CONFIG"    rclone config show > "$TMP/local.plain" 2>/dev/null || true
+        RCLONE_CONFIG="$TMP/fleet" rclone config show > "$TMP/fleet.plain" 2>/dev/null || true
+        if cmp -s "$TMP/local.plain" "$TMP/fleet.plain"; then
+            : > "$FLEET_OK"
+            return 0
+        fi
+    fi
+
+    doc_put "$CONFIG"
+    : > "$FLEET_OK"
+}
+
+cmd_bootstrap() {
+    # Every stage is idempotent against work already done by hand: this machine
+    # already has a working remote, an encrypted config, and the password item,
+    # so here bootstrap does nothing but upload the document. A bootstrap that
+    # assumed greenfield would re-encrypt an encrypted config or overwrite a
+    # password item other machines will come to depend on.
+    if ! op item get "$GATHERD_OP_PASSWORD_ITEM" --vault "$GATHERD_OP_VAULT" >/dev/null 2>&1; then
+        op item create --category=password \
+            --title "$GATHERD_OP_PASSWORD_ITEM" --vault "$GATHERD_OP_VAULT" --generate-password
+        echo "Created the config password item. Now encrypt the config:"
+        echo "  rclone config encryption set"
+        echo "and re-run: gatherd-icloud-config bootstrap"
+        return 0
+    fi
+
+    [ -s "$CONFIG" ] || die "no local rclone config; run 'rclone config' and add the '$REMOTE' remote first"
+
+    if ! head -n1 "$CONFIG" | grep -q 'Encrypted rclone configuration'; then
+        die "local config is not encrypted; run: rclone config encryption set"
+    fi
+
+    config_works "$CONFIG" || die "local config does not authenticate; fix it before publishing it to the fleet"
+
+    doc_put "$CONFIG"
+    : > "$FLEET_OK"
+    echo "Published the encrypted config to op://$GATHERD_OP_VAULT/$GATHERD_OP_DOCUMENT"
+}
+
+cmd_status() {
+    if [ ! -s "$CONFIG" ]; then
+        _enc=absent
+    elif head -n1 "$CONFIG" | grep -q 'Encrypted rclone configuration'; then
+        _enc=encrypted
+    else
+        _enc=plaintext
+    fi
+
+    if [ "$_enc" = absent ]; then
+        _reach=not-ready
+    elif config_works "$CONFIG"; then
+        _reach=verified
+    else
+        _reach=unreachable
+    fi
+
+    if ! doc_get > "$TMP/fleet" 2>/dev/null; then
+        _fleet=absent
+    elif [ "$_enc" = absent ]; then
+        _fleet=unknown
+    else
+        RCLONE_CONFIG="$CONFIG"    rclone config show > "$TMP/local.plain" 2>/dev/null || true
+        RCLONE_CONFIG="$TMP/fleet" rclone config show > "$TMP/fleet.plain" 2>/dev/null || true
+        if cmp -s "$TMP/local.plain" "$TMP/fleet.plain"; then _fleet='in sync'; else _fleet=differs; fi
+    fi
+
+    printf 'config: %s, %s; fleet: %s\n' "$_enc" "$_reach" "$_fleet"
+}
+
+case "${1:-status}" in
+    bootstrap) cmd_bootstrap ;;
+    pull)      cmd_pull ;;
+    push)      cmd_push ;;
+    status)    cmd_status ;;
+    *)         echo "usage: $0 {bootstrap|pull|push|status}" >&2; exit 2 ;;
+esac

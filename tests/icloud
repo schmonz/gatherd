@@ -322,6 +322,100 @@ assert_out 'a failure after the interval notifies again' 2 \
 unset GATHERD_ICLOUD_CONF GATHERD_ICLOUD_STATE GATHERD_ICLOUD_FILTERS \
       GATHERD_ICLOUD_BACKUPS GATHERD_ICLOUD_MIN_INTERVAL
 
+# ── gatherd-icloud-config ─────────────────────────────────────────────────────
+
+cfg_env() {
+    C="$WORK/c$1"
+    rm -rf "$C"
+    mkdir -p "$C/state" "$C/op"
+    export GATHERD_ICLOUD_STATE="$C/state"
+    export RCLONE_CONFIG="$C/rclone.conf"
+    export FAKE_OP_DIR="$C/op"
+}
+
+# op fake: documents are files under $FAKE_OP_DIR.
+fake_op_docs() {
+    fake_bin op 'case "$1 $2" in
+    "document get")
+        [ -f "$FAKE_OP_DIR/doc" ] || { echo "not found" >&2; exit 1; }
+        cat "$FAKE_OP_DIR/doc" ;;
+    "document create")
+        cat > "$FAKE_OP_DIR/doc" ;;
+    "document edit")
+        cat > "$FAKE_OP_DIR/doc" ;;
+    "item get")
+        [ -f "$FAKE_OP_DIR/pw" ] || { echo "not found" >&2; exit 1; } ;;
+    "item create")
+        printf secret123 > "$FAKE_OP_DIR/pw" ;;
+    *) exit 0 ;;
+esac'
+}
+
+# rclone fake whose reachability keys on the contents of $RCLONE_CONFIG, not on
+# which caller (script vs test) is asking — a marker-file toggle can't tell a
+# broken local config from a working fleet copy when both are probed through
+# the same $RCLONE_CONFIG variable the script itself sets per-call.
+fake_rclone_reachable() {
+    fake_bin rclone 'case "$1" in
+    lsd) grep -q FLEET "$RCLONE_CONFIG" 2>/dev/null && exit 0; echo "401 Unauthorized" >&2; exit 1 ;;
+    config) case "$2" in show) cat "$RCLONE_CONFIG" 2>/dev/null ;; *) exit 0 ;; esac ;;
+    *) exit 0 ;;
+esac'
+}
+
+cfg_env 1; fake_op_docs; fake_rclone_reachable
+printf 'FLEET-CONFIG-A' > "$C/op/doc"
+assert_ok 'pull installs the fleet config when none is local' gatherd-icloud-config pull
+assert_out 'pulled contents match the fleet copy' FLEET-CONFIG-A cat "$C/rclone.conf"
+
+cfg_env 2; fake_op_docs; fake_rclone_reachable
+printf 'FLEET-CONFIG-A' > "$C/op/doc"
+printf 'LOCAL-BROKEN'   > "$C/rclone.conf"
+assert_ok 'pull replaces an unreachable local config with a working fleet one' \
+    gatherd-icloud-config pull
+assert_out 'replaced local config matches the fleet copy' FLEET-CONFIG-A cat "$C/rclone.conf"
+
+cfg_env 3; fake_op_docs; fake_rclone_reachable
+printf 'LOCAL-BROKEN' > "$C/rclone.conf"
+printf 'ALSO-BROKEN'  > "$C/op/doc"
+assert_fail 'pull leaves a broken local config alone when the fleet copy is broken too' \
+    gatherd-icloud-config pull
+# Byte-exact, not just string-equal: overwriting the only repairable copy with
+# an equally-dead one must be provably impossible, not merely unobserved.
+assert_bytes 'broken local config byte-unchanged' LOCAL-BROKEN cat "$C/rclone.conf"
+
+cfg_env 4; fake_op_docs; fake_rclone_reachable
+printf 'LOCAL-REFRESHED-FLEET' > "$C/rclone.conf"
+printf 'FLEET-STALE'           > "$C/op/doc"
+assert_ok 'push publishes a verified local config' gatherd-icloud-config push
+assert_out 'fleet copy now matches local' LOCAL-REFRESHED-FLEET cat "$C/op/doc"
+
+cfg_env 5; fake_op_docs; fake_rclone_reachable
+printf 'LOCAL-BROKEN'   > "$C/rclone.conf"
+printf 'FLEET-GOOD'     > "$C/op/doc"
+assert_fail 'push refuses to publish an unverifiable config' gatherd-icloud-config push
+# Byte-exact: a broken machine must be provably unable to poison the fleet
+# document, not merely leave it looking unchanged after newline-stripping.
+assert_bytes 'fleet copy byte-unchanged after the refused push' FLEET-GOOD cat "$C/op/doc"
+
+cfg_env 6; fake_op_docs; fake_rclone_reachable
+printf 'SAME-FLEET' > "$C/rclone.conf"
+printf 'SAME-FLEET' > "$C/op/doc"
+assert_ok 'push is a no-op when nothing changed' gatherd-icloud-config push
+assert_ok 'push recorded fleet-ok' test -f "$C/state/icloud-fleet-ok"
+
+cfg_env 7; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nFLEET\n' > "$C/rclone.conf"
+cp "$C/rclone.conf" "$C/op/doc"
+assert_out 'status reports an encrypted, verified, in-sync config' \
+    'config: encrypted, verified; fleet: in sync' gatherd-icloud-config status
+
+cfg_env 8; fake_op_docs; fake_rclone_reachable
+assert_out 'status reports an absent config' \
+    'config: absent, not-ready; fleet: absent' gatherd-icloud-config status
+
+unset GATHERD_ICLOUD_STATE RCLONE_CONFIG FAKE_OP_DIR
+
 # ── summary ───────────────────────────────────────────────────────────────────
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

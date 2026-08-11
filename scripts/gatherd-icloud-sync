@@ -112,7 +112,7 @@ sync_folder() {
                 if dir_is_empty "$_local"; then
                     _resync=--resync
                 else
-                    say "$_folder has local files but no baseline; --init lets iCloud overwrite them with no way back. Dry run first: rclone bisync $ICLOUD_REMOTE:$_folder $_local --dry-run -v"
+                    say "$_folder has local files but no baseline; --init lets iCloud overwrite them with no way back. Dry run first: rclone bisync $ICLOUD_REMOTE:$_folder $_local --resync --dry-run -v --workdir $_workdir --filters-file $FILTERS/$_folder.filter"
                     return 1
                 fi
                 ;;
@@ -148,7 +148,7 @@ if ! probe=$(rclone lsd "$ICLOUD_REMOTE:" 2>&1 >/dev/null); then
         exit 0
     fi
     : > "$REAUTH"
-    say "cannot reach iCloud; it may need re-authentication (rclone config reconnect $ICLOUD_REMOTE:)"
+    say "cannot reach iCloud; it may need re-authentication (rclone config reconnect $ICLOUD_REMOTE:), or the rclone config may be corrupt or missing"
     exit 1
 fi
 rm -f "$REAUTH"
@@ -163,7 +163,7 @@ for folder in $folders; do
     # pair is how a baseline corrupts. flock's own exit 1 means "already locked"
     # — skip, not a failure. Any other exit (missing binary, bad fd) is a real
     # failure and must set rc, not be swallowed the same way.
-    _ran_flag="$STATE/locks/$folder.ran"
+    _ran_flag="$STATE/locks/$folder.$$.ran"
     rm -f "$_ran_flag"
     (
         exec 9>"$STATE/locks/$folder.lock"

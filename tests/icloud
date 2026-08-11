@@ -31,6 +31,14 @@ fake_bin() {
 ok()   { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
 bad()  { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
 
+# gatherd-icloud-sync's say() calls notify-send whenever stderr is not a tty —
+# which is exactly how this whole suite runs. Fake it before any other fake or
+# test, or every failure-path test below pops a real notification on the
+# human's desktop. $WORK is baked in literally (not read from the environment
+# at run time) because the fake runs as its own process and nothing exports it.
+NOTIFY_LOG="$WORK/notify.log"
+fake_bin notify-send "printf '%s\n' \"\$*\" >> '$NOTIFY_LOG'"
+
 assert_ok()   { _d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$_d"; else bad "$_d (expected success)"; fi; }
 assert_fail() { _d=$1; shift; if "$@" >/dev/null 2>&1; then bad "$_d (expected failure)"; else ok "$_d"; fi; }
 # assert_out uses $() which strips trailing newlines; byte-exact expectations must use assert_bytes.
@@ -102,8 +110,18 @@ assert_ok 'used --resync on first run' grep -q -- --resync "$WORK/h1/state/bisyn
 
 sync_env 2; fake_rclone_ok
 echo note > "$WORK/h2/root/FSNotes/a.md"
+rm -f "$NOTIFY_LOG"
 assert_fail 'refuses to resync a populated local dir' gatherd-icloud-sync --init-if-empty
 assert_fail 'ran no bisync when refusing' test -f "$WORK/h2/state/bisync.argv"
+# rclone bisync refuses to preview without a baseline unless told --resync;
+# the remedy must be a command the human can actually paste and run, using
+# the same workdir/filters this script uses — not rclone's untouched defaults.
+assert_ok 'refusal remedy is pasteable: --resync and --dry-run together' \
+    grep -qE -- '--resync.*--dry-run' "$NOTIFY_LOG"
+assert_ok 'refusal remedy pins the workdir this script uses' \
+    grep -q -- "--workdir $WORK/h2/state/bisync/FSNotes" "$NOTIFY_LOG"
+assert_ok 'refusal remedy pins the filters this script uses' \
+    grep -q -- "--filters-file $WORK/h2/filters/FSNotes.filter" "$NOTIFY_LOG"
 
 sync_env 3; fake_rclone_ok
 echo note > "$WORK/h3/root/FSNotes/a.md"
@@ -119,17 +137,27 @@ assert_fail 'did not resync over an existing baseline' \
     grep -q -- --resync "$WORK/h4/state/bisync.argv"
 # The migration's whole point is behaviour identical to the fsnotes-sync it
 # replaces; pin every flag that encodes that behaviour, not just --resync.
-assert_ok 'argv carries --filters-file' grep -q -- '--filters-file' "$WORK/h4/state/bisync.argv"
+# Value-bearing flags are pinned to their actual path/number, not just their
+# name — --workdir especially, since has_baseline's directory test depends on
+# it and a silent regression there makes every run look baseline-less.
+# Numeric flags are anchored ( |$) so e.g. --max-delete 10 can't be satisfied
+# by an argv that actually carries --max-delete 100.
+assert_ok 'argv carries --workdir with the right path' \
+    grep -q -- "--workdir $WORK/h4/state/bisync/FSNotes" "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --filters-file with the right path' \
+    grep -q -- "--filters-file $WORK/h4/filters/FSNotes.filter" "$WORK/h4/state/bisync.argv"
 assert_ok 'argv carries --conflict-resolve newer' grep -q -- '--conflict-resolve newer' "$WORK/h4/state/bisync.argv"
 assert_ok 'argv carries --conflict-loser pathname' grep -q -- '--conflict-loser pathname' "$WORK/h4/state/bisync.argv"
-assert_ok 'argv carries --max-delete 10' grep -q -- '--max-delete 10' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --max-delete 10' grep -qE -- '--max-delete 10( |$)' "$WORK/h4/state/bisync.argv"
 assert_ok 'argv carries --resilient' grep -q -- '--resilient' "$WORK/h4/state/bisync.argv"
 assert_ok 'argv carries --recover' grep -q -- '--recover' "$WORK/h4/state/bisync.argv"
-assert_ok 'argv carries --transfers 2' grep -q -- '--transfers 2' "$WORK/h4/state/bisync.argv"
-assert_ok 'argv carries --checkers 4' grep -q -- '--checkers 4' "$WORK/h4/state/bisync.argv"
-assert_ok 'argv carries --tpslimit 4' grep -q -- '--tpslimit 4' "$WORK/h4/state/bisync.argv"
-assert_ok 'argv carries --backup-dir1' grep -q -- '--backup-dir1' "$WORK/h4/state/bisync.argv"
-assert_ok 'argv carries --log-file' grep -q -- '--log-file' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --transfers 2' grep -qE -- '--transfers 2( |$)' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --checkers 4' grep -qE -- '--checkers 4( |$)' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --tpslimit 4' grep -qE -- '--tpslimit 4( |$)' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --backup-dir1 with the right path' \
+    grep -q -- "--backup-dir1 $WORK/h4/backup/FSNotes" "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --log-file with the right path' \
+    grep -q -- "--log-file $WORK/h4/state/rclone-icloud-FSNotes.log" "$WORK/h4/state/bisync.argv"
 
 sync_env 5; fake_rclone_ok
 assert_ok 'first --if-due run proceeds' gatherd-icloud-sync --init-if-empty --if-due
@@ -162,8 +190,14 @@ assert_fail 'reauth flag is gone' test -f "$WORK/h8/state/icloud-needs-reauth"
 # silent not-ready one.
 sync_env 9
 fake_bin rclone 'echo "Failed to load config file: yaml: line 4: did not find expected key" >&2; exit 1'
+rm -f "$NOTIFY_LOG"
 assert_fail 'a corrupt config file is a real failure, not not-ready' gatherd-icloud-sync --init-if-empty
 assert_ok 'corrupt config set the reauth flag' test -f "$WORK/h9/state/icloud-needs-reauth"
+# rclone's own error text is identical whether the config is locked (transient)
+# or corrupt (permanent); the notification text is the only thing that tells a
+# human which one they're looking at, so it must not just say "re-authenticate".
+assert_ok 'notification names a broken config, not just reauth' \
+    grep -qiE 'corrupt|broken|missing' "$NOTIFY_LOG"
 
 sync_env 10; fake_rclone_ok
 assert_fail 'plain sync mode refuses when there is no baseline' gatherd-icloud-sync
@@ -184,7 +218,10 @@ mkdir -p "$WORK/h12/state/bisync/FSNotes" "$WORK/h12/state/locks"
     exec 9>"$WORK/h12/state/locks/FSNotes.lock"
     flock 9
     : > "$WORK/h12/state/lock.held"
-    sleep 0.3
+    # Block on a marker the test controls rather than a fixed sleep: a fixed
+    # window has to outlast however long the assertion below takes to start
+    # and run, which is a guess this repo's QEMU-based test runner can blow.
+    while [ ! -f "$WORK/h12/state/lock.release" ]; do sleep 0.05; done
 ) &
 _holder_pid=$!
 _waited=0
@@ -195,6 +232,7 @@ done
 assert_ok 'a run where every folder is locked still exits 0' gatherd-icloud-sync
 assert_fail 'no bisync ran while every folder was locked' test -f "$WORK/h12/state/bisync.argv"
 assert_fail 'stamp is not written when nothing synced' test -f "$WORK/h12/state/icloud-sync.stamp"
+: > "$WORK/h12/state/lock.release"
 wait "$_holder_pid"
 
 # flock's exit 1 means "already locked" (skip, not a failure); any other
@@ -209,11 +247,13 @@ rm -f "$FAKEBIN/flock"
 # Concurrent bisync on one pair is how a baseline corrupts, so this guard is
 # data-integrity-critical: prove a second trigger yields instead of racing.
 sync_env 14
+# Block on a marker the test controls rather than a fixed sleep — see the
+# same reasoning above test 12.
 fake_bin rclone 'case "$1" in
     lsd) exit 0 ;;
     bisync)
         : > "$GATHERD_ICLOUD_STATE/bisync.started"
-        sleep 0.3
+        while [ ! -f "$GATHERD_ICLOUD_STATE/bisync.release" ]; do sleep 0.05; done
         printf "%s\n" "$*" >> "$GATHERD_ICLOUD_STATE/bisync.argv"
         exit 0 ;;
     *) exit 0 ;;
@@ -229,9 +269,38 @@ while [ ! -f "$WORK/h14/state/bisync.started" ] && [ "$_waited" -lt 50 ]; do
     _waited=$((_waited + 1))
 done
 assert_ok 'a second run yields to an in-progress bisync' gatherd-icloud-sync
+: > "$WORK/h14/state/bisync.release"
 wait "$_bg_pid"
 assert_out 'only one bisync ran for a concurrent pair' 1 \
     sh -c 'wc -l < "$1" | tr -d " "' _ "$WORK/h14/state/bisync.argv"
+
+# say()'s notify-send path is what a triggered (non-interactive) run actually
+# shows a human; prove it fires once per genuine failure and honours the rate
+# limit, using the notify-send fake installed at the top of this file instead
+# of the real desktop notifier.
+sync_env 15
+fake_bin rclone 'case "$1" in
+    lsd) echo "couldn'"'"'t list directory: 401 Unauthorized" >&2; exit 1 ;;
+    *) exit 1 ;;
+esac'
+rm -f "$NOTIFY_LOG"
+
+gatherd-icloud-sync --init-if-empty >/dev/null 2>&1 || true
+assert_out 'a genuine failure sends exactly one notification' 1 \
+    sh -c 'wc -l < "$1" | tr -d " "' _ "$NOTIFY_LOG"
+assert_ok 'the notification names the failure' grep -q 'cannot reach iCloud' "$NOTIFY_LOG"
+
+gatherd-icloud-sync --init-if-empty >/dev/null 2>&1 || true
+assert_out 'a second failure inside the interval does not notify again' 1 \
+    sh -c 'wc -l < "$1" | tr -d " "' _ "$NOTIFY_LOG"
+
+# Backdate the stamp instead of sleeping through NOTIFY_INTERVAL (3600s): this
+# proves the rate limit reads elapsed time from the stamp file, not a clock
+# the test would otherwise have to wait out.
+echo $(( $(date +%s) - 3700 )) > "$WORK/h15/state/icloud-notified.stamp"
+gatherd-icloud-sync --init-if-empty >/dev/null 2>&1 || true
+assert_out 'a failure after the interval notifies again' 2 \
+    sh -c 'wc -l < "$1" | tr -d " "' _ "$NOTIFY_LOG"
 
 unset GATHERD_ICLOUD_CONF GATHERD_ICLOUD_STATE GATHERD_ICLOUD_FILTERS \
       GATHERD_ICLOUD_BACKUPS GATHERD_ICLOUD_MIN_INTERVAL

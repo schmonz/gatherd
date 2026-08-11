@@ -108,7 +108,13 @@ onepassword_ssh_agent_ok() { [ -S "$HOME/.1password/agent.sock" ]; }
 
 tailscale_connected() { tailscale ip >/dev/null 2>&1; }
 
-icloud_configured()     { rclone listremotes 2>/dev/null | grep -q '^icloud:'; }
+# Sentinels rather than a live probe: this script runs at every login, and
+# `rclone listremotes` now shells out to op for the config password, which
+# blocks on a locked 1Password. Both files are written by gatherd-icloud-config
+# and gatherd-icloud-sync.
+_icloud_state="$HOME/.local/state/gatherd"
+icloud_fleet_ok()    { [ -f "$_icloud_state/icloud-fleet-ok" ]; }
+icloud_needs_reauth() { [ -f "$_icloud_state/icloud-needs-reauth" ]; }
 
 # ---------------------------------------------------------------------------
 # Section handlers
@@ -137,19 +143,39 @@ section_tailscale() {
 }
 
 section_other_logins() {
-    # Only iCloud earns a standing reminder here, and it auto-prunes once the
-    # rclone remote exists. Claude Desktop/Code, Zoom, and JetBrains are
-    # deliberately not surfaced — logging into them is obvious on demand and
-    # didn't merit a recurring nag. PIA needs nothing here either: it logs in
-    # automatically from 1Password via gatherd-prompt-pia at every login.
-    b_icloud='iCloud: run `rclone config` and follow prompts to add a remote named `icloud`; complete 2FA when prompted'
+    # Only iCloud earns a standing reminder here. Claude Desktop/Code, Zoom, and
+    # JetBrains are deliberately not surfaced — logging into them is obvious on
+    # demand and didn't merit a recurring nag. PIA needs nothing here either: it
+    # logs in automatically from 1Password via gatherd-prompt-pia at every login.
+    #
+    # Two mutually exclusive iCloud lines, both self-pruning. Bootstrap is a
+    # once-per-fleet step, so it only appears on a machine that has never seen a
+    # fleet config. Re-auth is periodic and unavoidable — the session token
+    # expires whatever we do — so it appears whenever a sync hits an auth error
+    # and disappears on the next success.
+    b_bootstrap='iCloud: run `gatherd-icloud-config bootstrap` (once per fleet; needs `rclone config` + 2FA first if this is the very first machine)'
+    b_reauth='iCloud needs re-authentication: run `rclone config reconnect icloud:` and complete 2FA — every other machine picks it up automatically'
 
-    if icloud_configured; then
-        prune_section 'Other Logins' "$b_icloud"
+    # Each branch prunes its own bullet before possibly re-adding it, not just
+    # when it's due to disappear: `li` only appends, so guarding the add with
+    # `section_present || h` (skip the header, not the bullet) still let a
+    # bullet that survived from the previous run get a second copy appended
+    # underneath it. Prune-then-add makes each bullet idempotent regardless of
+    # what the file already looked like.
+    if icloud_fleet_ok; then
+        prune_section 'Other Logins' "$b_bootstrap"
     else
-        section_present 'Other Logins' && return
-        h 'Other Logins'
-        li "$b_icloud"
+        prune_section 'Other Logins' "$b_bootstrap"
+        section_present 'Other Logins' || h 'Other Logins'
+        li "$b_bootstrap"
+    fi
+
+    if icloud_needs_reauth; then
+        prune_section 'Other Logins' "$b_reauth"
+        section_present 'Other Logins' || h 'Other Logins'
+        li "$b_reauth"
+    else
+        prune_section 'Other Logins' "$b_reauth"
     fi
 }
 
@@ -219,6 +245,8 @@ section_verify() {
     li 'No package drifts from the offline-cache manifest: `/usr/local/lib/gatherd/scripts/gatherd-check-package-tiers /usr/local/lib/gatherd` exits `0`.'
     li 'GRUB background decodes, and is pre-turned where the panel is mounted rotated: `sudo grep -c "insmod jpeg" /boot/grub/grub.cfg` prints 1 or more. On an upright-panel machine `grep GRUB_BACKGROUND /etc/default/grub` prints a .jpg under /usr/local/lib/gatherd/backgrounds; where `cat /sys/class/dmi/id/product_name` prints `MiniBook X` it prints /usr/local/share/gatherd/wallpaper-dark-rotated.jpg instead, and that copy is a lossless quarter-turn of the source — `jpegtran -rotate 90 -optimize -copy none -outfile /tmp/rot.jpg /usr/local/lib/gatherd/backgrounds/wallpaper-dark.jpg && cmp /tmp/rot.jpg /usr/local/share/gatherd/wallpaper-dark-rotated.jpg` prints nothing. The next boot shows the image rather than a plain background, and on the rotated panel the art reads upright; the menu text and LUKS prompt stay sideways, which GRUB cannot fix.'
     li 'Credential prompts wear the crimson house style: `/usr/local/bin/gatherd-askpass "[sudo]"` pops a crimson box with a salmon border and a `❯  [sudo]` prompt, in the same font as the fuzzel launcher (`grep ^font= ~/.config/fuzzel/fuzzel.ini`) — typing echoes to stdout, Escape exits non-zero and prints nothing. Then `/usr/local/bin/gatherd-askpass "Are you sure you want to continue connecting (yes/no/[fingerprint])?"` opens a crimson foot window titled `SSH host key verification`, in the same font as `grep ^font= ~/.config/foot/foot.ini`.'
+    li 'iCloud sync: `gatherd-icloud-config status` prints `config: encrypted, verified; fleet: in sync`; `gatherd-icloud-sync FSNotes` exits 0 and `tail -3 ~/.local/state/gatherd/rclone-icloud-FSNotes.log` ends with a successful bisync; `ls ~/Documents/iCloud/FSNotes | wc -l` is non-zero'
+    li 'iCloud unlock trigger: `grep -c unlock-command ~/.config/gtklock/config.ini` prints 1; note `stat -c %Y ~/.local/state/gatherd/icloud-sync.stamp`, lock the screen and unlock it, then re-run — the value has advanced'
 }
 
 # ---------------------------------------------------------------------------

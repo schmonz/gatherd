@@ -46,6 +46,7 @@ REMOTE="${GATHERD_ICLOUD_REMOTE:-${ICLOUD_REMOTE:-icloud}}"
 export RCLONE_PASSWORD_COMMAND="${RCLONE_PASSWORD_COMMAND:-$HOME/.local/bin/gatherd-icloud-password}"
 
 FLEET_OK="$STATE/icloud-fleet-ok"
+PLAINTEXT="$STATE/icloud-plaintext-config"
 
 mkdir -p "$STATE"
 
@@ -114,6 +115,12 @@ install_config() {
 # to touch, with no warning anywhere that this was coming.
 note_fleet_install() {
     if ! config_encrypted "$CONFIG"; then
+        # This warning goes to stderr, and gatherd-prompt-icloud (the login
+        # path that reaches this) discards stderr — so without a sentinel a
+        # live iCloud token can land in the clear on disk with nothing
+        # surfaced anywhere. $PLAINTEXT gives gatherd-post-setup-notes
+        # something to check instead of a log line nobody will read.
+        : > "$PLAINTEXT"
         warn "installed config from the fleet is not encrypted; run: rclone config encryption set"
     elif config_works "$CONFIG"; then
         : > "$FLEET_OK"
@@ -234,6 +241,13 @@ cmd_status() {
 
     printf 'config: %s, %s; fleet: %s\n' "$_enc" "$_reach" "$_fleet"
 }
+
+# Self-pruning: any invocation (not just pull) that observes the config is
+# encrypted again clears the sentinel note_fleet_install set, the same way
+# gatherd-icloud-sync clears $REAUTH on its own next success — so fixing the
+# config by hand (`rclone config encryption set`) is enough, with no separate
+# "acknowledge this" step.
+config_encrypted "$CONFIG" && rm -f "$PLAINTEXT"
 
 case "${1:-status}" in
     bootstrap) cmd_bootstrap ;;

@@ -115,6 +115,7 @@ tailscale_connected() { tailscale ip >/dev/null 2>&1; }
 _icloud_state="$HOME/.local/state/gatherd"
 icloud_fleet_ok()    { [ -f "$_icloud_state/icloud-fleet-ok" ]; }
 icloud_needs_reauth() { [ -f "$_icloud_state/icloud-needs-reauth" ]; }
+icloud_plaintext_config() { [ -f "$_icloud_state/icloud-plaintext-config" ]; }
 
 # ---------------------------------------------------------------------------
 # Section handlers
@@ -155,6 +156,7 @@ section_other_logins() {
     # and disappears on the next success.
     b_bootstrap='iCloud: run `gatherd-icloud-config bootstrap` (once per fleet; needs `rclone config` + 2FA first if this is the very first machine)'
     b_reauth='iCloud needs re-authentication: run `rclone config reconnect icloud:` and complete 2FA — every other machine picks it up automatically'
+    b_plaintext='iCloud config is plaintext (a live iCloud token sits unencrypted on disk): run `rclone config encryption set`'
 
     # Each branch prunes its own bullet before possibly re-adding it, not just
     # when it's due to disappear: `li` only appends, so guarding the add with
@@ -176,6 +178,14 @@ section_other_logins() {
         li "$b_reauth"
     else
         prune_section 'Other Logins' "$b_reauth"
+    fi
+
+    if icloud_plaintext_config; then
+        prune_section 'Other Logins' "$b_plaintext"
+        section_present 'Other Logins' || h 'Other Logins'
+        li "$b_plaintext"
+    else
+        prune_section 'Other Logins' "$b_plaintext"
     fi
 }
 

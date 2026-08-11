@@ -593,6 +593,11 @@ assert_out 'the plaintext fleet config is still installed' PLAINTEXT-FLEET-WORKS
 assert_fail 'installing a plaintext fleet config does not record fleet-ok' test -f "$C/state/icloud-fleet-ok"
 assert_ok 'installing a plaintext fleet config warns with the remedy' \
     grep -q 'rclone config encryption set' "$C/state/pull.err"
+# The warning above goes to stderr, and gatherd-prompt-icloud (the login path
+# that reaches this) discards stderr — so a sentinel is the only thing that
+# can make this state visible anywhere, via gatherd-post-setup-notes.
+assert_ok 'installing a plaintext fleet config records the plaintext sentinel' \
+    test -f "$C/state/icloud-plaintext-config"
 
 # Same bug, reached via cmd_pull's other install site: a broken local config
 # replaced by a fleet copy that authenticates but is plaintext.
@@ -608,6 +613,19 @@ assert_out 'the plaintext fleet config replaced the broken local one' PLAINTEXT-
 assert_fail 'replacing with a plaintext fleet copy does not record fleet-ok' test -f "$C/state/icloud-fleet-ok"
 assert_ok 'replacing with a plaintext fleet copy warns with the remedy' \
     grep -q 'rclone config encryption set' "$C/state/pull.err"
+assert_ok 'replacing with a plaintext fleet copy records the plaintext sentinel' \
+    test -f "$C/state/icloud-plaintext-config"
+
+# Self-pruning: fixing the config by hand (rclone config encryption set) and
+# running ANY subcommand — not just pull again — must clear the sentinel, the
+# same way gatherd-icloud-sync clears its own reauth flag on its next success.
+cfg_env 28; fake_op_docs; fake_rclone_reachable
+: > "$C/state/icloud-plaintext-config"
+printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nWORKS-BODY\n' > "$C/rclone.conf"
+cp "$C/rclone.conf" "$C/op/doc"
+gatherd-icloud-config status >/dev/null 2>&1
+assert_fail 'the plaintext sentinel is cleared once the config is encrypted again' \
+    test -f "$C/state/icloud-plaintext-config"
 
 # push now requires an encrypted local config (see the plaintext-publication
 # guard further down), so every push fixture from here on carries the same

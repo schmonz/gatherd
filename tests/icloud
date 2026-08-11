@@ -774,6 +774,32 @@ unset SIGDIR
 unset GATHERD_ICLOUD_STATE RCLONE_CONFIG FAKE_OP_DIR XDG_RUNTIME_DIR \
       GATHERD_ICLOUD_CONF GATHERD_ICLOUD_REMOTE RCLONE_PASSWORD_COMMAND RCLONE_CALL_LOG
 
+# ── gatherd-prompt-icloud ─────────────────────────────────────────────────────
+
+prompt_env() {
+    P="$WORK/p$1"
+    rm -rf "$P"; mkdir -p "$P"
+    export GATHERD_ICLOUD_DEADLINE=2
+    export PROMPT_TRACE="$P/trace"
+}
+
+prompt_env 1
+fake_bin op 'exit 1'
+fake_bin gatherd-icloud-config 'echo "config $*" >> "$PROMPT_TRACE"'
+fake_bin gatherd-icloud-sync   'echo "sync $*" >> "$PROMPT_TRACE"'
+assert_ok 'prompt gives up quietly when 1Password never answers' gatherd-prompt-icloud
+assert_fail 'prompt did no work without 1Password' test -f "$P/trace"
+
+prompt_env 2
+fake_bin op 'exit 0'
+fake_bin gatherd-icloud-config 'echo "config $*" >> "$PROMPT_TRACE"'
+fake_bin gatherd-icloud-sync   'echo "sync $*" >> "$PROMPT_TRACE"'
+assert_ok 'prompt runs once 1Password answers' gatherd-prompt-icloud
+assert_out 'prompt pulled then synced' 'config pull
+sync --init-if-empty' cat "$P/trace"
+
+unset GATHERD_ICLOUD_DEADLINE PROMPT_TRACE
+
 # ── summary ───────────────────────────────────────────────────────────────────
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

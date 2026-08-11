@@ -3,6 +3,13 @@ gtk-theme=Arc-Dark
 time-format=%l:%M %p
 start-hidden=1
 modules=userinfo-module
+# Every path to a locked screen — idle timeout, lid close (gatherd-handle-lid),
+# before-sleep, after-resume — routes through `gtklock -d` (swayidle-exec.j2),
+# so hooking the sync here picks up all of them from one place instead of
+# repeating it in each swayidle handler. op cannot decrypt the fleet config
+# while the session is locked, so unlock is the best available signal that a
+# human is present and 1Password is reachable again.
+unlock-command={{ target_home }}/.local/bin/gatherd-icloud-sync --if-due
 
 [userinfo]
 round-image=true

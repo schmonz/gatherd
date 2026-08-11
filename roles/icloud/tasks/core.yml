@@ -55,3 +55,10 @@
     dest: "{{ target_home }}/.local/bin/gatherd-icloud-config"
     mode: '0755'
     remote_src: true
+
+- name: Install the iCloud login helper
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-prompt-icloud"
+    dest: "{{ target_home }}/.local/bin/gatherd-prompt-icloud"
+    mode: '0755'
+    remote_src: true

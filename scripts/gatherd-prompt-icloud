@@ -1,0 +1,27 @@
+#!/bin/sh
+# Sway autostart helper: fetches the fleet iCloud config once 1Password is
+# usable, then establishes any missing local folder copies.
+#
+# Same readiness problem as gatherd-prompt-pia: `op whoami` is not a usable
+# check under desktop-app integration (it only reports an explicit `op signin`),
+# so poll an actual read instead — it starts succeeding once the app is running,
+# unlocked, and CLI access is authorised.
+
+set -eu
+
+: "${GATHERD_OP_VAULT:=Private}"
+: "${GATHERD_OP_PASSWORD_ITEM:=rclone config}"
+DEADLINE_SECS="${GATHERD_ICLOUD_DEADLINE:-300}"
+
+command -v op >/dev/null 2>&1 || exit 0
+
+_deadline=$(( $(date +%s) + DEADLINE_SECS ))
+until op item get "$GATHERD_OP_PASSWORD_ITEM" --vault "$GATHERD_OP_VAULT" >/dev/null 2>&1; do
+    [ "$(date +%s)" -lt "$_deadline" ] || exit 0
+    sleep 5
+done
+
+# Both are quiet on the paths that are merely "not ready yet", so a machine that
+# has not been bootstrapped produces no noise at every login.
+gatherd-icloud-config pull >/dev/null 2>&1 || exit 0
+gatherd-icloud-sync --init-if-empty >/dev/null 2>&1 || exit 0

@@ -68,6 +68,83 @@ unset GATHERD_OP_VAULT GATHERD_OP_PASSWORD_ITEM
 fake_bin op 'echo "[ERROR] authorization timeout" >&2; exit 1'
 assert_fail 'password helper fails when op is locked' gatherd-icloud-password
 
+# ── gatherd-icloud-sync ───────────────────────────────────────────────────────
+
+sync_env() {
+    HOME_DIR="$WORK/h$1"
+    rm -rf "$HOME_DIR"
+    mkdir -p "$HOME_DIR/conf" "$HOME_DIR/state" "$HOME_DIR/filters" "$HOME_DIR/backup" "$HOME_DIR/root/FSNotes"
+    cat > "$HOME_DIR/conf/icloud.conf" <<EOF
+ICLOUD_REMOTE=icloud
+ICLOUD_ROOT=$HOME_DIR/root
+ICLOUD_FOLDERS="FSNotes"
+EOF
+    : > "$HOME_DIR/filters/FSNotes.filter"
+    export GATHERD_ICLOUD_CONF="$HOME_DIR/conf/icloud.conf"
+    export GATHERD_ICLOUD_STATE="$HOME_DIR/state"
+    export GATHERD_ICLOUD_FILTERS="$HOME_DIR/filters"
+    export GATHERD_ICLOUD_BACKUPS="$HOME_DIR/backup"
+    export GATHERD_ICLOUD_MIN_INTERVAL=300
+}
+
+# rclone fake: `lsd` succeeds, `bisync` records its argv and succeeds.
+fake_rclone_ok() {
+    fake_bin rclone 'case "$1" in
+    lsd) exit 0 ;;
+    bisync) printf "%s\n" "$*" >> "$GATHERD_ICLOUD_STATE/bisync.argv"; exit 0 ;;
+    *) exit 0 ;;
+esac'
+}
+
+sync_env 1; fake_rclone_ok
+assert_ok 'resyncs into an empty local dir' gatherd-icloud-sync --init-if-empty
+assert_ok 'used --resync on first run' grep -q -- --resync "$WORK/h1/state/bisync.argv"
+
+sync_env 2; fake_rclone_ok
+echo note > "$WORK/h2/root/FSNotes/a.md"
+assert_fail 'refuses to resync a populated local dir' gatherd-icloud-sync --init-if-empty
+assert_fail 'ran no bisync when refusing' test -f "$WORK/h2/state/bisync.argv"
+
+sync_env 3; fake_rclone_ok
+echo note > "$WORK/h3/root/FSNotes/a.md"
+assert_ok 'explicit --init resyncs a populated dir' gatherd-icloud-sync --init
+assert_ok 'explicit --init used --resync' grep -q -- --resync "$WORK/h3/state/bisync.argv"
+
+sync_env 4; fake_rclone_ok
+mkdir -p "$WORK/h4/state/bisync/FSNotes"
+: > "$WORK/h4/state/bisync/FSNotes/icloud_FSNotes..path1.lst"
+assert_ok 'syncs when a baseline exists' gatherd-icloud-sync
+assert_fail 'did not resync over an existing baseline' \
+    grep -q -- --resync "$WORK/h4/state/bisync.argv"
+
+sync_env 5; fake_rclone_ok
+assert_ok 'first --if-due run proceeds' gatherd-icloud-sync --init-if-empty --if-due
+assert_ok 'wrote the stamp' test -f "$WORK/h5/state/icloud-sync.stamp"
+cp "$WORK/h5/state/bisync.argv" "$WORK/h5/state/argv.before"
+assert_ok 'second --if-due run is suppressed' gatherd-icloud-sync --if-due
+assert_ok 'suppressed run did no work' cmp -s "$WORK/h5/state/argv.before" "$WORK/h5/state/bisync.argv"
+
+sync_env 6
+fake_bin rclone 'echo "Failed to load config file: password command failed" >&2; exit 1'
+assert_ok 'a locked 1Password is not-ready, not failure' gatherd-icloud-sync --init-if-empty
+assert_fail 'not-ready set no reauth flag' test -f "$WORK/h6/state/icloud-needs-reauth"
+
+sync_env 7
+fake_bin rclone 'case "$1" in
+    lsd) echo "couldn'"'"'t list directory: 401 Unauthorized" >&2; exit 1 ;;
+    *) exit 1 ;;
+esac'
+assert_fail 'an auth error is a real failure' gatherd-icloud-sync --init-if-empty
+assert_ok 'auth error set the reauth flag' test -f "$WORK/h7/state/icloud-needs-reauth"
+
+sync_env 8; fake_rclone_ok
+: > "$WORK/h8/state/icloud-needs-reauth"
+assert_ok 'a good run clears the reauth flag' gatherd-icloud-sync --init-if-empty
+assert_fail 'reauth flag is gone' test -f "$WORK/h8/state/icloud-needs-reauth"
+
+unset GATHERD_ICLOUD_CONF GATHERD_ICLOUD_STATE GATHERD_ICLOUD_FILTERS \
+      GATHERD_ICLOUD_BACKUPS GATHERD_ICLOUD_MIN_INTERVAL
+
 # ── summary ───────────────────────────────────────────────────────────────────
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

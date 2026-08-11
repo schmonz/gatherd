@@ -41,3 +41,10 @@
     dest: "{{ target_home }}/.local/bin/gatherd-icloud-password"
     mode: '0755'
     remote_src: true
+
+- name: Install the iCloud sync driver
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-icloud-sync"
+    dest: "{{ target_home }}/.local/bin/gatherd-icloud-sync"
+    mode: '0755'
+    remote_src: true

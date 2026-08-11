@@ -1,0 +1,169 @@
+#!/bin/sh
+# Bidirectional sync of the declared iCloud Drive folders, via rclone bisync.
+#
+# Trigger-agnostic on purpose: safe to call from login, from gtklock's
+# unlock-command, or by hand. The guards that make that true — a per-folder
+# flock and the --if-due rate limit — live here rather than in each caller, so
+# adding a trigger stays a one-liner.
+#
+# Usage:
+#   gatherd-icloud-sync [FOLDER...]        sync (requires an existing baseline)
+#   gatherd-icloud-sync --init [FOLDER...] build a baseline, even over local data
+#   gatherd-icloud-sync --init-if-empty    build a baseline only where local is empty
+#   gatherd-icloud-sync --if-due           no-op unless the rate-limit interval elapsed
+
+set -eu
+
+CONF="${GATHERD_ICLOUD_CONF:-$HOME/.config/gatherd/icloud.conf}"
+STATE="${GATHERD_ICLOUD_STATE:-$HOME/.local/state/gatherd}"
+FILTERS="${GATHERD_ICLOUD_FILTERS:-$HOME/.config/rclone/filters}"
+BACKUPS="${GATHERD_ICLOUD_BACKUPS:-$HOME/.local/share/gatherd/icloud-backup}"
+MIN_INTERVAL="${GATHERD_ICLOUD_MIN_INTERVAL:-300}"
+
+STAMP="$STATE/icloud-sync.stamp"
+REAUTH="$STATE/icloud-needs-reauth"
+NOTIFIED="$STATE/icloud-notified.stamp"
+NOTIFY_INTERVAL=3600
+
+[ -r "$CONF" ] || { echo "gatherd-icloud-sync: no manifest at $CONF" >&2; exit 1; }
+# shellcheck disable=SC1090
+. "$CONF"
+
+mkdir -p "$STATE" "$BACKUPS"
+
+mode=sync
+if_due=0
+folders=
+
+while [ $# -gt 0 ]; do
+    case $1 in
+        --init)          mode=init ;;
+        --init-if-empty) mode=init-if-empty ;;
+        --if-due)        if_due=1 ;;
+        -*)              echo "gatherd-icloud-sync: unknown option $1" >&2; exit 2 ;;
+        *)               folders="$folders $1" ;;
+    esac
+    shift
+done
+[ -n "$folders" ] || folders=$ICLOUD_FOLDERS
+
+# Interactive runs talk to the terminal; triggered ones talk to the notification
+# daemon, and then only about states a human has to resolve.
+say() {
+    if [ -t 2 ]; then
+        printf 'gatherd-icloud-sync: %s\n' "$1" >&2
+    else
+        _now=$(date +%s)
+        _last=0
+        [ -f "$NOTIFIED" ] && _last=$(cat "$NOTIFIED" 2>/dev/null || echo 0)
+        if [ $((_now - _last)) -ge "$NOTIFY_INTERVAL" ]; then
+            command -v notify-send >/dev/null 2>&1 && notify-send "iCloud sync" "$1"
+            echo "$_now" > "$NOTIFIED"
+        fi
+    fi
+}
+
+# Being unable to decrypt the config is "not ready" (1Password locked, or a
+# machine that has not pulled the fleet config yet), not a failure. Silence is
+# correct: the login path retries, and nagging on every unlock trains you to
+# ignore the one notification that matters.
+not_ready() {
+    case $1 in
+        *"password command failed"*|\
+        *"Failed to load config"*|\
+        *"authorization timeout"*|\
+        *"could not read secret"*) return 0 ;;
+    esac
+    return 1
+}
+
+due() {
+    [ "$if_due" -eq 1 ] || return 0
+    [ -f "$STAMP" ] || return 0
+    _now=$(date +%s)
+    _then=$(cat "$STAMP" 2>/dev/null || echo 0)
+    [ $((_now - _then)) -ge "$MIN_INTERVAL" ]
+}
+
+dir_is_empty() { [ -z "$(ls -A "$1" 2>/dev/null || true)" ]; }
+
+# A baseline is the pair of listing files bisync leaves in its workdir. Giving
+# each folder its own --workdir makes this a plain directory test instead of
+# matching rclone's hashed default filenames.
+has_baseline() { ls "$1"/*.path1.lst >/dev/null 2>&1; }
+
+sync_folder() {
+    _folder=$1
+    _local="$ICLOUD_ROOT/$_folder"
+    _workdir="$STATE/bisync/$_folder"
+    _resync=
+
+    mkdir -p "$_local" "$_workdir" "$BACKUPS/$_folder"
+
+    if ! has_baseline "$_workdir"; then
+        case $mode in
+            init)
+                _resync=--resync
+                ;;
+            init-if-empty)
+                if dir_is_empty "$_local"; then
+                    _resync=--resync
+                else
+                    say "$_folder has local files but no baseline; run: gatherd-icloud-sync --init $_folder"
+                    return 1
+                fi
+                ;;
+            *)
+                say "$_folder has no baseline; run: gatherd-icloud-sync --init-if-empty"
+                return 1
+                ;;
+        esac
+    fi
+
+    # --max-delete here is bisync's own flag, not the global sync one: it is a
+    # PERCENT safety check (bisync aborts, making no changes, if more than
+    # this share of files would be deleted on either side), not a count.
+    # Keep the value at 10, identical to the fsnotes-sync it replaces, so the
+    # migration changes no behaviour.
+    rclone bisync "$ICLOUD_REMOTE:$_folder" "$_local" \
+        $_resync \
+        --workdir "$_workdir" \
+        --filters-file "$FILTERS/$_folder.filter" \
+        --conflict-resolve newer --conflict-loser pathname \
+        --max-delete 10 --resilient --recover \
+        --transfers 2 --checkers 4 --tpslimit 4 \
+        --backup-dir1 "$BACKUPS/$_folder" \
+        --log-file "$STATE/rclone-icloud-$_folder.log" -v
+}
+
+due || exit 0
+
+# One probe up front, so "not ready" and "no network" are decided once rather
+# than once per folder.
+if ! probe=$(rclone lsd "$ICLOUD_REMOTE:" 2>&1 >/dev/null); then
+    if not_ready "$probe"; then
+        exit 0
+    fi
+    : > "$REAUTH"
+    say "cannot reach iCloud; it may need re-authentication (rclone config reconnect $ICLOUD_REMOTE:)"
+    exit 1
+fi
+rm -f "$REAUTH"
+
+mkdir -p "$STATE/locks"
+rc=0
+for folder in $folders; do
+    # The lock is held by the subshell for the whole sync_folder call and
+    # released when it exits. Non-blocking on purpose: a sync already running for
+    # this folder means this trigger has nothing to add, and two bisyncs on one
+    # pair is how a baseline corrupts. A skipped folder exits 0 — it is not a
+    # failure, so it must not set rc.
+    (
+        exec 9>"$STATE/locks/$folder.lock"
+        flock -n 9 || exit 0
+        sync_folder "$folder"
+    ) || rc=1
+done
+
+[ "$rc" -eq 0 ] && date +%s > "$STAMP"
+exit "$rc"

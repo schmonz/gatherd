@@ -442,23 +442,29 @@ assert_ok 'pull with no local config installs an unverified fleet copy' gatherd-
 assert_out 'the unverified copy still got installed' FLEET-DOES-NOT-AUTH cat "$C/rclone.conf"
 assert_fail 'an unverified pull did not record fleet-ok' test -f "$C/state/icloud-fleet-ok"
 
+# push now requires an encrypted local config (see the plaintext-publication
+# guard further down), so every push fixture from here on carries the same
+# "# Encrypted rclone configuration File" header status reports as encrypted
+# — even the ones testing an unrelated guard (reachability, nonce-only diffs,
+# a locked decrypt) — so each test still isolates the one guard it names
+# instead of accidentally tripping the encryption gate first.
 cfg_env 5; fake_op_docs; fake_rclone_reachable
-printf 'LOCAL-REFRESHED-WORKS' > "$C/rclone.conf"
-printf 'FLEET-STALE'           > "$C/op/doc"
+printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nLOCAL-REFRESHED-WORKS\n' > "$C/rclone.conf"
+printf 'FLEET-STALE' > "$C/op/doc"
 assert_ok 'push publishes a verified local config' gatherd-icloud-config push
-assert_out 'fleet copy now matches local' LOCAL-REFRESHED-WORKS cat "$C/op/doc"
+assert_ok 'fleet copy now matches local' cmp -s "$C/rclone.conf" "$C/op/doc"
 
 cfg_env 6; fake_op_docs; fake_rclone_reachable
-printf 'LOCAL-BROKEN'   > "$C/rclone.conf"
-printf 'FLEET-GOOD'     > "$C/op/doc"
+printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nLOCAL-BROKEN\n' > "$C/rclone.conf"
+printf 'FLEET-GOOD' > "$C/op/doc"
 assert_fail 'push refuses to publish an unverifiable config' gatherd-icloud-config push
 # Byte-exact: a broken machine must be provably unable to poison the fleet
 # document, not merely leave it looking unchanged after newline-stripping.
 assert_bytes 'fleet copy byte-unchanged after the refused push' FLEET-GOOD cat "$C/op/doc"
 
 cfg_env 7; fake_op_docs; fake_rclone_reachable
-printf 'SAME-WORKS' > "$C/rclone.conf"
-printf 'SAME-WORKS' > "$C/op/doc"
+printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nSAME-WORKS\n' > "$C/rclone.conf"
+cp "$C/rclone.conf" "$C/op/doc"
 assert_ok 'push is a no-op when nothing changed' gatherd-icloud-config push
 assert_ok 'push recorded fleet-ok' test -f "$C/state/icloud-fleet-ok"
 
@@ -467,8 +473,8 @@ assert_ok 'push recorded fleet-ok' test -f "$C/state/icloud-fleet-ok"
 # a config that is genuinely unchanged must still compare equal once the nonce
 # is stripped, even though the raw bytes never will.
 cfg_env 8; fake_op_docs; fake_rclone_reachable
-printf 'NONCE:AAAA\nWORKS-BODY\n' > "$C/rclone.conf"
-printf 'NONCE:BBBB\nWORKS-BODY\n' > "$C/op/doc"
+printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nNONCE:AAAA\nWORKS-BODY\n' > "$C/rclone.conf"
+printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nNONCE:BBBB\nWORKS-BODY\n' > "$C/op/doc"
 cp "$C/op/doc" "$C/op/doc.before"
 assert_ok 'push is a no-op when only the nonce differs' gatherd-icloud-config push
 assert_ok 'fleet ciphertext (and its nonce) is untouched by the no-op' \
@@ -482,15 +488,44 @@ assert_ok 'the nonce-only no-op still recorded fleet-ok' test -f "$C/state/iclou
 # "in sync" and skip the upload that would fix it; the config must instead
 # fall through and publish.
 cfg_env 9; fake_op_docs; fake_rclone_reachable
-printf 'LOCAL-CIPHERTEXT-WORKS' > "$C/rclone.conf"
-printf 'TOTALLY-DIFFERENT-FLEET-CIPHERTEXT-WORKS' > "$C/op/doc"
+printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nLOCAL-CIPHERTEXT-WORKS\n' > "$C/rclone.conf"
+printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nTOTALLY-DIFFERENT-FLEET-CIPHERTEXT-WORKS\n' > "$C/op/doc"
 export RCLONE_CONFIG_SHOW_LOCKED=1
 assert_ok 'push falls through to upload when config show is locked' \
     gatherd-icloud-config push
 unset RCLONE_CONFIG_SHOW_LOCKED
-assert_bytes 'the fallthrough actually published the local config' \
-    LOCAL-CIPHERTEXT-WORKS cat "$C/op/doc"
+assert_ok 'the fallthrough actually published the local config' \
+    cmp -s "$C/rclone.conf" "$C/op/doc"
 assert_ok 'the fallthrough publish recorded fleet-ok' test -f "$C/state/icloud-fleet-ok"
+
+# CRITICAL: cmd_push previously checked only non-empty and reachable, so a
+# plaintext local config that happened to authenticate was push-eligible —
+# publishing it would overwrite the encrypted fleet doc with a live iCloud
+# token in the clear, which every other machine's pull then writes to disk.
+# Byte-exact unchanged, not just "still contains GOOD": overwriting the fleet
+# doc with equally-plausible-looking ciphertext must be provably impossible.
+cfg_env 22; fake_op_docs; fake_rclone_reachable
+printf 'PLAINTEXT-LOCAL-WORKS' > "$C/rclone.conf"
+printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nFLEET-GOOD\n' > "$C/op/doc"
+cp "$C/op/doc" "$C/op/doc.before"
+assert_fail 'push refuses to publish a plaintext config' gatherd-icloud-config push
+assert_ok 'fleet document byte-unchanged after the refused plaintext push' \
+    cmp -s "$C/op/doc.before" "$C/op/doc"
+
+# cmd_pull delegates straight to cmd_push whenever the local config already
+# authenticates (see cmd_pull's second branch); the plaintext guard has to
+# hold there too or a fresh, still-plaintext machine can leak its token to
+# the fleet via `pull` without ever running `push` directly.
+cfg_env 23; fake_op_docs; fake_rclone_reachable
+printf 'PLAINTEXT-LOCAL-WORKS' > "$C/rclone.conf"
+printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nFLEET-GOOD\n' > "$C/op/doc"
+cp "$C/op/doc" "$C/op/doc.before"
+assert_fail 'pull refuses to publish a plaintext local config via its push delegation' \
+    gatherd-icloud-config pull
+assert_ok 'fleet document byte-unchanged after the refused pull-triggered push' \
+    cmp -s "$C/op/doc.before" "$C/op/doc"
+assert_out 'the plaintext local config is left alone, not silently replaced' \
+    PLAINTEXT-LOCAL-WORKS cat "$C/rclone.conf"
 
 cfg_env 10; fake_op_docs; fake_rclone_reachable
 printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nWORKS-BODY\n' > "$C/rclone.conf"
@@ -530,6 +565,15 @@ export RCLONE_CONFIG_SHOW_LOCKED=1
 assert_out 'status reports fleet unknown when config show is locked' \
     'config: encrypted, verified; fleet: unknown' gatherd-icloud-config status
 unset RCLONE_CONFIG_SHOW_LOCKED
+
+# "no local config, fleet doc present" had no coverage at all: replacing the
+# `unknown` literal on this branch with any other string still passed every
+# assertion above it. Nothing decrypted (there is no local config to compare
+# the fleet copy against), so the fleet field can't claim in-sync or differs.
+cfg_env 24; fake_op_docs; fake_rclone_reachable
+printf 'FLEET-ONLY-WORKS' > "$C/op/doc"
+assert_out 'status reports fleet unknown when there is no local config to compare' \
+    'config: absent, not-ready; fleet: unknown' gatherd-icloud-config status
 
 # ── bootstrap ─────────────────────────────────────────────────────────────────
 # No test at all touched bootstrap before this: it is the second independent
@@ -576,9 +620,13 @@ cfg_env 19; fake_op_docs; fake_rclone_reachable
 printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nWORKS-BODY\n' > "$C/rclone.conf"
 cp "$C/rclone.conf" "$C/op/doc"
 export RCLONE_CALL_LOG="$C/state/calls.log"
+# The absolute path, not just the bare name: ~/.local/bin only reaches PATH
+# via pam_env, which this test's environment (like a systemd unit or `su -c`)
+# does not go through, so a bare "gatherd-icloud-password" default would be
+# exactly the dangling command pam_env's own delivered value exists to avoid.
 gatherd-icloud-config status >/dev/null 2>&1 || true
-assert_ok 'RCLONE_PASSWORD_COMMAND defaults to gatherd-icloud-password when unset' \
-    grep -q ' gatherd-icloud-password$' "$C/state/calls.log"
+assert_ok 'RCLONE_PASSWORD_COMMAND defaults to the absolute path pam_env delivers' \
+    grep -q -- " $HOME/.local/bin/gatherd-icloud-password\$" "$C/state/calls.log"
 
 : > "$C/state/calls.log"
 export RCLONE_PASSWORD_COMMAND=custom-pw-cmd
@@ -623,6 +671,53 @@ assert_ok 'the refusal names XDG_RUNTIME_DIR, not a silent /tmp fallback' \
 
 export XDG_RUNTIME_DIR="$C/does-not-exist"
 assert_fail 'refuses to run when XDG_RUNTIME_DIR is not a directory' gatherd-icloud-config status
+
+# ── signal handling ──────────────────────────────────────────────────────────
+# A trap shared between EXIT and a caught signal only *returns* on the
+# signal — it doesn't end the script — so the run resumes after `rm -rf
+# "$TMP"` with its scratch directory gone. Reproduce that by delivering
+# SIGTERM while the script is genuinely blocked inside a foreground `op`
+# call, and check the whole run stops right there (exit 130) instead of
+# limping on to whatever unrelated thing breaks next.
+
+cfg_env 25; fake_rclone_reachable
+export SIGDIR="$C/sigtest"
+mkdir -p "$SIGDIR"
+# This op fake only handles "document get": it records the pid it was called
+# with (its parent is the gatherd-icloud-config process itself, since
+# doc_get() runs `op` directly with no intervening subshell) and then blocks,
+# bounded the same way and for the same reason as the lock tests above — an
+# unbounded wait would hang forever instead of failing if the signal handling
+# regresses and nothing ever unblocks it.
+fake_bin op 'case "$1 $2" in
+"document get")
+    echo "$PPID" > "$SIGDIR/target.pid"
+    _w=0
+    while [ ! -f "$SIGDIR/proceed" ] && [ "$_w" -lt 200 ]; do
+        sleep 0.05
+        _w=$((_w + 1))
+    done
+    echo "not found" >&2
+    exit 1 ;;
+*) exit 0 ;;
+esac'
+
+gatherd-icloud-config status >"$SIGDIR/out" 2>"$SIGDIR/err" &
+_sigterm_pid=$!
+_waited=0
+while [ ! -f "$SIGDIR/target.pid" ] && [ "$_waited" -lt 100 ]; do
+    sleep 0.02
+    _waited=$((_waited + 1))
+done
+kill -TERM "$(cat "$SIGDIR/target.pid")" 2>/dev/null || true
+: > "$SIGDIR/proceed"
+if wait "$_sigterm_pid"; then _sigterm_status=0; else _sigterm_status=$?; fi
+if [ "$_sigterm_status" -eq 130 ]; then
+    ok 'a SIGTERM mid-run exits 130 via the dedicated handler'
+else
+    bad "a SIGTERM mid-run exits 130 via the dedicated handler (got $_sigterm_status)"
+fi
+unset SIGDIR
 
 unset GATHERD_ICLOUD_STATE RCLONE_CONFIG FAKE_OP_DIR XDG_RUNTIME_DIR \
       GATHERD_ICLOUD_CONF GATHERD_ICLOUD_REMOTE RCLONE_PASSWORD_COMMAND RCLONE_CALL_LOG

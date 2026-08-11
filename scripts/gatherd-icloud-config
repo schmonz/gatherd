@@ -38,7 +38,11 @@ REMOTE="${GATHERD_ICLOUD_REMOTE:-${ICLOUD_REMOTE:-icloud}}"
 # prompt on stdin or error. Pinning it here also means every config_works
 # probe below is provably checked against the fleet password, not whatever a
 # human happened to unlock rclone with interactively earlier in the session.
-export RCLONE_PASSWORD_COMMAND="${RCLONE_PASSWORD_COMMAND:-gatherd-icloud-password}"
+# The absolute path matches what roles/system/tasks/user_path.yml delivers via
+# pam_env for this same variable: rclone execs the command directly rather
+# than through a shell, so a bare name only resolves where ~/.local/bin is
+# already on PATH — which, outside a PAM session, it is not.
+export RCLONE_PASSWORD_COMMAND="${RCLONE_PASSWORD_COMMAND:-$HOME/.local/bin/gatherd-icloud-password}"
 
 FLEET_OK="$STATE/icloud-fleet-ok"
 
@@ -53,7 +57,13 @@ mkdir -p "$STATE"
 umask 077
 TMP=$(mktemp -d "$XDG_RUNTIME_DIR/gatherd-icloud.XXXXXX")
 chmod 700 "$TMP"
-trap 'rm -rf "$TMP"' EXIT INT TERM HUP
+trap 'rm -rf "$TMP"' EXIT
+# A trap for a caught (non-EXIT) signal returns control to the interrupted
+# point rather than ending the script, so without an explicit exit here the
+# script would resume after cleanup with $TMP gone and every later write
+# failing. 130 (128+SIGTERM's conventional sibling, 128+SIGINT) is the
+# customary shell exit status for "killed by signal".
+trap 'rm -rf "$TMP"; exit 130' INT TERM HUP
 
 doc_get()    { op document get "$GATHERD_OP_DOCUMENT" --vault "$GATHERD_OP_VAULT"; }
 doc_exists() { doc_get >/dev/null 2>&1; }
@@ -68,6 +78,11 @@ doc_put() {
 # Reachability is the only definition of "this config works" that matters here.
 config_works() { RCLONE_CONFIG="$1" rclone lsd "$REMOTE:" >/dev/null 2>&1; }
 
+# A config that fails this is a live iCloud token sitting in plaintext.
+# bootstrap and push both gate publishing on it so neither path can be the
+# one that hands that token to every other machine's pull.
+config_encrypted() { head -n1 "$1" 2>/dev/null | grep -q 'Encrypted rclone configuration'; }
+
 # Trustworthy only when both sides actually decrypted: an empty file means
 # `config show` itself failed (locked 1Password, unset password command), not
 # "the config decrypted to nothing". Treating two failures as equal and
@@ -81,6 +96,13 @@ install_config() {
     cp "$1" "$CONFIG"
     chmod 600 "$CONFIG"
 }
+
+# Deliberately not gated on config_encrypted: that check exists to stop this
+# machine from being the one that *publishes* plaintext, not to second-guess
+# whatever the fleet document already contains. A fleet doc that somehow
+# holds a plaintext config is a 1Password-vault problem to fix at the
+# source — refusing to install it here would still leave a human with no
+# rclone.conf to run `rclone config reconnect` against.
 
 cmd_pull() {
     if [ ! -s "$CONFIG" ]; then
@@ -122,6 +144,7 @@ cmd_pull() {
 
 cmd_push() {
     [ -s "$CONFIG" ] || die "no local config to publish"
+    config_encrypted "$CONFIG" || die "refusing to publish an unencrypted config to the fleet"
     config_works "$CONFIG" || die "refusing to publish a config that cannot reach iCloud"
 
     if doc_get > "$TMP/fleet" 2>/dev/null; then
@@ -156,11 +179,7 @@ cmd_bootstrap() {
     fi
 
     [ -s "$CONFIG" ] || die "no local rclone config; run 'rclone config' and add the '$REMOTE' remote first"
-
-    if ! head -n1 "$CONFIG" | grep -q 'Encrypted rclone configuration'; then
-        die "local config is not encrypted; run: rclone config encryption set"
-    fi
-
+    config_encrypted "$CONFIG" || die "local config is not encrypted; run: rclone config encryption set"
     config_works "$CONFIG" || die "local config does not authenticate; fix it before publishing it to the fleet"
 
     doc_put "$CONFIG"
@@ -171,7 +190,7 @@ cmd_bootstrap() {
 cmd_status() {
     if [ ! -s "$CONFIG" ]; then
         _enc=absent
-    elif head -n1 "$CONFIG" | grep -q 'Encrypted rclone configuration'; then
+    elif config_encrypted "$CONFIG"; then
         _enc=encrypted
     else
         _enc=plaintext

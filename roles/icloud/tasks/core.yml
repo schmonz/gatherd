@@ -10,6 +10,10 @@
     - "{{ icloud_sync_root }}"
     - "{{ target_home }}/.local/state/gatherd"
     - "{{ target_home }}/.local/share/gatherd/icloud-backup"
+    # The desktop role (tasks_from: core) happens to create .local/bin earlier
+    # in this same play, but this role installs four scripts into it below —
+    # list it explicitly so the role doesn't depend on that ordering.
+    - "{{ target_home }}/.local/bin"
 
 - name: Create the local directory for each synced iCloud folder
   ansible.builtin.file:
@@ -49,6 +53,13 @@
     mode: '0755'
     remote_src: true
 
+# This role only ever installs gatherd-icloud-config; it must never be
+# invoked from a playbook task. This play's become_user is delivered via su
+# (see site-core.yml), which — unlike a real login/PAM session — leaves
+# XDG_RUNTIME_DIR unset. gatherd-icloud-config treats that as fatal on
+# purpose (its decrypted-config scratch space must be tmpfs, never disk), so
+# calling it here would die at converge rather than silently do the wrong
+# thing.
 - name: Install the iCloud config plumbing
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-icloud-config"

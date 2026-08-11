@@ -12,7 +12,8 @@
 
 set -eu
 
-die() { printf 'gatherd-icloud-config: %s\n' "$1" >&2; exit 1; }
+die()  { printf 'gatherd-icloud-config: %s\n' "$1" >&2; exit 1; }
+warn() { printf 'gatherd-icloud-config: warning: %s\n' "$1" >&2; }
 
 # gatherd-icloud-sync sources this same manifest for ICLOUD_REMOTE. Without
 # this, changing icloud_remote in group_vars would move sync onto the new
@@ -61,8 +62,9 @@ trap 'rm -rf "$TMP"' EXIT
 # A trap for a caught (non-EXIT) signal returns control to the interrupted
 # point rather than ending the script, so without an explicit exit here the
 # script would resume after cleanup with $TMP gone and every later write
-# failing. 130 (128+SIGTERM's conventional sibling, 128+SIGINT) is the
-# customary shell exit status for "killed by signal".
+# failing. One status (130) covers all three signals because nothing that
+# calls this script distinguishes INT from TERM from HUP; it does not track
+# the different conventional value per signal (130/143/129).
 trap 'rm -rf "$TMP"; exit 130' INT TERM HUP
 
 doc_get()    { op document get "$GATHERD_OP_DOCUMENT" --vault "$GATHERD_OP_VAULT"; }
@@ -91,18 +93,32 @@ plain_configs_match() {
     [ -s "$1" ] && [ -s "$2" ] && cmp -s "$1" "$2"
 }
 
-install_config() {
-    mkdir -p "$(dirname "$CONFIG")"
-    cp "$1" "$CONFIG"
-    chmod 600 "$CONFIG"
-}
-
 # Deliberately not gated on config_encrypted: that check exists to stop this
 # machine from being the one that *publishes* plaintext, not to second-guess
 # whatever the fleet document already contains. A fleet doc that somehow
 # holds a plaintext config is a 1Password-vault problem to fix at the
 # source — refusing to install it here would still leave a human with no
 # rclone.conf to run `rclone config reconnect` against.
+install_config() {
+    mkdir -p "$(dirname "$CONFIG")"
+    cp "$1" "$CONFIG"
+    chmod 600 "$CONFIG"
+}
+
+# Called right after install_config puts a fleet copy on disk. $FLEET_OK is
+# Task 7's signal that the fleet round-trip worked, so it must stay narrower
+# than "a file now exists at $CONFIG": a copy that doesn't authenticate
+# hasn't earned it (existing case), and neither has one that authenticates
+# but is plaintext — pull installing that silently is how a machine ends up
+# with a config that a later `pull` (via its push delegation) then refuses
+# to touch, with no warning anywhere that this was coming.
+note_fleet_install() {
+    if ! config_encrypted "$CONFIG"; then
+        warn "installed config from the fleet is not encrypted; run: rclone config encryption set"
+    elif config_works "$CONFIG"; then
+        : > "$FLEET_OK"
+    fi
+}
 
 cmd_pull() {
     if [ ! -s "$CONFIG" ]; then
@@ -110,11 +126,7 @@ cmd_pull() {
         install_config "$TMP/fleet"
         # Install even when it doesn't authenticate: a human needs an
         # rclone.conf on disk to run `rclone config reconnect` against.
-        # $FLEET_OK is the narrower claim — Task 7 reads it as "the fleet
-        # round-trip worked" — so only verification earns it.
-        if config_works "$CONFIG"; then
-            : > "$FLEET_OK"
-        fi
+        note_fleet_install
         return 0
     fi
 
@@ -132,7 +144,7 @@ cmd_pull() {
     doc_get > "$TMP/fleet" 2>/dev/null || die "local config does not work and no fleet config exists"
     if config_works "$TMP/fleet"; then
         install_config "$TMP/fleet"
-        : > "$FLEET_OK"
+        note_fleet_install
         return 0
     fi
 
@@ -144,7 +156,7 @@ cmd_pull() {
 
 cmd_push() {
     [ -s "$CONFIG" ] || die "no local config to publish"
-    config_encrypted "$CONFIG" || die "refusing to publish an unencrypted config to the fleet"
+    config_encrypted "$CONFIG" || die "local config is not encrypted; run: rclone config encryption set"
     config_works "$CONFIG" || die "refusing to publish a config that cannot reach iCloud"
 
     if doc_get > "$TMP/fleet" 2>/dev/null; then

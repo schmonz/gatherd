@@ -409,10 +409,16 @@ fake_rclone_reachable() {
 esac'
 }
 
+# The fleet doc here must actually be encrypted: "verified" is meant to prove
+# the fleet-ok flag is earned by a genuine round-trip, and since the plaintext
+# case now earns a different outcome entirely (see the new plaintext-fleet
+# tests below), a plaintext fixture here would no longer exercise what this
+# test's name claims.
 cfg_env 1; fake_op_docs; fake_rclone_reachable
-printf 'FLEET-CONFIG-A-WORKS' > "$C/op/doc"
+printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nFLEET-CONFIG-A-WORKS\n' > "$C/op/doc"
+cp "$C/op/doc" "$C/state/fleet-doc-expected"
 assert_ok 'pull installs the fleet config when none is local' gatherd-icloud-config pull
-assert_out 'pulled contents match the fleet copy' FLEET-CONFIG-A-WORKS cat "$C/rclone.conf"
+assert_ok 'pulled contents match the fleet copy' cmp -s "$C/state/fleet-doc-expected" "$C/rclone.conf"
 assert_ok 'a verified pull recorded fleet-ok' test -f "$C/state/icloud-fleet-ok"
 
 cfg_env 2; fake_op_docs; fake_rclone_reachable
@@ -441,6 +447,39 @@ printf 'FLEET-DOES-NOT-AUTH' > "$C/op/doc"
 assert_ok 'pull with no local config installs an unverified fleet copy' gatherd-icloud-config pull
 assert_out 'the unverified copy still got installed' FLEET-DOES-NOT-AUTH cat "$C/rclone.conf"
 assert_fail 'an unverified pull did not record fleet-ok' test -f "$C/state/icloud-fleet-ok"
+
+# CRITICAL: pull previously installed a plaintext-but-authenticating fleet
+# config, set fleet-ok, and printed nothing — a silent, successful-looking
+# install of exactly the state that the *next* pull's push-delegation branch
+# (cmd_push's config_encrypted guard) then permanently refuses to touch.
+# fleet-ok must not be set (a plaintext copy is not a working round trip,
+# even when it authenticates) and the warning must name the actual remedy.
+cfg_env 26; fake_op_docs; fake_rclone_reachable
+printf 'PLAINTEXT-FLEET-WORKS' > "$C/op/doc"
+if gatherd-icloud-config pull >"$C/state/pull.out" 2>"$C/state/pull.err"; then
+    ok 'pull installs a plaintext fleet config when none is local'
+else
+    bad 'pull installs a plaintext fleet config when none is local (expected success)'
+fi
+assert_out 'the plaintext fleet config is still installed' PLAINTEXT-FLEET-WORKS cat "$C/rclone.conf"
+assert_fail 'installing a plaintext fleet config does not record fleet-ok' test -f "$C/state/icloud-fleet-ok"
+assert_ok 'installing a plaintext fleet config warns with the remedy' \
+    grep -q 'rclone config encryption set' "$C/state/pull.err"
+
+# Same bug, reached via cmd_pull's other install site: a broken local config
+# replaced by a fleet copy that authenticates but is plaintext.
+cfg_env 27; fake_op_docs; fake_rclone_reachable
+printf 'LOCAL-BROKEN' > "$C/rclone.conf"
+printf 'PLAINTEXT-FLEET-WORKS' > "$C/op/doc"
+if gatherd-icloud-config pull >"$C/state/pull.out" 2>"$C/state/pull.err"; then
+    ok 'pull replaces a broken local config with a plaintext-but-working fleet copy'
+else
+    bad 'pull replaces a broken local config with a plaintext-but-working fleet copy (expected success)'
+fi
+assert_out 'the plaintext fleet config replaced the broken local one' PLAINTEXT-FLEET-WORKS cat "$C/rclone.conf"
+assert_fail 'replacing with a plaintext fleet copy does not record fleet-ok' test -f "$C/state/icloud-fleet-ok"
+assert_ok 'replacing with a plaintext fleet copy warns with the remedy' \
+    grep -q 'rclone config encryption set' "$C/state/pull.err"
 
 # push now requires an encrypted local config (see the plaintext-publication
 # guard further down), so every push fixture from here on carries the same
@@ -508,22 +547,35 @@ cfg_env 22; fake_op_docs; fake_rclone_reachable
 printf 'PLAINTEXT-LOCAL-WORKS' > "$C/rclone.conf"
 printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nFLEET-GOOD\n' > "$C/op/doc"
 cp "$C/op/doc" "$C/op/doc.before"
-assert_fail 'push refuses to publish a plaintext config' gatherd-icloud-config push
+if gatherd-icloud-config push >"$C/state/push.out" 2>"$C/state/push.err"; then
+    bad 'push refuses to publish a plaintext config (expected failure)'
+else
+    ok 'push refuses to publish a plaintext config'
+fi
 assert_ok 'fleet document byte-unchanged after the refused plaintext push' \
     cmp -s "$C/op/doc.before" "$C/op/doc"
+assert_ok 'the plaintext-push refusal names the remedy' \
+    grep -q 'rclone config encryption set' "$C/state/push.err"
 
 # cmd_pull delegates straight to cmd_push whenever the local config already
 # authenticates (see cmd_pull's second branch); the plaintext guard has to
 # hold there too or a fresh, still-plaintext machine can leak its token to
-# the fleet via `pull` without ever running `push` directly.
+# the fleet via `pull` without ever running `push` directly. The die message
+# is worded to make sense from both entry points — it must not talk about
+# "publishing" when the human typed `pull`.
 cfg_env 23; fake_op_docs; fake_rclone_reachable
 printf 'PLAINTEXT-LOCAL-WORKS' > "$C/rclone.conf"
 printf '# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nFLEET-GOOD\n' > "$C/op/doc"
 cp "$C/op/doc" "$C/op/doc.before"
-assert_fail 'pull refuses to publish a plaintext local config via its push delegation' \
-    gatherd-icloud-config pull
+if gatherd-icloud-config pull >"$C/state/pull.out" 2>"$C/state/pull.err"; then
+    bad 'pull refuses to publish a plaintext local config via its push delegation (expected failure)'
+else
+    ok 'pull refuses to publish a plaintext local config via its push delegation'
+fi
 assert_ok 'fleet document byte-unchanged after the refused pull-triggered push' \
     cmp -s "$C/op/doc.before" "$C/op/doc"
+assert_ok 'the pull-delegated refusal also names the remedy' \
+    grep -q 'rclone config encryption set' "$C/state/pull.err"
 assert_out 'the plaintext local config is left alone, not silently replaced' \
     PLAINTEXT-LOCAL-WORKS cat "$C/rclone.conf"
 

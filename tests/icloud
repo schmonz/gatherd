@@ -221,7 +221,17 @@ mkdir -p "$WORK/h12/state/bisync/FSNotes" "$WORK/h12/state/locks"
     # Block on a marker the test controls rather than a fixed sleep: a fixed
     # window has to outlast however long the assertion below takes to start
     # and run, which is a guess this repo's QEMU-based test runner can blow.
-    while [ ! -f "$WORK/h12/state/lock.release" ]; do sleep 0.05; done
+    # But bounded, not unconditional: if the flock -n guard this test exists
+    # to catch regresses to a blocking flock, the assertion below deadlocks
+    # inside the script's own flock call and never reaches the line that
+    # writes lock.release — an unbounded wait here would hang forever instead
+    # of failing. 200 * 0.05s = 10s is far past any real completion time, so
+    # it never trips on a passing run, even one 10x slower under QEMU.
+    _release_wait=0
+    while [ ! -f "$WORK/h12/state/lock.release" ] && [ "$_release_wait" -lt 200 ]; do
+        sleep 0.05
+        _release_wait=$((_release_wait + 1))
+    done
 ) &
 _holder_pid=$!
 _waited=0
@@ -247,13 +257,20 @@ rm -f "$FAKEBIN/flock"
 # Concurrent bisync on one pair is how a baseline corrupts, so this guard is
 # data-integrity-critical: prove a second trigger yields instead of racing.
 sync_env 14
-# Block on a marker the test controls rather than a fixed sleep — see the
-# same reasoning above test 12.
+# Block on a marker the test controls rather than a fixed sleep, bounded the
+# same way and for the same reason as test 12's holder loop above: if the
+# flock guard regresses, the second gatherd-icloud-sync below deadlocks
+# waiting for this same lock, so nothing ever writes bisync.release, and an
+# unbounded wait here would hang forever instead of failing.
 fake_bin rclone 'case "$1" in
     lsd) exit 0 ;;
     bisync)
         : > "$GATHERD_ICLOUD_STATE/bisync.started"
-        while [ ! -f "$GATHERD_ICLOUD_STATE/bisync.release" ]; do sleep 0.05; done
+        _release_wait=0
+        while [ ! -f "$GATHERD_ICLOUD_STATE/bisync.release" ] && [ "$_release_wait" -lt 200 ]; do
+            sleep 0.05
+            _release_wait=$((_release_wait + 1))
+        done
         printf "%s\n" "$*" >> "$GATHERD_ICLOUD_STATE/bisync.argv"
         exit 0 ;;
     *) exit 0 ;;

@@ -154,6 +154,17 @@ fi
 rm -f "$REAUTH"
 
 mkdir -p "$STATE/locks"
+
+# $folder.$$.ran markers are named per invocation, not shared, so two
+# concurrent triggers can't each see the other's leftover success and skip a
+# sync that never ran under them. But a name only its creator ever expects to
+# remove is only ever cleaned up by that creator: a kill -9, OOM, or crash
+# mid-loop orphans the file forever, unlike the old shared name a later run
+# would just rm -f. Nothing legitimate keeps a .ran file around longer than
+# one sync_folder call, so anything old enough to have outlived any plausible
+# one is debris and safe to sweep before the loop starts.
+find "$STATE/locks" -maxdepth 1 -name '*.ran' -mmin +60 -delete
+
 rc=0
 ran=0
 for folder in $folders; do

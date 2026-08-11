@@ -135,7 +135,7 @@ sync_folder() {
         --conflict-resolve newer --conflict-loser pathname \
         --max-delete 10 --resilient --recover \
         --transfers 2 --checkers 4 --tpslimit 4 \
-        --backup-dir1 "$BACKUPS/$_folder" \
+        --backup-dir2 "$BACKUPS/$_folder" \
         --log-file "$STATE/rclone-icloud-$_folder.log" -v
 }
 

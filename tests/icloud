@@ -154,8 +154,11 @@ assert_ok 'argv carries --recover' grep -q -- '--recover' "$WORK/h4/state/bisync
 assert_ok 'argv carries --transfers 2' grep -qE -- '--transfers 2( |$)' "$WORK/h4/state/bisync.argv"
 assert_ok 'argv carries --checkers 4' grep -qE -- '--checkers 4( |$)' "$WORK/h4/state/bisync.argv"
 assert_ok 'argv carries --tpslimit 4' grep -qE -- '--tpslimit 4( |$)' "$WORK/h4/state/bisync.argv"
-assert_ok 'argv carries --backup-dir1 with the right path' \
-    grep -q -- "--backup-dir1 $WORK/h4/backup/FSNotes" "$WORK/h4/state/bisync.argv"
+# backup-dir1 would have to live on Path1's remote (rclone: "parameter to
+# --backup-dir has to be on the same remote as destination"); Path2 is the
+# local directory, which is where the backup dir actually is.
+assert_ok 'argv carries --backup-dir2 with the right path' \
+    grep -q -- "--backup-dir2 $WORK/h4/backup/FSNotes" "$WORK/h4/state/bisync.argv"
 assert_ok 'argv carries --log-file with the right path' \
     grep -q -- "--log-file $WORK/h4/state/rclone-icloud-FSNotes.log" "$WORK/h4/state/bisync.argv"
 

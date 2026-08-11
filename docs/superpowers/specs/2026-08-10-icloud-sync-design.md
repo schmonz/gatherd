@@ -189,9 +189,13 @@ Flags carry over from `fsnotes-sync`, with per-folder paths generalized:
 --conflict-resolve newer --conflict-loser pathname
 --max-delete 10 --resilient --recover
 --transfers 2 --checkers 4 --tpslimit 4
---backup-dir1 ~/.local/share/gatherd/icloud-backup/<folder>
---log-file ~/.local/state/rclone-icloud-<folder>.log -v
+--backup-dir2 ~/.local/share/gatherd/icloud-backup/<folder>
+--log-file ~/.local/state/gatherd/rclone-icloud-<folder>.log -v
 ```
+
+`--backup-dir` must live on the destination's remote, and Path2 (the local
+directory) is the destination here — not Path1, the iCloud remote — so this is
+`--backup-dir2`.
 
 Baseline presence is read from rclone's own bisync listing cache, and selects one of
 three paths:
@@ -206,12 +210,18 @@ three paths:
 rclone 1.75 against scratch remotes. It is a **union**: files present on only
 one side are copied to the other (a local-only file is uploaded, not
 deleted), and only files present on **both** sides with differing content
-take Path1's (the remote's) version. The refuse-on-populated-dir guard above
-is still the right call: two identically-named files that happen to differ
-still silently take the remote's copy with no baseline to back the local one
-up against, which is real enough that a human should watch it happen — but
-the guard is deliberately more conservative than the actual danger requires,
-not a correction of an otherwise-accurate "remote replaces everything" model.
+take Path1's (the remote's) version — and even then the overwritten local
+version is not simply gone: `--backup-dir2` preserves it, byte-for-byte,
+under `~/.local/share/gatherd/icloud-backup/<folder>` (verified against real
+rclone 1.75 against scratch remotes; a control run with no `--backup-dir2`
+does destroy it with no trace). The backup dir keeps only the most recent
+version per path, with no suffixing — a second `--init` overwrites whatever
+the first one backed up. The refuse-on-populated-dir guard above is still the
+right call: two identically-named files that happen to differ still silently
+take the remote's copy, which is real enough that a human should watch it
+happen — but the guard is deliberately more conservative than the actual
+danger requires, not a correction of an otherwise-accurate "remote replaces
+everything, unrecoverably" model.
 
 ### 6.1 Triggers
 
@@ -236,7 +246,7 @@ Unattended runs are silent unless a human must decide.
 
 | Failure | Behavior |
 |---|---|
-| 1Password locked / no config | Not-ready, not broken. Quiet exit 0 when event-triggered; loud when run by hand. |
+| 1Password locked / no config | Not-ready, not broken. Quiet exit 0 when event-triggered; loud when run by hand — but only for the first 3 days after the last successful sync (`STALE_AFTER`). Past that, a still-not-ready condition escalates to a loud notification even when event-triggered, since it now looks like a permanent op/1Password problem rather than a locked vault. |
 | Auth expired (2FA due) | Notify once, rate-limited, plus a post-setup-notes line that auto-prunes when it works again — the shape `icloud_configured()` already uses. |
 | `--max-delete 10` tripped | Abort, nothing lost, notify. This is the design working: it stands between an empty iCloud listing and your notes. |
 | Wedged baseline | `--resilient --recover` covers recoverable cases; a hard wedge routes to the notes and an explicit `--init` after inspecting both sides. |
@@ -250,8 +260,14 @@ Unattended runs are silent unless a human must decide.
    takes the populated-local path, correctly requiring a human to watch.
 3. Remove `~/.local/bin/fsnotes-sync` and `~/.config/rclone/fsnotes.filter`.
 
-Safe specifically because both sides are in sync *today*, which makes the re-baseline a
-formality. Do the migration while that is still true.
+**Not a formality.** The predecessor script, `fsnotes-sync`, used a
+`--backup-dir` flag on the wrong side (Path1, the remote, instead of Path2)
+and aborted before it ever transferred anything — its log
+(`~/.local/state/rclone-fsnotes.log`) shows zero successful bisyncs. The two
+sides may have diverged, silently, for as long as that script ran, and may
+never have actually been in sync. Treat step 2 as a real reconciliation to
+watch, not a rubber stamp, and take an independent copy of both sides before
+running it.
 
 ## 8. Post-setup notes changes
 

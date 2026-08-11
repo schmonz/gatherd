@@ -12,25 +12,48 @@
 
 set -eu
 
+die() { printf 'gatherd-icloud-config: %s\n' "$1" >&2; exit 1; }
+
+# gatherd-icloud-sync sources this same manifest for ICLOUD_REMOTE. Without
+# this, changing icloud_remote in group_vars would move sync onto the new
+# remote while this script kept probing the old name, and config_works would
+# fail everywhere for a reason ("wrong remote") that looks identical to a
+# broken config.
+GATHERD_ICLOUD_CONF="${GATHERD_ICLOUD_CONF:-$HOME/.config/gatherd/icloud.conf}"
+if [ -r "$GATHERD_ICLOUD_CONF" ]; then
+    # shellcheck disable=SC1090
+    . "$GATHERD_ICLOUD_CONF"
+fi
+
 STATE="${GATHERD_ICLOUD_STATE:-$HOME/.local/state/gatherd}"
 CONFIG="${RCLONE_CONFIG:-$HOME/.config/rclone/rclone.conf}"
-REMOTE="${GATHERD_ICLOUD_REMOTE:-icloud}"
+REMOTE="${GATHERD_ICLOUD_REMOTE:-${ICLOUD_REMOTE:-icloud}}"
 
 : "${GATHERD_OP_VAULT:=Private}"
 : "${GATHERD_OP_DOCUMENT:=rclone.conf}"
 : "${GATHERD_OP_PASSWORD_ITEM:=rclone config}"
 
+# RCLONE_PASSWORD_COMMAND normally arrives ambiently via pam_env, so outside a
+# PAM session (a systemd unit, `su -c`) it is absent and rclone would either
+# prompt on stdin or error. Pinning it here also means every config_works
+# probe below is provably checked against the fleet password, not whatever a
+# human happened to unlock rclone with interactively earlier in the session.
+export RCLONE_PASSWORD_COMMAND="${RCLONE_PASSWORD_COMMAND:-gatherd-icloud-password}"
+
 FLEET_OK="$STATE/icloud-fleet-ok"
 
 mkdir -p "$STATE"
 
-# A decrypted config is a live iCloud token in plaintext, so scratch space is
-# tmpfs (per-user, gone at logout) and never the disk.
-TMP=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/gatherd-icloud.XXXXXX")
+# A decrypted config is a live iCloud token in plaintext, so scratch space must
+# be tmpfs (per-user, gone at logout) — never disk, and never /tmp, which is
+# shared across users and outlives logout. Fail loudly instead of silently
+# downgrading to a location that only happens to be tmpfs on this host.
+[ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ] \
+    || die "XDG_RUNTIME_DIR is unset or not a directory; refusing to put a decrypted config on persistent disk"
+umask 077
+TMP=$(mktemp -d "$XDG_RUNTIME_DIR/gatherd-icloud.XXXXXX")
 chmod 700 "$TMP"
-trap 'rm -rf "$TMP"' EXIT
-
-die() { printf 'gatherd-icloud-config: %s\n' "$1" >&2; exit 1; }
+trap 'rm -rf "$TMP"' EXIT INT TERM HUP
 
 doc_get()    { op document get "$GATHERD_OP_DOCUMENT" --vault "$GATHERD_OP_VAULT"; }
 doc_exists() { doc_get >/dev/null 2>&1; }
@@ -45,6 +68,14 @@ doc_put() {
 # Reachability is the only definition of "this config works" that matters here.
 config_works() { RCLONE_CONFIG="$1" rclone lsd "$REMOTE:" >/dev/null 2>&1; }
 
+# Trustworthy only when both sides actually decrypted: an empty file means
+# `config show` itself failed (locked 1Password, unset password command), not
+# "the config decrypted to nothing". Treating two failures as equal and
+# in sync would report health while silently never uploading a fix.
+plain_configs_match() {
+    [ -s "$1" ] && [ -s "$2" ] && cmp -s "$1" "$2"
+}
+
 install_config() {
     mkdir -p "$(dirname "$CONFIG")"
     cp "$1" "$CONFIG"
@@ -55,11 +86,23 @@ cmd_pull() {
     if [ ! -s "$CONFIG" ]; then
         doc_get > "$TMP/fleet" 2>/dev/null || die "no fleet config yet; run: gatherd-icloud-config bootstrap"
         install_config "$TMP/fleet"
-        : > "$FLEET_OK"
+        # Install even when it doesn't authenticate: a human needs an
+        # rclone.conf on disk to run `rclone config reconnect` against.
+        # $FLEET_OK is the narrower claim — Task 7 reads it as "the fleet
+        # round-trip worked" — so only verification earns it.
+        if config_works "$CONFIG"; then
+            : > "$FLEET_OK"
+        fi
         return 0
     fi
 
     if config_works "$CONFIG"; then
+        # Deliberately not "is local newer than fleet": last writer wins.
+        # Both sides already authenticate by this point, so nothing breaks —
+        # the only cost is a working-but-older local config overwriting a
+        # newer fleet copy, an acceptable trade for keeping pull's job to
+        # "make local and fleet agree" rather than doing its own timestamp
+        # bookkeeping.
         cmd_push
         return $?
     fi
@@ -87,7 +130,7 @@ cmd_push() {
         # byte-for-byte and a ciphertext comparison would re-upload every run.
         RCLONE_CONFIG="$CONFIG"    rclone config show > "$TMP/local.plain" 2>/dev/null || true
         RCLONE_CONFIG="$TMP/fleet" rclone config show > "$TMP/fleet.plain" 2>/dev/null || true
-        if cmp -s "$TMP/local.plain" "$TMP/fleet.plain"; then
+        if plain_configs_match "$TMP/local.plain" "$TMP/fleet.plain"; then
             : > "$FLEET_OK"
             return 0
         fi
@@ -149,7 +192,13 @@ cmd_status() {
     else
         RCLONE_CONFIG="$CONFIG"    rclone config show > "$TMP/local.plain" 2>/dev/null || true
         RCLONE_CONFIG="$TMP/fleet" rclone config show > "$TMP/fleet.plain" 2>/dev/null || true
-        if cmp -s "$TMP/local.plain" "$TMP/fleet.plain"; then _fleet='in sync'; else _fleet=differs; fi
+        if [ ! -s "$TMP/local.plain" ] || [ ! -s "$TMP/fleet.plain" ]; then
+            _fleet=unknown
+        elif cmp -s "$TMP/local.plain" "$TMP/fleet.plain"; then
+            _fleet='in sync'
+        else
+            _fleet=differs
+        fi
     fi
 
     printf 'config: %s, %s; fleet: %s\n' "$_enc" "$_reach" "$_fleet"

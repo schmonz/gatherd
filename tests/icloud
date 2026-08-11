@@ -206,6 +206,37 @@ sync_env 10; fake_rclone_ok
 assert_fail 'plain sync mode refuses when there is no baseline' gatherd-icloud-sync
 assert_fail 'ran no bisync when refusing for lack of baseline' test -f "$WORK/h10/state/bisync.argv"
 
+# The remedy plain-sync-mode prints must actually work: --init-if-empty itself
+# refuses on a populated dir (tested above), so pointing there when local files
+# already exist would hand back advice that fails too.
+sync_env 16; fake_rclone_ok
+echo note > "$WORK/h16/root/FSNotes/a.md"
+rm -f "$NOTIFY_LOG"
+assert_fail 'plain sync mode refuses when there is no baseline and local files exist' gatherd-icloud-sync
+assert_ok 'remedy for a populated dir points at --init, not --init-if-empty' \
+    grep -q -- '--init FSNotes' "$NOTIFY_LOG"
+
+# --resync is a union (verified against real rclone 1.75: a local-only file
+# survives by being uploaded), not a wholesale remote-wins overwrite. The
+# refusal message must not overstate the danger to the point of claiming local
+# files are simply destroyed.
+sync_env 17; fake_rclone_ok
+echo note > "$WORK/h17/root/FSNotes/a.md"
+rm -f "$NOTIFY_LOG"
+assert_fail '--init-if-empty refuses on a populated dir' gatherd-icloud-sync --init-if-empty
+assert_fail 'refusal message does not overstate --resync as a wholesale overwrite' \
+    grep -qi 'overwrite them with no way back' "$NOTIFY_LOG"
+
+# dir_is_empty must fail closed: an unreadable directory must never be
+# mistaken for an empty one, or the guard protecting local data from an
+# automatic --resync fails open exactly when it matters most.
+sync_env 18; fake_rclone_ok
+chmod 000 "$WORK/h18/root/FSNotes"
+assert_fail '--init-if-empty refuses when the local dir itself is unreadable' \
+    gatherd-icloud-sync --init-if-empty
+assert_fail 'ran no bisync against an unreadable local dir' test -f "$WORK/h18/state/bisync.argv"
+chmod 755 "$WORK/h18/root/FSNotes"
+
 sync_env 11; fake_rclone_ok
 : > "$WORK/h11/root/FSNotes/.DS_Store"
 assert_fail '--init-if-empty treats a dotfiles-only dir as populated' gatherd-icloud-sync --init-if-empty

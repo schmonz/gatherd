@@ -202,6 +202,17 @@ three paths:
 | absent | populated | refuse; print the exact `--init` command; surface in notes |
 | present | any | normal bisync |
 
+`--resync` is not a wholesale "remote wins" overwrite — verified against real
+rclone 1.75 against scratch remotes. It is a **union**: files present on only
+one side are copied to the other (a local-only file is uploaded, not
+deleted), and only files present on **both** sides with differing content
+take Path1's (the remote's) version. The refuse-on-populated-dir guard above
+is still the right call: two identically-named files that happen to differ
+still silently take the remote's copy with no baseline to back the local one
+up against, which is real enough that a human should watch it happen — but
+the guard is deliberately more conservative than the actual danger requires,
+not a correction of an otherwise-accurate "remote replaces everything" model.
+
 ### 6.1 Triggers
 
 Scripts are trigger-agnostic; `gatherd-icloud-sync` is safe to call at any moment. Two

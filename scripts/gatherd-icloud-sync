@@ -88,7 +88,15 @@ due() {
     [ $((_now - _then)) -ge "$MIN_INTERVAL" ]
 }
 
-dir_is_empty() { [ -z "$(ls -A "$1" 2>/dev/null || true)" ]; }
+# Guards --resync's blast radius, so an unreadable/missing dir must read as
+# "populated" (refuse), not "empty" (auto-resync) — ls's own exit status is
+# checked rather than swallowed, so an ls error can't be mistaken for the
+# empty-output of a genuinely empty directory.
+dir_is_empty() {
+    [ -d "$1" ] || return 1
+    _listing=$(ls -A "$1" 2>/dev/null) || return 1
+    [ -z "$_listing" ]
+}
 
 # A baseline is the pair of listing files bisync leaves in its workdir. Giving
 # each folder its own --workdir makes this a plain directory test instead of
@@ -112,12 +120,26 @@ sync_folder() {
                 if dir_is_empty "$_local"; then
                     _resync=--resync
                 else
-                    say "$_folder has local files but no baseline; --init lets iCloud overwrite them with no way back. Dry run first: rclone bisync $ICLOUD_REMOTE:$_folder $_local --resync --dry-run -v --workdir $_workdir --filters-file $FILTERS/$_folder.filter"
+                    # --resync is a union, not a remote-wins overwrite: files that exist
+                    # on only one side are copied to the other, nothing local-only is
+                    # deleted. The real risk is narrower — any file that exists on BOTH
+                    # sides with different content silently takes iCloud's version, with
+                    # no baseline yet to back the local copy up against. Verified against
+                    # real rclone 1.75: a local-only file survives --resync by being
+                    # uploaded, not destroyed.
+                    say "$_folder has local files but no baseline; --init runs --resync, which takes iCloud's version of any file that also exists there with different content, with no backup. Dry run first: rclone bisync $ICLOUD_REMOTE:$_folder $_local --resync --dry-run -v --workdir $_workdir --filters-file $FILTERS/$_folder.filter"
                     return 1
                 fi
                 ;;
             *)
-                say "$_folder has no baseline; run: gatherd-icloud-sync --init-if-empty"
+                # --init-if-empty refuses outright on a populated dir (the branch just
+                # above), so pointing there when $_local already has files would hand
+                # back a remedy that immediately fails too.
+                if dir_is_empty "$_local"; then
+                    say "$_folder has no baseline; run: gatherd-icloud-sync --init-if-empty"
+                else
+                    say "$_folder has no baseline and local files; run: gatherd-icloud-sync --init $_folder"
+                fi
                 return 1
                 ;;
         esac

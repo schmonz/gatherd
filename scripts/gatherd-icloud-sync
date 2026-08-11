@@ -142,11 +142,16 @@ sync_folder() {
                     # --resync is a union, not a remote-wins overwrite: files that exist
                     # on only one side are copied to the other, nothing local-only is
                     # deleted. The real risk is narrower — any file that exists on BOTH
-                    # sides with different content silently takes iCloud's version, with
-                    # no baseline yet to back the local copy up against. Verified against
-                    # real rclone 1.75: a local-only file survives --resync by being
-                    # uploaded, not destroyed.
-                    say "$_folder has local files but no baseline; --init runs --resync, which takes iCloud's version of any file that also exists there with different content, with no backup. Dry run first: rclone bisync $ICLOUD_REMOTE:$_folder $_local --resync --dry-run -v --workdir $_workdir --filters-file $FILTERS/$_folder.filter"
+                    # sides with different content silently takes iCloud's version. That
+                    # local version is not lost: --backup-dir2 preserves it in $BACKUPS.
+                    # Verified against real rclone 1.75 against scratch remotes: a
+                    # local-only file survives --resync by being uploaded, not destroyed,
+                    # and an overwritten local file lands byte-for-byte in the backup dir
+                    # (a control run with no --backup-dir2 does destroy it with no trace).
+                    # The backup dir keeps only the most recent version per path with no
+                    # suffixing, so a second --init overwrites whatever --init backed up
+                    # before it.
+                    say "$_folder has local files but no baseline; --init runs --resync, which takes iCloud's version of any file that also exists there with different content — the local version is preserved in $BACKUPS/$_folder, though only the most recent one (a second --init overwrites it). Dry run first: rclone bisync $ICLOUD_REMOTE:$_folder $_local --resync --dry-run -v --workdir $_workdir --filters-file $FILTERS/$_folder.filter"
                     return 1
                 fi
                 ;;
@@ -177,6 +182,13 @@ sync_folder() {
     # so itself — the exit status has to be captured explicitly (not just
     # left as the function's implicit return) so it can be both returned to
     # the caller AND used to decide whether to notify.
+    # --log-file appends and is never rotated, so a plain grep against $_log
+    # would match a --max-delete trip from any earlier run forever — once a
+    # folder has ever tripped it, every later failure would misreport "nothing
+    # was changed" regardless of its real cause. Recording the size beforehand
+    # lets the post-failure grep be scoped to only what this run appended.
+    _before=$(wc -c < "$_log" 2>/dev/null || echo 0)
+
     _rc=0
     rclone bisync "$ICLOUD_REMOTE:$_folder" "$_local" \
         $_resync \
@@ -194,7 +206,7 @@ sync_folder() {
         # deleted and bisync refused, making no changes. rclone's own text for
         # it ("Safety abort: too many deletes...") is stable enough to grep for
         # rather than re-deriving the percentage ourselves.
-        if grep -q 'too many deletes' "$_log" 2>/dev/null; then
+        if tail -c "+$((_before + 1))" "$_log" 2>/dev/null | grep -q 'too many deletes'; then
             say "$_folder: bisync refused — too many deletes would happen (over the 10% safety limit); nothing was changed. See $_log"
         else
             say "$_folder: bisync failed (exit $_rc); see $_log"

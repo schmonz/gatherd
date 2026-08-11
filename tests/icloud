@@ -404,6 +404,58 @@ assert_fail 'a max-delete trip is a real failure' gatherd-icloud-sync
 assert_ok 'the max-delete notification is distinguishable from a generic failure' \
     grep -qi 'too many deletes' "$NOTIFY_LOG"
 
+# --log-file APPENDS and is never rotated, so a grep against the whole log
+# matches history, not this run. A single-run test can't catch that (its log
+# starts empty either way), so this drives the same folder through two
+# consecutive failures: run 1 trips max-delete, run 2 fails for an unrelated
+# reason. Run 2's notification must be diagnosed from what run 2 actually
+# logged, not from run 1's leftover "too many deletes" line still sitting
+# earlier in the same file.
+sync_env 25
+mkdir -p "$WORK/h25/state/bisync/FSNotes"
+: > "$WORK/h25/state/bisync/FSNotes/icloud_FSNotes..path1.lst"
+fake_bin rclone 'case "$1" in
+    lsd) exit 0 ;;
+    bisync)
+        _logfile=
+        _prev=
+        for _a in "$@"; do
+            [ "$_prev" = "--log-file" ] && _logfile=$_a
+            _prev=$_a
+        done
+        echo "ERROR : Safety abort: too many deletes (>10%, 3 of 5) on Path2" >> "$_logfile"
+        exit 1 ;;
+    *) exit 0 ;;
+esac'
+rm -f "$NOTIFY_LOG"
+assert_fail 'two-run log scoping: run 1 trips max-delete' gatherd-icloud-sync
+assert_ok 'two-run log scoping: run 1 is reported as a max-delete trip' \
+    grep -qi 'too many deletes' "$NOTIFY_LOG"
+
+# Bypass the notify rate limit (not the thing under test here) so run 2's
+# notification actually fires and can be inspected, the same technique test
+# 15 uses.
+echo $(( $(date +%s) - 3700 )) > "$WORK/h25/state/icloud-notified.stamp"
+fake_bin rclone 'case "$1" in
+    lsd) exit 0 ;;
+    bisync)
+        _logfile=
+        _prev=
+        for _a in "$@"; do
+            [ "$_prev" = "--log-file" ] && _logfile=$_a
+            _prev=$_a
+        done
+        echo "ERROR : Failed to copy: 500 Internal Server Error" >> "$_logfile"
+        exit 1 ;;
+    *) exit 0 ;;
+esac'
+rm -f "$NOTIFY_LOG"
+assert_fail 'two-run log scoping: run 2 fails for an unrelated reason' gatherd-icloud-sync
+assert_fail 'two-run log scoping: run 2 does NOT falsely claim a max-delete trip' \
+    grep -qi 'too many deletes' "$NOTIFY_LOG"
+assert_ok 'two-run log scoping: run 2 is reported as the generic failure it is' \
+    grep -qi 'bisync failed' "$NOTIFY_LOG"
+
 # not_ready's surviving patterns (locked 1Password) also match a PERMANENT op
 # misconfiguration, which would otherwise stay silent forever. Escalate once
 # the last actual success is stale, using a PATH with no rclone at all rather
@@ -427,6 +479,41 @@ fake_bin rclone 'echo "Failed to load config file: authorization timeout" >&2; e
 rm -f "$NOTIFY_LOG"
 assert_ok 'a machine that has never once synced is never treated as stale' gatherd-icloud-sync --init-if-empty
 assert_fail 'no notification fires for a never-synced machine (covered separately by post-setup-notes)' \
+    test -s "$NOTIFY_LOG"
+
+# The property most likely to regress if STAMP handling is ever touched: the
+# stale-escalation must go quiet again once a sync actually succeeds, not just
+# stay quiet because a notification recently fired (that's the rate limit, a
+# different mechanism, and this test bypasses it below precisely so it can't
+# be mistaken for this one). not_ready_is_stale reads STAMP directly, so a
+# fresh success must reset the escalation regardless of NOTIFIED's state.
+sync_env 26
+fake_bin rclone 'echo "Failed to load config file: authorization timeout" >&2; exit 1'
+echo $(( $(date +%s) - 400000 )) > "$WORK/h26/state/icloud-sync.stamp"
+rm -f "$NOTIFY_LOG"
+assert_fail 'stale-escalation reset: backdated stamp escalates once' \
+    gatherd-icloud-sync --init-if-empty
+assert_ok 'stale-escalation reset: the escalation notification fires' test -s "$NOTIFY_LOG"
+
+# Simulate a successful sync — an existing baseline plus a clean rclone —
+# which should refresh STAMP the same way test 4 proves a normal sync does.
+mkdir -p "$WORK/h26/state/bisync/FSNotes"
+: > "$WORK/h26/state/bisync/FSNotes/icloud_FSNotes..path1.lst"
+fake_rclone_ok
+assert_ok 'stale-escalation reset: a sync succeeds' gatherd-icloud-sync
+_stale_reset_age=$(( $(date +%s) - $(cat "$WORK/h26/state/icloud-sync.stamp") ))
+assert_ok 'stale-escalation reset: the stamp was refreshed to just now' \
+    test "$_stale_reset_age" -lt 30
+
+# Bypass the notify rate limit, same as test 25 above, so the assertion below
+# proves the escalation itself is quiet — not merely that NOTIFY_INTERVAL
+# hasn't elapsed.
+echo $(( $(date +%s) - 3700 )) > "$WORK/h26/state/icloud-notified.stamp"
+fake_bin rclone 'echo "Failed to load config file: authorization timeout" >&2; exit 1'
+rm -f "$NOTIFY_LOG"
+assert_ok 'stale-escalation reset: not-ready after a fresh success stays quiet' \
+    gatherd-icloud-sync --init-if-empty
+assert_fail 'stale-escalation reset: no notification fires once the stamp is fresh again' \
     test -s "$NOTIFY_LOG"
 
 # rclone lands in the slow AUR tier of site-async.yml, while the icloud role

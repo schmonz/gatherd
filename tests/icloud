@@ -114,8 +114,22 @@ sync_env 4; fake_rclone_ok
 mkdir -p "$WORK/h4/state/bisync/FSNotes"
 : > "$WORK/h4/state/bisync/FSNotes/icloud_FSNotes..path1.lst"
 assert_ok 'syncs when a baseline exists' gatherd-icloud-sync
+assert_ok 'a bisync actually ran' test -f "$WORK/h4/state/bisync.argv"
 assert_fail 'did not resync over an existing baseline' \
     grep -q -- --resync "$WORK/h4/state/bisync.argv"
+# The migration's whole point is behaviour identical to the fsnotes-sync it
+# replaces; pin every flag that encodes that behaviour, not just --resync.
+assert_ok 'argv carries --filters-file' grep -q -- '--filters-file' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --conflict-resolve newer' grep -q -- '--conflict-resolve newer' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --conflict-loser pathname' grep -q -- '--conflict-loser pathname' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --max-delete 10' grep -q -- '--max-delete 10' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --resilient' grep -q -- '--resilient' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --recover' grep -q -- '--recover' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --transfers 2' grep -q -- '--transfers 2' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --checkers 4' grep -q -- '--checkers 4' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --tpslimit 4' grep -q -- '--tpslimit 4' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --backup-dir1' grep -q -- '--backup-dir1' "$WORK/h4/state/bisync.argv"
+assert_ok 'argv carries --log-file' grep -q -- '--log-file' "$WORK/h4/state/bisync.argv"
 
 sync_env 5; fake_rclone_ok
 assert_ok 'first --if-due run proceeds' gatherd-icloud-sync --init-if-empty --if-due
@@ -141,6 +155,83 @@ sync_env 8; fake_rclone_ok
 : > "$WORK/h8/state/icloud-needs-reauth"
 assert_ok 'a good run clears the reauth flag' gatherd-icloud-sync --init-if-empty
 assert_fail 'reauth flag is gone' test -f "$WORK/h8/state/icloud-needs-reauth"
+
+# A corrupt/truncated/missing rclone.conf also says "Failed to load config
+# file", but unlike a locked 1Password it never recovers on its own — it must
+# take the loud path (reauth flag, notification, non-zero exit), not the
+# silent not-ready one.
+sync_env 9
+fake_bin rclone 'echo "Failed to load config file: yaml: line 4: did not find expected key" >&2; exit 1'
+assert_fail 'a corrupt config file is a real failure, not not-ready' gatherd-icloud-sync --init-if-empty
+assert_ok 'corrupt config set the reauth flag' test -f "$WORK/h9/state/icloud-needs-reauth"
+
+sync_env 10; fake_rclone_ok
+assert_fail 'plain sync mode refuses when there is no baseline' gatherd-icloud-sync
+assert_fail 'ran no bisync when refusing for lack of baseline' test -f "$WORK/h10/state/bisync.argv"
+
+sync_env 11; fake_rclone_ok
+: > "$WORK/h11/root/FSNotes/.DS_Store"
+assert_fail '--init-if-empty treats a dotfiles-only dir as populated' gatherd-icloud-sync --init-if-empty
+assert_fail 'ran no bisync when refusing for dotfiles-only dir' test -f "$WORK/h11/state/bisync.argv"
+
+# Every folder locked (nothing skipped is a failure, but nothing ran either)
+# must still leave the stamp alone — otherwise a stuck lock becomes a
+# permanent, self-renewing "nothing to do".
+sync_env 12; fake_rclone_ok
+mkdir -p "$WORK/h12/state/bisync/FSNotes" "$WORK/h12/state/locks"
+: > "$WORK/h12/state/bisync/FSNotes/icloud_FSNotes..path1.lst"
+(
+    exec 9>"$WORK/h12/state/locks/FSNotes.lock"
+    flock 9
+    : > "$WORK/h12/state/lock.held"
+    sleep 0.3
+) &
+_holder_pid=$!
+_waited=0
+while [ ! -f "$WORK/h12/state/lock.held" ] && [ "$_waited" -lt 50 ]; do
+    sleep 0.02
+    _waited=$((_waited + 1))
+done
+assert_ok 'a run where every folder is locked still exits 0' gatherd-icloud-sync
+assert_fail 'no bisync ran while every folder was locked' test -f "$WORK/h12/state/bisync.argv"
+assert_fail 'stamp is not written when nothing synced' test -f "$WORK/h12/state/icloud-sync.stamp"
+wait "$_holder_pid"
+
+# flock's exit 1 means "already locked" (skip, not a failure); any other
+# non-zero exit is a real problem (missing binary, bad fd) and must propagate.
+sync_env 13; fake_rclone_ok
+mkdir -p "$WORK/h13/state/bisync/FSNotes"
+: > "$WORK/h13/state/bisync/FSNotes/icloud_FSNotes..path1.lst"
+fake_bin flock 'exit 2'
+assert_fail 'a flock failure other than "already locked" is a real failure' gatherd-icloud-sync
+rm -f "$FAKEBIN/flock"
+
+# Concurrent bisync on one pair is how a baseline corrupts, so this guard is
+# data-integrity-critical: prove a second trigger yields instead of racing.
+sync_env 14
+fake_bin rclone 'case "$1" in
+    lsd) exit 0 ;;
+    bisync)
+        : > "$GATHERD_ICLOUD_STATE/bisync.started"
+        sleep 0.3
+        printf "%s\n" "$*" >> "$GATHERD_ICLOUD_STATE/bisync.argv"
+        exit 0 ;;
+    *) exit 0 ;;
+esac'
+mkdir -p "$WORK/h14/state/bisync/FSNotes"
+: > "$WORK/h14/state/bisync/FSNotes/icloud_FSNotes..path1.lst"
+
+gatherd-icloud-sync &
+_bg_pid=$!
+_waited=0
+while [ ! -f "$WORK/h14/state/bisync.started" ] && [ "$_waited" -lt 50 ]; do
+    sleep 0.02
+    _waited=$((_waited + 1))
+done
+assert_ok 'a second run yields to an in-progress bisync' gatherd-icloud-sync
+wait "$_bg_pid"
+assert_out 'only one bisync ran for a concurrent pair' 1 \
+    sh -c 'wc -l < "$1" | tr -d " "' _ "$WORK/h14/state/bisync.argv"
 
 unset GATHERD_ICLOUD_CONF GATHERD_ICLOUD_STATE GATHERD_ICLOUD_FILTERS \
       GATHERD_ICLOUD_BACKUPS GATHERD_ICLOUD_MIN_INTERVAL

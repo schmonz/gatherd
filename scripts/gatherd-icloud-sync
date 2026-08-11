@@ -63,14 +63,17 @@ say() {
     fi
 }
 
-# Being unable to decrypt the config is "not ready" (1Password locked, or a
-# machine that has not pulled the fleet config yet), not a failure. Silence is
-# correct: the login path retries, and nagging on every unlock trains you to
-# ignore the one notification that matters.
+# Being unable to decrypt the config because 1Password is locked is "not
+# ready" (transient — the login path retries), not a failure. Silence is
+# correct there: nagging on every unlock trains you to ignore the one
+# notification that matters. But rclone wraps EVERY config load error in the
+# same "Failed to load config file" text, including a corrupt, truncated, or
+# deleted rclone.conf — those are permanent, not transient, so only the
+# specific op/1Password error text below counts as not-ready. Anything else
+# must take the loud path.
 not_ready() {
     case $1 in
         *"password command failed"*|\
-        *"Failed to load config"*|\
         *"authorization timeout"*|\
         *"could not read secret"*) return 0 ;;
     esac
@@ -109,7 +112,7 @@ sync_folder() {
                 if dir_is_empty "$_local"; then
                     _resync=--resync
                 else
-                    say "$_folder has local files but no baseline; run: gatherd-icloud-sync --init $_folder"
+                    say "$_folder has local files but no baseline; --init lets iCloud overwrite them with no way back. Dry run first: rclone bisync $ICLOUD_REMOTE:$_folder $_local --dry-run -v"
                     return 1
                 fi
                 ;;
@@ -152,18 +155,33 @@ rm -f "$REAUTH"
 
 mkdir -p "$STATE/locks"
 rc=0
+ran=0
 for folder in $folders; do
     # The lock is held by the subshell for the whole sync_folder call and
     # released when it exits. Non-blocking on purpose: a sync already running for
     # this folder means this trigger has nothing to add, and two bisyncs on one
-    # pair is how a baseline corrupts. A skipped folder exits 0 — it is not a
-    # failure, so it must not set rc.
+    # pair is how a baseline corrupts. flock's own exit 1 means "already locked"
+    # — skip, not a failure. Any other exit (missing binary, bad fd) is a real
+    # failure and must set rc, not be swallowed the same way.
+    _ran_flag="$STATE/locks/$folder.ran"
+    rm -f "$_ran_flag"
     (
         exec 9>"$STATE/locks/$folder.lock"
-        flock -n 9 || exit 0
-        sync_folder "$folder"
+        _flock_rc=0
+        flock -n 9 || _flock_rc=$?
+        if [ "$_flock_rc" -ne 0 ]; then
+            [ "$_flock_rc" -eq 1 ] && exit 0
+            exit "$_flock_rc"
+        fi
+        sync_folder "$folder" && : > "$_ran_flag"
     ) || rc=1
+    [ -f "$_ran_flag" ] && ran=1
+    rm -f "$_ran_flag"
 done
 
-[ "$rc" -eq 0 ] && date +%s > "$STAMP"
+# Only refresh the stamp if something actually synced. Every folder skipped
+# (all locks held, or all refused) must not look like a completed run, or a
+# stuck lock — or a manifest of dead folders — becomes a permanent,
+# self-renewing "nothing to do".
+[ "$rc" -eq 0 ] && [ "$ran" -eq 1 ] && date +%s > "$STAMP"
 exit "$rc"

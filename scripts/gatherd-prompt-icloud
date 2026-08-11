@@ -13,7 +13,13 @@ set -eu
 : "${GATHERD_OP_PASSWORD_ITEM:=rclone config}"
 DEADLINE_SECS="${GATHERD_ICLOUD_DEADLINE:-300}"
 
+# op fast-tier, rclone slow-AUR-tier: on a fresh machine there is a real
+# window where op exists and rclone does not. Without this, a machine that
+# reaches this script mid-provisioning gets a false "iCloud needs
+# re-authentication" notification (from gatherd-icloud-sync's own probe
+# failing on a missing binary) instead of the quiet not-ready it deserves.
 command -v op >/dev/null 2>&1 || exit 0
+command -v rclone >/dev/null 2>&1 || exit 0
 
 _deadline=$(( $(date +%s) + DEADLINE_SECS ))
 until op item get "$GATHERD_OP_PASSWORD_ITEM" --vault "$GATHERD_OP_VAULT" >/dev/null 2>&1; do
@@ -21,7 +27,10 @@ until op item get "$GATHERD_OP_PASSWORD_ITEM" --vault "$GATHERD_OP_VAULT" >/dev/
     sleep 5
 done
 
-# Both are quiet on the paths that are merely "not ready yet", so a machine that
-# has not been bootstrapped produces no noise at every login.
-gatherd-icloud-config pull >/dev/null 2>&1 || exit 0
-gatherd-icloud-sync --init-if-empty >/dev/null 2>&1 || exit 0
+# Independent concerns, not a pipeline: a machine whose local config works but
+# is plaintext takes cmd_pull's push-delegation branch and dies on the
+# encryption guard (see note_fleet_install), which used to suppress sync
+# entirely, silently, at every login. Neither call's failure should stop the
+# other from being attempted.
+gatherd-icloud-config pull >/dev/null 2>&1 || true
+gatherd-icloud-sync --init-if-empty >/dev/null 2>&1 || true

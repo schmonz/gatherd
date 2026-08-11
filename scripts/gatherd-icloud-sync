@@ -24,6 +24,12 @@ STAMP="$STATE/icloud-sync.stamp"
 REAUTH="$STATE/icloud-needs-reauth"
 NOTIFIED="$STATE/icloud-notified.stamp"
 NOTIFY_INTERVAL=3600
+# Not a GATHERD_ICLOUD_* override, deliberately: this is an internal escalation
+# threshold, not a per-fleet tuning knob. Long enough that a laptop left with
+# 1Password locked over an ordinary weekend never trips it; short enough that a
+# permanent op misconfiguration (see not_ready's comment) surfaces within a
+# week instead of staying silent forever.
+STALE_AFTER=259200
 
 [ -r "$CONF" ] || { echo "gatherd-icloud-sync: no manifest at $CONF" >&2; exit 1; }
 # shellcheck disable=SC1090
@@ -78,6 +84,19 @@ not_ready() {
         *"could not read secret"*) return 0 ;;
     esac
     return 1
+}
+
+# Escalates a not-ready condition that has outlasted any plausible transient
+# cause. Keyed on the last actual *success*, not on how long not_ready has
+# been returning true: a machine that has never once synced is still
+# "provisioning", not "stuck", and already gets a standing bullet in
+# gatherd-post-setup-notes' Other Logins section via icloud_fleet_ok — this
+# only has to cover the machine that used to work and silently stopped.
+not_ready_is_stale() {
+    [ -f "$STAMP" ] || return 1
+    _last=$(cat "$STAMP" 2>/dev/null || echo 0)
+    _now=$(date +%s)
+    [ $((_now - _last)) -ge "$STALE_AFTER" ]
 }
 
 due() {
@@ -145,11 +164,20 @@ sync_folder() {
         esac
     fi
 
+    _log="$STATE/rclone-icloud-$_folder.log"
+
     # --max-delete here is bisync's own flag, not the global sync one: it is a
     # PERCENT safety check (bisync aborts, making no changes, if more than
     # this share of files would be deleted on either side), not a count.
     # Keep the value at 10, identical to the fsnotes-sync it replaces, so the
     # migration changes no behaviour.
+    #
+    # --log-file sends every line of rclone's own output to $_log, so nothing
+    # about a failure reaches a human by any route unless this function says
+    # so itself — the exit status has to be captured explicitly (not just
+    # left as the function's implicit return) so it can be both returned to
+    # the caller AND used to decide whether to notify.
+    _rc=0
     rclone bisync "$ICLOUD_REMOTE:$_folder" "$_local" \
         $_resync \
         --workdir "$_workdir" \
@@ -158,8 +186,29 @@ sync_folder() {
         --max-delete 10 --resilient --recover \
         --transfers 2 --checkers 4 --tpslimit 4 \
         --backup-dir2 "$BACKUPS/$_folder" \
-        --log-file "$STATE/rclone-icloud-$_folder.log" -v
+        --log-file "$_log" -v || _rc=$?
+
+    if [ "$_rc" -ne 0 ]; then
+        # A --max-delete trip is the one event this design most needs surfaced:
+        # it means a suspicious share of $_folder's files were about to be
+        # deleted and bisync refused, making no changes. rclone's own text for
+        # it ("Safety abort: too many deletes...") is stable enough to grep for
+        # rather than re-deriving the percentage ourselves.
+        if grep -q 'too many deletes' "$_log" 2>/dev/null; then
+            say "$_folder: bisync refused — too many deletes would happen (over the 10% safety limit); nothing was changed. See $_log"
+        else
+            say "$_folder: bisync failed (exit $_rc); see $_log"
+        fi
+    fi
+
+    return "$_rc"
 }
+
+# rclone is in the slow AUR tier of site-async.yml while this script (icloud
+# role, CORE) can be installed and triggered before that tier ever runs, so a
+# fresh machine has a real window with no rclone on PATH. Same "not ready"
+# shape as 1Password being locked: exit quietly, the next trigger retries.
+command -v rclone >/dev/null 2>&1 || exit 0
 
 due || exit 0
 
@@ -167,6 +216,10 @@ due || exit 0
 # than once per folder.
 if ! probe=$(rclone lsd "$ICLOUD_REMOTE:" 2>&1 >/dev/null); then
     if not_ready "$probe"; then
+        if not_ready_is_stale; then
+            say "iCloud sync has not completed in over 3 days and still looks not-ready ($probe); this may be a permanent 1Password/op problem rather than a locked vault"
+            exit 1
+        fi
         exit 0
     fi
     : > "$REAUTH"

@@ -353,6 +353,100 @@ gatherd-icloud-sync --init-if-empty >/dev/null 2>&1 || true
 assert_out 'a failure after the interval notifies again' 2 \
     sh -c 'wc -l < "$1" | tr -d " "' _ "$NOTIFY_LOG"
 
+# --log-file swallows every line rclone itself prints, and until now
+# sync_folder's own return value was never inspected for notification
+# purposes — only the up-front reachability probe ever called say(). A bisync
+# that fails partway through (not just "can't reach iCloud at all") must reach
+# a human too, naming the log a human would otherwise have no reason to check.
+sync_env 19
+fake_bin rclone 'case "$1" in
+    lsd) exit 0 ;;
+    bisync)
+        _logfile=
+        _prev=
+        for _a in "$@"; do
+            [ "$_prev" = "--log-file" ] && _logfile=$_a
+            _prev=$_a
+        done
+        echo "some generic bisync failure" >> "$_logfile"
+        exit 1 ;;
+    *) exit 0 ;;
+esac'
+mkdir -p "$WORK/h19/state/bisync/FSNotes"
+: > "$WORK/h19/state/bisync/FSNotes/icloud_FSNotes..path1.lst"
+rm -f "$NOTIFY_LOG"
+assert_fail 'a bisync failure (not just the up-front probe) is a real failure' gatherd-icloud-sync
+assert_ok 'the failure notification names the log file' \
+    grep -q "$WORK/h19/state/rclone-icloud-FSNotes.log" "$NOTIFY_LOG"
+
+# A --max-delete trip is the one event this design most needs surfaced: it
+# means a suspicious share of a folder's files were about to be deleted, and
+# bisync refused, making no changes. It must be distinguishable from a
+# generic bisync failure, not folded into the same message.
+sync_env 20
+fake_bin rclone 'case "$1" in
+    lsd) exit 0 ;;
+    bisync)
+        _logfile=
+        _prev=
+        for _a in "$@"; do
+            [ "$_prev" = "--log-file" ] && _logfile=$_a
+            _prev=$_a
+        done
+        echo "ERROR : Safety abort: too many deletes (>10%, 3 of 5) on Path2" >> "$_logfile"
+        exit 1 ;;
+    *) exit 0 ;;
+esac'
+mkdir -p "$WORK/h20/state/bisync/FSNotes"
+: > "$WORK/h20/state/bisync/FSNotes/icloud_FSNotes..path1.lst"
+rm -f "$NOTIFY_LOG"
+assert_fail 'a max-delete trip is a real failure' gatherd-icloud-sync
+assert_ok 'the max-delete notification is distinguishable from a generic failure' \
+    grep -qi 'too many deletes' "$NOTIFY_LOG"
+
+# not_ready's surviving patterns (locked 1Password) also match a PERMANENT op
+# misconfiguration, which would otherwise stay silent forever. Escalate once
+# the last actual success is stale, using a PATH with no rclone at all rather
+# than the fake, so this exercises the real command-not-found shape too.
+sync_env 21
+fake_bin rclone 'echo "Failed to load config file: authorization timeout" >&2; exit 1'
+echo $(( $(date +%s) - 400000 )) > "$WORK/h21/state/icloud-sync.stamp"
+rm -f "$NOTIFY_LOG"
+assert_fail 'not-ready escalates once the last success is stale' gatherd-icloud-sync --init-if-empty
+assert_ok 'the stale-escalation notification fires' test -s "$NOTIFY_LOG"
+
+sync_env 22
+fake_bin rclone 'echo "Failed to load config file: authorization timeout" >&2; exit 1'
+echo $(( $(date +%s) - 100 )) > "$WORK/h22/state/icloud-sync.stamp"
+rm -f "$NOTIFY_LOG"
+assert_ok 'not-ready stays silent while the last success is recent' gatherd-icloud-sync --init-if-empty
+assert_fail 'no notification fires for a fresh not-ready condition' test -s "$NOTIFY_LOG"
+
+sync_env 23
+fake_bin rclone 'echo "Failed to load config file: authorization timeout" >&2; exit 1'
+rm -f "$NOTIFY_LOG"
+assert_ok 'a machine that has never once synced is never treated as stale' gatherd-icloud-sync --init-if-empty
+assert_fail 'no notification fires for a never-synced machine (covered separately by post-setup-notes)' \
+    test -s "$NOTIFY_LOG"
+
+# rclone lands in the slow AUR tier of site-async.yml, while the icloud role
+# (CORE) can install and trigger this script well before that tier ever runs.
+# Prove the guard with rclone genuinely absent from PATH, not just unfaked —
+# a bare `rm` of the fake would fall through to this machine's real rclone
+# and its real ~/.config/rclone/rclone.conf, which these tests must never
+# touch. NO_RCLONE_BIN holds symlinks to every other external command this
+# script calls, so excluding the real PATH here doesn't break anything else.
+sync_env 24
+NO_RCLONE_BIN="$WORK/no-rclone-bin"
+mkdir -p "$NO_RCLONE_BIN"
+for _tool in cat date find flock grep ls mkdir rm; do
+    ln -sf "$(command -v "$_tool")" "$NO_RCLONE_BIN/$_tool"
+done
+ln -sf "$FAKEBIN/notify-send" "$NO_RCLONE_BIN/notify-send"
+assert_ok 'exits quietly when rclone is not on PATH at all' \
+    env PATH="$NO_RCLONE_BIN:$REPO/scripts" gatherd-icloud-sync --init-if-empty
+assert_fail 'attempted no bisync with rclone absent' test -f "$WORK/h24/state/bisync.argv"
+
 unset GATHERD_ICLOUD_CONF GATHERD_ICLOUD_STATE GATHERD_ICLOUD_FILTERS \
       GATHERD_ICLOUD_BACKUPS GATHERD_ICLOUD_MIN_INTERVAL
 
@@ -830,6 +924,38 @@ fake_bin gatherd-icloud-config 'echo "config $*" >> "$PROMPT_TRACE"'
 fake_bin gatherd-icloud-sync   'echo "sync $*" >> "$PROMPT_TRACE"'
 assert_ok 'prompt runs once 1Password answers' gatherd-prompt-icloud
 assert_out 'prompt pulled then synced' 'config pull
+sync --init-if-empty' cat "$P/trace"
+
+# op is in the fast 1password-cli tier while rclone sits in the slow AUR tier
+# of site-async.yml, so a fresh machine has a real window where op works and
+# rclone does not. Reproduce with rclone genuinely absent from PATH (not just
+# unfaked — a bare `rm` would fall through to this machine's real rclone) so
+# this exercises the actual command-not-found shape.
+prompt_env 3
+fake_bin op 'exit 0'
+fake_bin gatherd-icloud-config 'echo "config $*" >> "$PROMPT_TRACE"'
+fake_bin gatherd-icloud-sync   'echo "sync $*" >> "$PROMPT_TRACE"'
+NO_RCLONE_BIN="$P/no-rclone-bin"
+mkdir -p "$NO_RCLONE_BIN"
+for _tool in date sleep; do
+    ln -sf "$(command -v "$_tool")" "$NO_RCLONE_BIN/$_tool"
+done
+rm -f "$FAKEBIN/rclone"
+assert_ok 'prompt exits quietly when rclone is not yet installed' \
+    env PATH="$FAKEBIN:$NO_RCLONE_BIN:$REPO/scripts" gatherd-prompt-icloud
+assert_fail 'prompt did no work without rclone' test -f "$P/trace"
+fake_bin rclone 'exit 0'
+
+# pull and sync are independent concerns, not a pipeline: a machine whose
+# local config works but is plaintext takes cmd_pull's push-delegation branch
+# and dies on the encryption guard, which used to suppress sync entirely,
+# silently, at every login.
+prompt_env 4
+fake_bin op 'exit 0'
+fake_bin gatherd-icloud-config 'echo "config $*" >> "$PROMPT_TRACE"; exit 1'
+fake_bin gatherd-icloud-sync   'echo "sync $*" >> "$PROMPT_TRACE"'
+assert_ok 'prompt still exits 0 when pull fails' gatherd-prompt-icloud
+assert_out 'sync still runs when pull fails' 'config pull
 sync --init-if-empty' cat "$P/trace"
 
 unset GATHERD_ICLOUD_DEADLINE PROMPT_TRACE

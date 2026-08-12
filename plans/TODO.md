@@ -47,6 +47,43 @@
 
 ## Backlog (uncategorized)
 
+- **PIA kills the Tailscale-backed NFS mount on a CGNAT network.** Connecting PIA
+  makes `~/.autofs-mounts/code` (NFS over Tailscale from `ap-juicer`) return EIO,
+  so any worktree living there becomes unreadable mid-session — `bash: <script>:
+  Input/output error`. The mount is `soft,timeo=15,retrans=3`, so it fails fast
+  instead of hanging, which is why it surfaces as EIO rather than a freeze.
+  Diagnosed 2026-08-11 while trying to run a probe over a second egress IP.
+  - **Not a routing problem.** `ip rule` is byte-identical before and after
+    connecting; the route to the NAS stays `100.66.57.125 dev tailscale0 table 52`;
+    general traffic correctly moves to `tun0`. `ping -I tailscale0 <nas>` goes from
+    99ms to `100% packet loss, +1 errors` — an ICMP *rejection*, i.e. a firewall.
+  - **Root cause is that this WiFi is itself CGNAT-addressed** (`100.115.239.97/19`,
+    gateway `100.115.224.1` — inside `100.64.0.0/10`), and *both* layers refuse to
+    trust a local network in that range:
+    - PIA's killswitch exempts `piavpn.300.allowLAN` (RFC1918 + link-local) and
+      `piavpn.305.allowSubnets`. A CGNAT-addressed WiFi is not RFC1918, so
+      "Allow LAN" (which is on) does not cover it. Tailscale's transport packets
+      carry fwmark `0x80000`, which rules 5210/5230 send to `main` — out `wlan0`,
+      bypassing the tunnel and landing in PIA's `blockAll` with no exemption.
+    - Tailscale's own anti-spoof rules are `-A ts-input -s 100.64.0.0/10
+      ! -i tailscale0 -j DROP` with a single exemption for `100.115.92.0/23` —
+      a *different* subnet from the current `100.115.224.0/19`, evidently left over
+      from another network. So Tailscale also drops this WiFi's own traffic.
+  - **Caveat on the evidence:** the capture truncated PIA's chain *contents*
+    (`iptables -S | head -60` showed the `-N` declarations and one `-A`), so the
+    specific rule doing the rejecting is inferred from the chain names and the
+    ICMP-error signature, not directly observed. Re-run without the `head` before
+    committing to a fix.
+  - **Options, unresolved:** (a) PIA split tunnel bypassing `100.64.0.0/10` — the
+    GUI has IP rules, `piactl` does not expose them; (b) drop PIA for this and use
+    `ap-juicer`'s Tailscale exit node, which already exists, when a different egress
+    is all that's wanted; (c) accept that PIA and NFS-backed worktrees are mutually
+    exclusive and keep a local checkout for PIA-requiring work. (b) is probably
+    right for the common case.
+  - The stale `ts-input` exemption is worth reporting upstream or filing separately:
+    on any CGNAT-addressed network, Tailscale drops legitimate local traffic unless
+    its exemption happens to match the current subnet.
+
 - **No swap / no hibernate on the Chuwi (check other installs too)**: the
   MiniBook X repave came up with NO swap at all — `/proc/swaps` empty, nothing
   in fstab, no swapfile, no `resume=` on the kernel cmdline — so it cannot

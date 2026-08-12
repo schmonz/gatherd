@@ -75,12 +75,15 @@ doc_exists() { doc_get >/dev/null 2>&1; }
 # redirected regular file rather than a pipe — op's own example pipes into it.
 # --file-name pins the stored filename so it does not vary with $RCLONE_CONFIG.
 doc_put() {
+    # op prints the new item's JSON on success; the caller says what happened in
+    # its own words, so discard it rather than mixing machine output into a
+    # human-facing command.
     if doc_exists; then
         op document edit "$GATHERD_OP_DOCUMENT" "$1" \
-            --vault "$GATHERD_OP_VAULT" --file-name "$GATHERD_OP_DOCUMENT"
+            --vault "$GATHERD_OP_VAULT" --file-name "$GATHERD_OP_DOCUMENT" >/dev/null
     else
         op document create "$1" --title "$GATHERD_OP_DOCUMENT" \
-            --vault "$GATHERD_OP_VAULT" --file-name "$GATHERD_OP_DOCUMENT"
+            --vault "$GATHERD_OP_VAULT" --file-name "$GATHERD_OP_DOCUMENT" >/dev/null
     fi
 }
 

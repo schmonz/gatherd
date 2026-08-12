@@ -557,16 +557,23 @@ cfg_env() {
     unset GATHERD_ICLOUD_REMOTE RCLONE_PASSWORD_COMMAND RCLONE_CALL_LOG RCLONE_CONFIG_SHOW_LOCKED
 }
 
-# op fake: documents are files under $FAKE_OP_DIR.
+# op fake: documents are files under $FAKE_OP_DIR. Deliberately strict about how
+# the file is handed over — an earlier version accepted the contents on stdin,
+# which the real op does not, so every upload assertion passed against a call
+# that failed the moment it met a real vault.
 fake_op_docs() {
     fake_bin op 'case "$1 $2" in
     "document get")
         [ -f "$FAKE_OP_DIR/doc" ] || { echo "not found" >&2; exit 1; }
         cat "$FAKE_OP_DIR/doc" ;;
     "document create")
-        cat > "$FAKE_OP_DIR/doc" ;;
+        if [ "$3" = "-" ]; then echo "expected data on stdin but none found" >&2; exit 1; fi
+        [ -f "$3" ] || { echo "no such file: $3" >&2; exit 1; }
+        cat "$3" > "$FAKE_OP_DIR/doc" ;;
     "document edit")
-        cat > "$FAKE_OP_DIR/doc" ;;
+        if [ "$4" = "-" ]; then echo "expected data on stdin but none found" >&2; exit 1; fi
+        [ -f "$4" ] || { echo "no such file: $4" >&2; exit 1; }
+        cat "$4" > "$FAKE_OP_DIR/doc" ;;
     "item get")
         [ -f "$FAKE_OP_DIR/pw" ] || { echo "not found" >&2; exit 1; } ;;
     "item create")

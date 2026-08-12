@@ -70,11 +70,17 @@ trap 'rm -rf "$TMP"; exit 130' INT TERM HUP
 
 doc_get()    { op document get "$GATHERD_OP_DOCUMENT" --vault "$GATHERD_OP_VAULT"; }
 doc_exists() { doc_get >/dev/null 2>&1; }
+# Hand op the path, not the contents. The documented stdin form ("-" plus a
+# redirect) reports "expected data on stdin but none found" when stdin is a
+# redirected regular file rather than a pipe — op's own example pipes into it.
+# --file-name pins the stored filename so it does not vary with $RCLONE_CONFIG.
 doc_put() {
     if doc_exists; then
-        op document edit "$GATHERD_OP_DOCUMENT" --vault "$GATHERD_OP_VAULT" - < "$1"
+        op document edit "$GATHERD_OP_DOCUMENT" "$1" \
+            --vault "$GATHERD_OP_VAULT" --file-name "$GATHERD_OP_DOCUMENT"
     else
-        op document create - --title "$GATHERD_OP_DOCUMENT" --vault "$GATHERD_OP_VAULT" < "$1"
+        op document create "$1" --title "$GATHERD_OP_DOCUMENT" \
+            --vault "$GATHERD_OP_VAULT" --file-name "$GATHERD_OP_DOCUMENT"
     fi
 }
 

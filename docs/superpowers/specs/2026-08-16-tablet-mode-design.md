@@ -346,6 +346,34 @@ puts `iio:device0` in the lid — gravity split evenly across two axes with the
 lid tilted back — and `iio:device1` in the base, reading almost entirely on one
 axis with the machine flat. This must be confirmed, not assumed.
 
+The principle is confirmed working on this hardware: with the lid at a normal
+typing angle, the two gravity vectors sit 72.2° apart, implying a hinge angle of
+107.8°. Calibration is still required because nothing about the geometry can be
+derived from theory — both mount matrices falsely report identity, both sensors
+carry zero-offset error (1.07 g and 1.23 g at rest), and whether hinge angle is
+the supplement of the vector angle depends on mounting.
+
+### The degenerate pose
+
+**The method goes blind when the hinge axis is parallel to gravity.** Rotating
+two bodies about a vertical axis changes neither sensor's reading, so the angle
+between them stops encoding the fold.
+
+This is not a corner case here — it is close to the piano pose. Reading portrait
+puts the hinge on a vertical edge, so a machine held upright as a portrait tablet
+is exactly where detection fails.
+
+Two consequences for the daemon:
+
+- It must detect the degenerate geometry (gravity near-parallel to the hinge
+  axis) and **hold its last state** rather than threshold-crossing on noise. The
+  normal path still works: the fold happens while the machine is roughly
+  horizontal, where the angle reads cleanly, and the state persists as it is
+  stood up.
+- The **manual toggle stays the primary control**, with the daemon a
+  convenience. This is why phase 1 ships first and stands alone, rather than
+  being scaffolding for phase 2.
+
 ## Deferred: the `LTSM` firmware path
 
 `rhalkyard/minibook-dual-accelerometer` drives the `LTSM` ACPI method through a

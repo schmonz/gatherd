@@ -211,8 +211,9 @@ there is no type-to-filter**, so selection is pure finger-scrolling. One flat
 ordering makes the common case two taps with no scrolling at all.
 
 **MRU state** is a single file, `~/.local/state/gatherd/music-stand-scores`,
-holding `<composer>\t<filename>` lines in the same prepend / dedupe / cap
-pattern as `gatherd-remmina-connect`. One file serves both levels: composer
+holding `<composer>\t<title>\t<filename>` lines — the same three columns as the
+index, so neither level needs a second lookup — in the same prepend / dedupe /
+cap pattern as `gatherd-remmina-connect`. One file serves both levels: composer
 recency is the first appearance of each composer, score recency the order within
 it. Two separate MRU files could disagree with each other; one cannot.
 
@@ -285,8 +286,21 @@ are actually true on the hardware.
 ```yaml
 music_stand_root: "{{ target_home }}/Documents/forscore"
 music_stand_viewer: papers            # xreader is the zero-cost fallback
-tablet_mode_transform: 90             # or 270; see open questions
+tablet_mode_transform: normal         # or 180; see open questions
 ```
+
+**The resting transform on this machine is `90`, not `normal`.** wlroots reads
+the DRM panel-orientation quirk that `rotated_panel.yml` sets and applies a 90°
+transform itself, so upright landscape *is* transform 90 here. Measured:
+
+| transform | logical size | |
+|---|---|---|
+| `90` | 1371×857 | landscape — the resting state |
+| `normal` | 857×1371 | **portrait** |
+| `180` | 857×1371 | portrait, inverted |
+
+This is exactly why `gatherd-tablet-mode off` restores the *recorded* transform
+rather than hardcoding `normal`: hardcoding it would leave the machine sideways.
 
 The viewer is a variable, not a hardcode, precisely because its touch behaviour
 is unverified.
@@ -433,11 +447,13 @@ gatherd-tablet-mode status; echo $?          # 1 (inactive)
 
 # Mechanism
 gatherd-tablet-mode on
-swaymsg -t get_outputs | jq -r '.[0].transform'          # 90
+swaymsg -t get_outputs | jq -r '.[0] | "\(.transform) \(.rect.width)x\(.rect.height)"'
+                                                          # normal 857x1371
 swaymsg -t get_inputs | jq -r '.[] | select(.identifier | startswith("1:1:")) | .libinput.send_events'
                                                           # disabled
 gatherd-tablet-mode off
-swaymsg -t get_outputs | jq -r '.[0].transform'          # normal
+swaymsg -t get_outputs | jq -r '.[0] | "\(.transform) \(.rect.width)x\(.rect.height)"'
+                                                          # 90 1371x857
 swaymsg -t get_inputs | jq -r '.[] | select(.identifier | startswith("1:1:")) | .libinput.send_events'
                                                           # enabled
 
@@ -458,8 +474,9 @@ confirm a one-finger drag scrolls the score.
 
 ## Open questions
 
-- **Rotation direction** — `90` or `270`, depending which way the machine folds
-  and which edge ends up at the top. Settled by one test; a variable regardless.
+- **Rotation direction** — `normal` or `180`. Both are measured portrait; which
+  one reads right-side-up depends on which edge ends up at the top when folded.
+  Settled by looking at it once; a variable regardless.
 - **`papers` touch-drag** — cannot be verified without a finger on the glass.
   If it disappoints, `music_stand_viewer: xreader` costs nothing.
 - **Hinge sign convention and threshold** — phase 2 only. The geometry is

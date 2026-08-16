@@ -340,36 +340,65 @@ Same spec, second phase, once phase 1 is proven.
    `has_rotated_panel`. The offset is the reason a stock tool cannot simply be
    installed.
 
-Calibration constants come from a probe run that samples both accelerometers at
-known hinge positions (closed, 90°, 120°, 180°, 270°, 360°). Evidence so far
-puts `iio:device0` in the lid — gravity split evenly across two axes with the
-lid tilted back — and `iio:device1` in the base, reading almost entirely on one
-axis with the machine flat. This must be confirmed, not assumed.
+### Calibration, measured
 
-The principle is confirmed working on this hardware: with the lid at a normal
-typing angle, the two gravity vectors sit 72.2° apart, implying a hinge angle of
-107.8°. Calibration is still required because nothing about the geometry can be
-derived from theory — both mount matrices falsely report identity, both sensors
-carry zero-offset error (1.07 g and 1.23 g at rest), and whether hinge angle is
-the supplement of the vector angle depends on mounting.
+A 30-second hand-held sweep through the full hinge range settled the geometry.
+The angle between the two gravity vectors swung **164.1°**, which establishes
+that one sensor really is in the lid — the concern that both might sit in the
+base, which the bus topology had suggested, is disproved.
+
+**The hinge axis is `y` in both sensor frames.** Gravity's component along the
+hinge axis is preserved across a hinge, and exactly one axis behaves that way:
+
+| Axis | mean \|device0 − device1\| (1 g = 1024) |
+|---|---|
+| x | 518.8 |
+| **y** | **12.6** |
+| z | 665.4 |
+
+**The unsigned angle between the vectors is not usable.** It is symmetric about
+φ = 180°, so it reads identically at 90° and 270°, and identically closed and
+fully folded — it cannot distinguish laptop from tablet, which is the only
+question being asked. The daemon must take the **signed** rotation about the
+hinge axis, projecting both vectors onto the x–z plane:
+
+```
+θ = atan2(a0.x·a1.z − a0.z·a1.x,  a0.x·a1.x + a0.z·a1.z)
+φ = 180° − θ            # hinge angle, 0°=closed … 180°=flat … 360°=folded
+```
+
+Validated against the sweep: flat-open reads φ = 179.9° with both magnitudes at
+1.01 g, a normal typing angle reads φ = 107.8°, and the folded-past-flat samples
+come back as φ = 204.8°, 238.8° and 259.9° — the half of the range the unsigned
+angle collapses onto the other.
+
+**Reject contaminated samples.** These sensors measure all acceleration, not
+just gravity; 6 of 16 sampled points in a hand-held sweep had magnitudes outside
+1 g by more than 15%. Discard any sample where either magnitude deviates from
+1 g by more than ~15%, rather than feeding it to `atan2`.
+
+Still to pin down in a controlled run, since a hand-held sweep cannot: the sign
+convention (whether folding back drives φ toward 360° or toward 0°), and where
+the tablet threshold and its hysteresis band belong.
 
 ### The degenerate pose
 
 **The method goes blind when the hinge axis is parallel to gravity.** Rotating
-two bodies about a vertical axis changes neither sensor's reading, so the angle
-between them stops encoding the fold.
+two bodies about a vertical axis changes neither sensor's reading, so nothing
+encodes the fold.
 
 This is not a corner case here — it is close to the piano pose. Reading portrait
 puts the hinge on a vertical edge, so a machine held upright as a portrait tablet
 is exactly where detection fails.
 
-Two consequences for the daemon:
+The measured hinge axis makes the test concrete rather than hand-wavy: when
+`√(aₓ² + a_z²)` is small relative to `|a|`, gravity lies along the hinge axis and
+the projection carries no signal. Two consequences for the daemon:
 
-- It must detect the degenerate geometry (gravity near-parallel to the hinge
-  axis) and **hold its last state** rather than threshold-crossing on noise. The
-  normal path still works: the fold happens while the machine is roughly
-  horizontal, where the angle reads cleanly, and the state persists as it is
-  stood up.
+- On detecting that geometry it must **hold its last state** rather than
+  threshold-crossing on noise. The normal path still works: the fold happens
+  while the machine is roughly horizontal, where the angle reads cleanly, and the
+  state persists as it is stood up.
 - The **manual toggle stays the primary control**, with the daemon a
   convenience. This is why phase 1 ships first and stands alone, rather than
   being scaffolding for phase 2.
@@ -433,7 +462,10 @@ confirm a one-finger drag scrolls the score.
   and which edge ends up at the top. Settled by one test; a variable regardless.
 - **`papers` touch-drag** — cannot be verified without a finger on the glass.
   If it disappoints, `music_stand_viewer: xreader` costs nothing.
-- **Hinge calibration** — phase 2 only; needs the probe run.
+- **Hinge sign convention and threshold** — phase 2 only. The geometry is
+  measured (hinge axis `y`, signed-angle formula, 164° swing confirming a lid
+  sensor); what remains is a controlled run to fix whether folding back drives
+  φ toward 360° or 0°, and to place the tablet threshold and hysteresis band.
 
 ## Repave cadence
 

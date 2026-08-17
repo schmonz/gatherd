@@ -175,6 +175,38 @@
     has_rotated_panel: true
   when: ansible_facts.product_name | default('') == 'MiniBook X'
 
+# A convertible is not identifiable from DMI here: the MiniBook X reports
+# chassis_type 10 (Notebook), not 31 (Convertible). Touchscreen plus
+# accelerometer is the honest proxy — a laptop with both is a convertible or a
+# tablet in practice.
+- name: Check for a touchscreen input device
+  ansible.builtin.shell: |
+    set -o pipefail
+    for d in /dev/input/event*; do
+      udevadm info "$d" 2>/dev/null | grep -q "ID_INPUT_TOUCHSCREEN=1" && { echo true; exit 0; }
+    done
+    echo false
+  args:
+    executable: /bin/bash
+  register: _touchscreen
+  changed_when: false
+
+- name: Detect has_touchscreen
+  ansible.builtin.set_fact:
+    has_touchscreen: true
+  when: _touchscreen.stdout == 'true'
+
+- name: Check for an IIO accelerometer
+  ansible.builtin.shell: |
+    ls /sys/bus/iio/devices/*/in_accel_x_raw >/dev/null 2>&1 && echo true || echo false
+  register: _accelerometer
+  changed_when: false
+
+- name: Detect has_accelerometer
+  ansible.builtin.set_fact:
+    has_accelerometer: true
+  when: _accelerometer.stdout == 'true'
+
 # >= 8 GB RAM → skip zswap.
 - name: Detect has_plenty_of_ram
   ansible.builtin.set_fact:
@@ -389,8 +421,10 @@
     has_phantom_second_display: "{{ has_phantom_second_display }}"
     has_plenty_of_ram: "{{ has_plenty_of_ram }}"
     has_rotated_panel: "{{ has_rotated_panel }}"
+    has_accelerometer: "{{ has_accelerometer }}"
     has_avx: "{{ has_avx }}"
     has_screen_backlight: "{{ has_screen_backlight }}"
+    has_touchscreen: "{{ has_touchscreen }}"
     has_thinkpad_hardware: "{{ has_thinkpad_hardware }}"
     has_thinkpad_trackpoint: "{{ has_thinkpad_trackpoint }}"
     is_aarch64: "{{ is_aarch64 }}"

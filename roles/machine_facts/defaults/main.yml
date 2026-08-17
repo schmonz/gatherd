@@ -24,6 +24,8 @@ has_avx: false
 has_screen_backlight: false
 has_thinkpad_hardware: false
 has_thinkpad_trackpoint: false
+has_accelerometer: false
+has_touchscreen: false
 is_aarch64: "{{ ansible_facts['architecture'] == 'aarch64' }}"
 foot_font_size: 14
 sway_output_scale: "1"

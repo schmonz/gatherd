@@ -1152,10 +1152,21 @@ At the end of `roles/desktop/tasks/core.yml`, after the `Configure the Remmina V
 Run: `ansible-lint`
 Expected: no new findings. Fix any rather than adding `noqa`.
 
-- [ ] **Step 8: Verify the package tier check still passes**
+- [ ] **Step 8: Verify the package tier check reports nothing new**
 
 Run: `scripts/gatherd-check-package-tiers .`
-Expected: exit `0`. Confirm with `echo $?`. `core_packages` must still be `[]`.
+
+Expected: exit `1`, with exactly one violation, **pre-existing and unrelated to this
+feature**:
+
+```
+roles/hardware/tasks/grub_background.yml: community.general.pacman: libjpeg-turbo
+```
+
+Confirm it is unchanged from before your work rather than assuming — check out the
+task's base commit into a temporary worktree and run the same script there. The
+requirement is that this task adds no *new* violation, and that `core_packages` is
+still `[]`. Do not fix the `libjpeg-turbo` classification; it is out of scope.
 
 - [ ] **Step 9: Commit**
 

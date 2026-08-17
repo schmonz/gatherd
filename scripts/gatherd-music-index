@@ -73,6 +73,18 @@ def rows(root):
         return []
     out = []
     for name in names:
+        # The filename is reused verbatim downstream as the path a later
+        # script opens the score by; a tab or newline can't survive the TSV
+        # round-trip (extra column / extra line), and rewriting it would just
+        # point at a path that doesn't exist. Skip rather than corrupt the
+        # picker, and say so on stderr since the score silently vanishing
+        # would be worse.
+        if "\t" in name or "\n" in name:
+            print(
+                f"gatherd-music-index: skipping {name!r}: filename contains a tab or newline",
+                file=sys.stderr,
+            )
+            continue
         entry = meta.get(name, {})
         composer = clean(entry.get("composer", "")) or "Unknown"
         title = clean(entry.get("title", "")) or name[:-4]
@@ -86,16 +98,22 @@ def main(argv):
     root = default_root()
     lines = ["\t".join(r) for r in rows(root)]
     body = "".join(line + "\n" for line in lines)
+    # os.listdir surrogate-escapes any non-UTF-8 bytes in a filename into the
+    # str it returns. Those are real files on disk, not garbage, and the
+    # downstream reader is awk/sh which is byte-transparent — so encode with
+    # surrogateescape and write bytes rather than letting the default strict
+    # text encoder raise UnicodeEncodeError on them.
+    data = body.encode("utf-8", errors="surrogateescape")
 
     if "--print" in argv[1:]:
-        sys.stdout.write(body)
+        sys.stdout.buffer.write(data)
         return 0
 
     path = index_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as handle:
-        handle.write(body)
+    with open(tmp, "wb") as handle:
+        handle.write(data)
     os.replace(tmp, path)
     return 0
 

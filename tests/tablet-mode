@@ -192,5 +192,81 @@ printf 'not a backup' > "$SCORES/Automatic Backup.4sb"
 assert_ok 'a corrupt backup does not crash' gatherd-music-index --print
 mv "$WORK/backup.bak" "$SCORES/Automatic Backup.4sb"
 
+# Malformed filenames get their own directory, separate from $SCORES, so they
+# don't perturb the row-count assertions above.
+OLD_MUSIC_STAND_ROOT="$MUSIC_STAND_ROOT"
+
+BADTAB="$WORK/badtab"
+mkdir -p "$BADTAB"
+python3 - "$BADTAB" <<'PY'
+import os, sys
+d = sys.argv[1]
+open(os.path.join(d, "Aardvark.pdf"), "w").close()
+open(os.path.join(d, "Bad\tName.pdf"), "w").close()
+open(os.path.join(d, "Zebra.pdf"), "w").close()
+PY
+
+MUSIC_STAND_ROOT="$BADTAB"
+export MUSIC_STAND_ROOT
+
+if TABOUT=$(gatherd-music-index --print 2>"$WORK/badtab.err"); then
+    ok 'a tab in a filename does not fail the run'
+else
+    bad 'a tab in a filename does not fail the run'
+fi
+
+if printf '%s\n' "$TABOUT" | grep -qF 'Bad'; then
+    bad 'a filename containing a tab is skipped, not sanitized into the output'
+else
+    ok 'a filename containing a tab is skipped, not sanitized into the output'
+fi
+
+assert_out 'the other scores still come through intact with 3 columns' \
+    'Unknown	Aardvark	Aardvark.pdf
+Unknown	Zebra	Zebra.pdf' \
+    gatherd-music-index --print
+
+if [ -s "$WORK/badtab.err" ]; then
+    ok 'skipping the tab-named file warns on stderr'
+else
+    bad 'skipping the tab-named file warns on stderr'
+fi
+
+BADUTF8="$WORK/badutf8"
+mkdir -p "$BADUTF8"
+python3 - "$BADUTF8" <<'PY'
+import os, sys
+d = sys.argv[1]
+open(os.path.join(d, "Clean.pdf"), "w").close()
+open(os.path.join(d.encode(), b"bad\xffName.pdf"), "w").close()
+PY
+
+MUSIC_STAND_ROOT="$BADUTF8"
+export MUSIC_STAND_ROOT
+
+if gatherd-music-index --print >"$WORK/badutf8.out" 2>"$WORK/badutf8.err"; then
+    ok 'a non-UTF-8 filename does not crash the script'
+else
+    bad 'a non-UTF-8 filename does not crash the script'
+fi
+
+if python3 - "$BADUTF8" "$WORK/badutf8.out" <<'PY'
+import os, sys
+d, outpath = sys.argv[1], sys.argv[2]
+with open(outpath, "rb") as f:
+    lines = [l for l in f.read().split(b"\n") if l]
+names = sorted(l.split(b"\t")[-1] for l in lines)
+expected = sorted(os.listdir(d.encode()))
+sys.exit(0 if (names == expected and len(lines) == 2) else 1)
+PY
+then
+    ok 'the non-UTF-8 filename round-trips byte-exact and both scores appear'
+else
+    bad 'the non-UTF-8 filename round-trips byte-exact and both scores appear'
+fi
+
+MUSIC_STAND_ROOT="$OLD_MUSIC_STAND_ROOT"
+export MUSIC_STAND_ROOT
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

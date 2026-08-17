@@ -394,7 +394,7 @@ independently, each free to refresh and rewrite its own file.
 | **T1** Copy authenticates | `RCLONE_CONFIG=<shadow> rclone lsd icloud:` succeeds alongside the real one | **PASS** 2026-08-11 |
 | **T2** Concurrent use | Repeated simultaneous operations from both; neither errors, neither is forced to re-auth | **PASS** — 10 rounds, neither config rotated |
 | **T3** Divergent egress | T2 again with the shadow's traffic over PIA, so the sessions arrive from different public IPs | **PASS** with PIA connected; see caveat below |
-| **T4** Refresh/rotation | Both copies exercised on a cadence for 1–2 weeks: does rclone rewrite either config, does one side's refresh kill the other | open — not blocking |
+| **T4** Refresh/rotation | Both copies exercised on a cadence for 1–2 weeks: does rclone rewrite either config, does one side's refresh kill the other | **retired unrun** 2026-08-17 |
 | **T5** Self-healing | Stale-ify one copy's session; confirm `gatherd-icloud-config pull` restores it from the fleet copy with no 2FA | **PASS** 2026-08-17 |
 
 **R1 is answered: shared session tokens hold.** T1/T2 passed cleanly and T3 passed
@@ -422,10 +422,18 @@ may key on source IP, and PIA supplies a second egress without a second computer
 VM would add hostname and MAC divergence, which the iCloud session layer is unlikely to
 observe — not worth the setup unless T1–T3 come back ambiguous.
 
-**Sequencing: do not block on T4.** Run T1–T3 and T5 in an afternoon; let T4 accumulate
-in the background while implementation proceeds. T4 piggybacks on the unlock trigger from
-§6.1 — the shadow syncs on unlock and appends a timestamped line to its own log, so
-evidence gathers without attention. Remove the shadow once T4 concludes.
+**T4 was retired without running, 2026-08-17.** The plan had it ride along on the
+unlock trigger, but that temporary hook was never added to
+`gtklock-config.ini.j2`, so no evidence ever accumulated. Once T1–T3 and T5 passed,
+R1 was answered and T4 could only have refined *how often* re-auth comes due — not
+whether the design works. Against that, the rig kept a **second copy of the encrypted
+config on disk** (`~/.local/state/gatherd/icloud-shadow/rclone.conf`), which is real
+exposure for a speculative measurement. `tests/icloud-shadow` and that directory are
+both deleted.
+
+If the question ever becomes live again — a machine mysteriously needing frequent
+2FA — the cheap version is to watch `icloud-needs-reauth` and the rclone logs on real
+machines, which cost nothing and duplicate no credentials.
 
 ### 11.2 Remaining tests
 

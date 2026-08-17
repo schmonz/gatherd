@@ -65,6 +65,13 @@ case "\$1" in
     esac ;;
   output)
     printf '%s\n' "\$*" >> "\$WORK/swaymsg.log"
+    # Mirrors two real failures this suite must survive: `swaymsg output
+    # DSI-1 transform null` genuinely exits 2 on this hardware, and
+    # \$WORK/fail-transform lets a test simulate any other compositor error
+    # on an otherwise-valid transform.
+    if [ "\$3" = transform ] && { [ "\$4" = null ] || [ -f "\$WORK/fail-transform" ]; }; then
+        exit 2
+    fi
     printf '%s' "\$4" > "\$WORK/transform" ;;
   input)
     printf '%s\n' "\$*" >> "\$WORK/swaymsg.log" ;;
@@ -141,6 +148,58 @@ gatherd-tablet-mode off >/dev/null 2>&1 || true
 # ── bad usage ─────────────────────────────────────────────────────────────────
 
 assert_fail 'unknown subcommand fails' gatherd-tablet-mode wibble
+
+# ── off: invalid or lost state must not strand input ─────────────────────────
+# turn_off is the safety-critical half — once the keyboard is disabled, it is
+# the only way back. These prove it degrades safely even when the recorded
+# transform can't be trusted, or the compositor itself rejects the rotation.
+
+reset_log
+assert_ok 'on succeeds before the invalid-transform case' gatherd-tablet-mode on
+# Reproduces the historical bug: the record site's jq had no `// empty`
+# guard, so a missing .transform wrote the literal string "null".
+printf 'null' > "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
+_before_transform=$(cat "$WORK/transform")
+reset_log
+assert_ok 'off with an invalid recorded transform still succeeds' gatherd-tablet-mode off
+assert_out 'an invalid recorded transform is left untouched, not rotated' \
+    "$_before_transform" cat "$WORK/transform"
+if log_has 'transform null'; then
+    bad 'off never issues a bogus "transform null"'
+else
+    ok 'off never issues a bogus "transform null"'
+fi
+if log_has 'input 1:1:AT_Translated_Set_2_keyboard events enabled'; then
+    ok 'off re-enables the keyboard even with an invalid recorded transform'
+else
+    bad 'off re-enables the keyboard even with an invalid recorded transform'
+fi
+if log_has 'input type:touchpad events enabled'; then
+    ok 'off re-enables the touchpad even with an invalid recorded transform'
+else
+    bad 'off re-enables the touchpad even with an invalid recorded transform'
+fi
+assert_fail 'off clears the state file even with an invalid recorded transform' \
+    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
+
+# Ordering: input must be restored even when the rotation call itself fails
+# (confirmed on hardware: `swaymsg output DSI-1 transform null` exits 2). This
+# is the assertion that catches a regression back to rotate-then-restore.
+printf '90' > "$WORK/transform"
+reset_log
+assert_ok 'on succeeds before the failed-rotation case' gatherd-tablet-mode on
+touch "$WORK/fail-transform"
+reset_log
+assert_ok 'off succeeds even when the compositor rejects the transform' gatherd-tablet-mode off
+if log_has 'input 1:1:AT_Translated_Set_2_keyboard events enabled'; then
+    ok 'input is re-enabled even when the rotation call fails'
+else
+    bad 'input is re-enabled even when the rotation call fails'
+fi
+assert_fail 'the state file is cleared even when the rotation call fails' \
+    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
+rm -f "$WORK/fail-transform"
+printf '90' > "$WORK/transform"
 
 # ── gatherd-music-index ────────────────────────────────────────────────────
 

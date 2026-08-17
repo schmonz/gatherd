@@ -61,8 +61,11 @@ turn_on() {
     fi
     mkdir -p "$state_dir"
     # Written before rotating, so `off` restores the real resting transform.
+    # `// empty` matters: without it a missing .transform writes the literal
+    # string "null", which turn_off must then treat as unusable rather than
+    # rotate to.
     swaymsg -t get_outputs \
-        | jq -r --arg o "$_output" 'first(.[] | select(.name == $o) | .transform)' \
+        | jq -r --arg o "$_output" 'first(.[] | select(.name == $o) | .transform) // empty' \
         > "$state_file"
     swaymsg output "$_output" transform "$transform" >/dev/null
     set_builtin_events disabled
@@ -72,11 +75,35 @@ turn_off() {
     if ! is_on; then return 0; fi
     _output=$(internal_output)
     _prior=$(cat "$state_file")
-    [ -n "$_prior" ] || _prior=normal
-    if [ -n "$_output" ]; then
-        swaymsg output "$_output" transform "$_prior" >/dev/null
-    fi
+
+    # Re-enable input FIRST. This is the safety-critical half of turning
+    # tablet mode off: once the keyboard is disabled, the power button is the
+    # only escape hatch, and it calls this. If anything below it (rotation)
+    # were to run first and exit non-zero under `set -eu`, this line would
+    # never be reached and the human would be stranded with a dead keyboard
+    # and touchpad and no way to get them back. Confirmed on this hardware:
+    # `swaymsg output DSI-1 transform null` exits 2.
     set_builtin_events enabled
+
+    # Only rotate to a value sway itself would accept. Do NOT fall back to
+    # "normal" when the recorded value is missing or bogus (e.g. the literal
+    # string "null" from a pre-`// empty` bug) — on this hardware, where
+    # wlroots applies the DRM panel-orientation quirk, "normal" is *portrait*.
+    # Falling back to it would rotate an already-correct screen into tablet
+    # orientation. Leaving the display untouched is strictly safer.
+    case "$_prior" in
+        normal | 90 | 180 | 270 | flipped | flipped-90 | flipped-180 | flipped-270) ;;
+        *)
+            echo "gatherd-tablet-mode: recorded transform '$_prior' is not valid; leaving the display as-is" >&2
+            _prior=""
+            ;;
+    esac
+    if [ -n "$_output" ] && [ -n "$_prior" ]; then
+        # Non-fatal: a compositor error rotating back must never prevent the
+        # rest of turn_off (clearing state) from completing.
+        swaymsg output "$_output" transform "$_prior" >/dev/null || true
+    fi
+
     rm -f "$state_file"
 }
 

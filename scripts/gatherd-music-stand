@@ -39,15 +39,26 @@ refresh_index() {
     fi
 }
 
+# The forScore library this indexes gets renamed and deleted from underneath
+# the MRU, which never expires on its own. Matching the whole
+# composer/title/filename triple against the index — not just the composer —
+# drops a row the moment any part of it goes stale, so a renamed or removed
+# score stops resurfacing and file_for() below is guaranteed to resolve
+# whatever this offers.
+live_mru() {
+    [ -r "$mru" ] || return 0
+    awk -F'\t' 'NR==FNR { live[$0]; next } ($0 in live)' "$index" "$mru"
+}
+
 # Most-recently-played first, then everything else. awk dedupes in one pass and
 # preserves first-seen order, so the MRU head wins without a second sort.
 composers() {
-    { [ -r "$mru" ] && cut -f1 "$mru"; cut -f1 "$index"; } 2>/dev/null \
+    { live_mru | cut -f1; cut -f1 "$index"; } 2>/dev/null \
         | awk 'NF && !seen[$0]++'
 }
 
 titles_for() {
-    { [ -r "$mru" ] && awk -F'\t' -v c="$1" '$1 == c { print $2 }' "$mru"
+    { live_mru | awk -F'\t' -v c="$1" '$1 == c { print $2 }'
       awk -F'\t' -v c="$1" '$1 == c { print $2 }' "$index"; } 2>/dev/null \
         | awk 'NF && !seen[$0]++'
 }
@@ -79,6 +90,11 @@ turn_on() {
 
     file=$(file_for "$composer" "$title")
     [ -n "$file" ] || { echo "gatherd-music-stand: no file for $title" >&2; exit 1; }
+
+    # Confirm the file is still on disk BEFORE flipping tablet mode: the index
+    # can lag a forScore deletion, and entering tablet mode first would strand
+    # the human folded over the keyboard with it disabled and a blank screen.
+    [ -f "$root/$file" ] || { echo "gatherd-music-stand: file missing: $root/$file" >&2; exit 1; }
 
     remember "$composer" "$title" "$file"
     gatherd-tablet-mode on

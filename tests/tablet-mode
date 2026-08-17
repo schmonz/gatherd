@@ -383,5 +383,69 @@ assert_out 'after going back, the second choice opened' "$SCORES/12 Etudes, Op. 
     viewer_log
 gatherd-music-stand off >/dev/null 2>&1 || true
 
+# ── gatherd-music-stand: stale MRU rows ──────────────────────────────────────
+# forScore's library syncs from the iPad, so scores genuinely get renamed and
+# deleted; the MRU persists across index refreshes, so a stale row is a matter
+# of time. Isolated root/state dirs keep this fixture from perturbing the
+# row/line counts asserted above.
+
+STALE_ROOT="$WORK/stale-scores"
+STALE_STATE="$WORK/stale-state"
+mkdir -p "$STALE_ROOT" "$STALE_STATE/gatherd"
+
+printf 'Bach\tPresent Work\tPresent.pdf\n' > "$STALE_STATE/gatherd/music-index.tsv"
+
+# Ghost/Phantom Etude has no row at all in the index (renamed or deleted since
+# it was played); it leads the MRU file, ahead of the still-valid Bach row.
+printf 'Ghost\tPhantom Etude\tghost.pdf\nBach\tPresent Work\tPresent.pdf\n' \
+    > "$STALE_STATE/gatherd/music-stand-scores"
+
+OLD_MUSIC_STAND_ROOT2="$MUSIC_STAND_ROOT"
+OLD_XDG_STATE_HOME2="$XDG_STATE_HOME"
+MUSIC_STAND_ROOT="$STALE_ROOT"
+XDG_STATE_HOME="$STALE_STATE"
+export MUSIC_STAND_ROOT XDG_STATE_HOME
+
+reset_picker ''
+gatherd-music-stand on >/dev/null 2>&1 || true
+if grep -q '^Ghost$' "$WORK/fuzzel.in"; then
+    bad 'a stale MRU row is not offered at level 1'
+else
+    ok 'a stale MRU row is not offered at level 1'
+fi
+assert_out 'a live MRU row still leads level 1' 'Bach' \
+    sh -c 'head -1 "'"$WORK"'/fuzzel.in"'
+
+# Present.pdf is listed in the index but was deleted from disk after
+# indexing (the index has not been refreshed yet). Picking it must not enter
+# tablet mode: doing so first would strand the human folded over the keyboard
+# with it disabled, facing a blank screen with no clue why.
+assert_fail 'tablet mode is inactive before the deleted-file pick' gatherd-tablet-mode status
+reset_picker 'Bach' 'Present Work'
+if gatherd-music-stand on 2>"$WORK/deleted-file.err"; then
+    bad 'picking a since-deleted file does not report success'
+else
+    ok 'picking a since-deleted file does not report success'
+fi
+assert_fail 'picking a since-deleted file did not enter tablet mode' gatherd-tablet-mode status
+if [ -s "$WORK/deleted-file.err" ]; then
+    ok 'picking a since-deleted file warns on stderr'
+else
+    bad 'picking a since-deleted file warns on stderr'
+fi
+# The viewer log is shared with earlier sections and is written by
+# backgrounded, reparented processes this shell cannot wait() on, so it is not
+# a reliable place to assert absence. remember() only ever prepends, so an
+# unchanged MRU file is deterministic proof the missing-file exit happened
+# before remember() ran, not just before tablet mode.
+assert_out 'picking a since-deleted file did not update the MRU' \
+    'Ghost	Phantom Etude	ghost.pdf
+Bach	Present Work	Present.pdf' \
+    cat "$STALE_STATE/gatherd/music-stand-scores"
+
+MUSIC_STAND_ROOT="$OLD_MUSIC_STAND_ROOT2"
+XDG_STATE_HOME="$OLD_XDG_STATE_HOME2"
+export MUSIC_STAND_ROOT XDG_STATE_HOME
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

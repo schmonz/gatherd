@@ -240,17 +240,69 @@ contents; note that it sits *outside* `icloud_sync_root`
 
 ### Idle inhibition
 
-Not a daemon and not `systemd-inhibit`, but one declarative line in
-`config.d`:
+**`inhibit_idle fullscreen` was tried first and disproven on hardware.** A
+captured sway window-event trace opening a score shows sway's own
+`for_window [app_id="org.gnome.Papers"] fullscreen enable` rule firing —
+`fullscreen_mode` flips to `1` and the window resizes to the output — and then,
+seconds later, papers itself flips `fullscreen_mode` back to `0`:
 
 ```
-for_window [app_id="org.gnome.Papers"] inhibit_idle fullscreen
+new              fullscreen_mode=0   rect=0x0
+focus            fullscreen_mode=1   rect=683x406    <- sway's rule DOES apply
+fullscreen_mode  fullscreen_mode=1
+title            fullscreen_mode=1   rect=1371x857   <- resized to full output
+fullscreen_mode  fullscreen_mode=0   rect=1371x857   <- papers turns it back OFF
 ```
 
-Sway suppresses blanking exactly while the score is fullscreen, and stops the
-moment it is not. There is no inhibitor to leak if the script dies, and no
-cleanup path to get wrong. The `app_id` is derived from
-`{{ music_stand_viewer }}` so the fallback viewer stays correct.
+Root cause: papers persists its own window state in the gsettings key
+`org.gnome.Papers.Default fullscreen` and restores it shortly after mapping,
+clobbering whatever sway had just set. The sway rule was never broken — it
+just loses a race it cannot win. Since `inhibit_idle fullscreen` only inhibits
+*while* fullscreen, the inhibitor disengages the moment papers wins that race,
+and the screen blanks mid-piece: the one thing this feature exists to prevent.
+
+**The fix is to stop fighting papers for fullscreen state and instead launch
+into it.** `papers -f` wins outright — a re-captured trace ends
+`fullscreen_mode=1`, `rect=1371x857`, `idle_inhibitors={"user":"fullscreen"}`,
+stable at 8 seconds. `gatherd-music-stand` now passes this flag
+(`{{ music_stand_fullscreen_flag }}`, derived from `{{ music_stand_viewer }}`
+the same way `{{ music_stand_app_id }}` is) when launching the viewer, and
+`roles/desktop/tasks/tablet_mode.yml` drops the `fullscreen enable` for_window
+rule entirely — the evidence shows it fires and is then overridden, so it
+bought nothing but a visible flicker.
+
+**Inhibition is now split into two layers, on two different properties, for
+two different reasons:**
+
+```
+for_window [app_id="org.gnome.Papers"] inhibit_idle visible
+```
+
+This is viewer-scoped and keyed on `visible`, not `fullscreen` — the safety
+property that actually matters is the score being *on screen*, not the window
+manager's fullscreen flag, and `visible` cannot be clobbered by papers the way
+`fullscreen` was. It remains a declarative `config.d` line rather than a flag
+or a daemon, so there is still no inhibitor to leak if a script dies and no
+cleanup path to get wrong.
+
+`gatherd-tablet-mode` additionally inhibits idle for the whole of tablet mode,
+not just the score viewer: `on` runs `inhibit_idle open` on every view
+currently in the tree (from `swaymsg -t get_tree`, filtered to nodes with a
+non-null `app_id` — outputs and workspaces are containers, not views, and must
+never be targeted), and `off` runs `inhibit_idle none` on the same set. This
+is tablet-mode-scoped: the score being visible is only one of the things a
+folded, keyboard-disabled machine must stay awake for, and coupling *all*
+idle-inhibition to whatever `{{ music_stand_app_id }}` happens to be would
+leave every other window blanking normally while folded. Clearing it in `off`
+is placed after the built-in-input re-enable and wrapped in `|| true` — input
+must come first no matter what, and a compositor error clearing inhibitors
+must never block the rotation restore or state cleanup that follow it.
+
+Both layers exist together because they answer different questions: `visible`
+on the viewer's own window is what makes the *feature* correct even if
+tablet-mode's own inhibitor is ever removed or fails; `open` across the whole
+tree is what makes *tablet mode itself* safe to fold the machine into,
+independent of which application happens to be focused.
 
 ## `gatherd-power-button` — the escape hatch
 

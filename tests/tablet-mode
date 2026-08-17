@@ -631,23 +631,24 @@ MUSIC_STAND_ROOT="$OLD_MUSIC_STAND_ROOT2"
 XDG_STATE_HOME="$OLD_XDG_STATE_HOME2"
 export MUSIC_STAND_ROOT XDG_STATE_HOME
 
-# ── gatherd-music-stand: viewer fullscreen flag ──────────────────────────────
+# ── gatherd-music-stand: viewer flag ──────────────────────────────────────────
 # sway's `for_window ... fullscreen enable` rule fires but papers immediately
 # restores its own persisted (non-fullscreen) window state and clobbers it;
-# launching with the viewer's own fullscreen flag is what actually sticks. See
+# launching into papers' presentation mode (`-s`) is what actually sticks, and
+# it taps to turn the page instead of scrolling. See
 # docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
 
-MUSIC_STAND_FULLSCREEN_FLAG=-f
-export MUSIC_STAND_FULLSCREEN_FLAG
+MUSIC_STAND_VIEWER_FLAG=-s
+export MUSIC_STAND_VIEWER_FLAG
 reset_picker 'Medtner' 'Two Skazki'
-assert_ok 'music-stand on succeeds with a fullscreen flag configured' gatherd-music-stand on
-assert_out 'the viewer is launched with the configured fullscreen flag' \
-    "-f $SCORES/2 Skazki, Op. 48.pdf" viewer_log
+assert_ok 'music-stand on succeeds with a viewer flag configured' gatherd-music-stand on
+assert_out 'the viewer is launched with the configured flag' \
+    "-s $SCORES/2 Skazki, Op. 48.pdf" viewer_log
 gatherd-music-stand off >/dev/null 2>&1 || true
 
-unset MUSIC_STAND_FULLSCREEN_FLAG
+unset MUSIC_STAND_VIEWER_FLAG
 reset_picker 'Medtner' 'Two Skazki'
-assert_ok 'music-stand on succeeds with no fullscreen flag configured' gatherd-music-stand on
+assert_ok 'music-stand on succeeds with no viewer flag configured' gatherd-music-stand on
 assert_out 'a viewer with no configured flag still launches, with no leading flag argument' \
     "$SCORES/2 Skazki, Op. 48.pdf" viewer_log
 gatherd-music-stand off >/dev/null 2>&1 || true

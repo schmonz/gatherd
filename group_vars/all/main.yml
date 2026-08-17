@@ -302,31 +302,34 @@ tablet_mode_supported: "{{ has_touchscreen | default(false) and has_acceleromete
 # if the fold puts the wrong edge at the top.
 tablet_mode_transform: normal
 music_stand_root: "{{ target_home }}/Documents/forscore"
-# music_stand_viewer, music_stand_app_id and music_stand_fullscreen_flag must
+# music_stand_viewer, music_stand_app_id and music_stand_viewer_flag must
 # all three change together: the app_id is what
 # roles/desktop/tasks/tablet_mode.yml's for_window rule (idle-inhibit while
-# visible) matches against, and the fullscreen flag is what
-# scripts/gatherd-music-stand passes when launching the viewer so fullscreen
-# actually sticks — sway's own `fullscreen enable` rule fires but papers
-# restores its own persisted window state moments later and clobbers it
-# (confirmed by event trace), so the flag, not the sway rule, is what makes
-# fullscreen stick. Neither follows from the package name. Switching the
-# viewer without updating both mappings below leaves the idle-inhibit rule
-# matching nothing (screen blanks mid-piece, the one thing this feature
-# exists to prevent) and/or the score opening windowed instead of fullscreen.
-# xreader's app_id AND its fullscreen flag below are the documented zero-cost
-# fallback (evince/xreader's GtkApplication ID, and its `-f` flag by analogy
-# with papers) — confirm both with `swaymsg -t get_tree` and a live launch
-# before relying on them, since neither has been exercised on this hardware.
+# visible) matches against, and the viewer flag is what
+# scripts/gatherd-music-stand passes when launching the viewer to select
+# presentation mode — chosen over fullscreen-only display because the human
+# wants to tap to turn the page at the piano, not scroll, and presentation
+# mode is inherently fullscreen too (a re-captured event trace shows
+# fullscreen_mode=1 the moment it launches, no race with sway's own rule the
+# way plain fullscreen had). Neither the app_id nor the flag follows from the
+# package name. Switching the viewer without updating both mappings below
+# leaves the idle-inhibit rule matching nothing (screen blanks mid-piece, the
+# one thing this feature exists to prevent) and/or the score opening in
+# ordinary scrolling view instead of tap-to-turn presentation mode.
+# xreader's app_id AND its viewer flag below are the documented zero-cost
+# fallback (evince/xreader's GtkApplication ID, and its `-s` presentation-mode
+# flag by analogy with papers, both of which share Evince ancestry) — confirm
+# both with `swaymsg -t get_tree` and a live launch before relying on them,
+# since neither has been exercised on this hardware.
 music_stand_viewer_app_ids:
   papers: org.gnome.Papers
   xreader: xreader
-music_stand_viewer_fullscreen_flags:
-  papers: -f
-  xreader: -f
+music_stand_viewer_flags:
+  papers: -s
+  xreader: -s
 music_stand_viewer: papers
 music_stand_app_id: "{{ music_stand_viewer_app_ids[music_stand_viewer] }}"
-music_stand_fullscreen_flag: "{{ music_stand_viewer_fullscreen_flags[music_stand_viewer] }}"
+music_stand_viewer_flag: "{{ music_stand_viewer_flags[music_stand_viewer] }}"
 
 # iCloud Drive sync. The folder list is data on purpose: widening coverage is a
 # list edit, not a code change. Downloads is excluded on the merits — 310 MB of

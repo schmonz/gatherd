@@ -1,6 +1,6 @@
 #!/bin/sh
 # Read sheet music at the piano: tablet mode, then pick a score by composer and
-# open it fullscreen.
+# open it in the viewer's presentation mode (tap to turn the page).
 #
 # The picker is progressive because there is no keyboard in tablet mode and so
 # no type-to-filter — one flat list of every score is a long finger-scroll,
@@ -13,12 +13,12 @@ set -eu
 config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
 root="$HOME/Documents/forscore"
 viewer=papers
-viewer_fullscreen_flag=""
+viewer_flag=""
 # shellcheck source=/dev/null
 [ -r "$config" ] && . "$config"
 root="${MUSIC_STAND_ROOT:-$root}"
 viewer="${MUSIC_STAND_VIEWER:-$viewer}"
-viewer_fullscreen_flag="${MUSIC_STAND_FULLSCREEN_FLAG:-$viewer_fullscreen_flag}"
+viewer_flag="${MUSIC_STAND_VIEWER_FLAG:-$viewer_flag}"
 
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd"
 index="$state_dir/music-index.tsv"
@@ -110,12 +110,15 @@ turn_on() {
     gatherd-tablet-mode on
     # sway's own `for_window ... fullscreen enable` rule fires but papers
     # restores its own persisted (non-fullscreen) window state moments later
-    # and clobbers it — confirmed by event trace. The viewer's own fullscreen
-    # flag is what actually sticks; idle inhibition stays a declarative sway
-    # rule (`inhibit_idle visible`), since that doesn't race the viewer's
-    # startup the way fullscreen state does.
-    if [ -n "$viewer_fullscreen_flag" ]; then
-        "$viewer" "$viewer_fullscreen_flag" "$root/$file" >/dev/null 2>&1 &
+    # and clobbers it — confirmed by event trace. Launching straight into the
+    # viewer's presentation mode sidesteps that race entirely (it's inherently
+    # fullscreen) and, as a bonus the human specifically asked for, turns the
+    # page on a tap instead of scrolling. Idle inhibition stays a declarative
+    # sway rule (`inhibit_idle visible`) as belt-and-braces alongside papers'
+    # own presentation-mode idle inhibitor, since neither races the viewer's
+    # startup the way fullscreen state did.
+    if [ -n "$viewer_flag" ]; then
+        "$viewer" "$viewer_flag" "$root/$file" >/dev/null 2>&1 &
     else
         "$viewer" "$root/$file" >/dev/null 2>&1 &
     fi

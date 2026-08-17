@@ -99,7 +99,7 @@ without reopening phase 1, and what would let the `LTSM` work land later as
 | Artifact | Source | Installed to | Purpose |
 |---|---|---|---|
 | `gatherd-tablet-mode` | `scripts/` | `~/.local/bin/` | the mechanism: rotate + suppress built-in input |
-| `gatherd-music-stand` | `scripts/` | `~/.local/bin/` | progressive score picker + fullscreen viewer, atop tablet mode |
+| `gatherd-music-stand` | `scripts/` | `~/.local/bin/` | progressive score picker + presentation-mode viewer, atop tablet mode |
 | `gatherd-music-index` | `scripts/` | `~/.local/bin/` | decodes forScore's backup into a composer/title index |
 | `gatherd-power-button` | `scripts/` | `~/.local/bin/` | state-dependent power-button dispatcher |
 | `roles/desktop/tasks/tablet_mode.yml` | new task file | — | installs the above; imported from `desktop/tasks/core.yml` |
@@ -208,8 +208,8 @@ levels MRU-ordered.
    deletion, and `{{ music_stand_viewer }}` is REST tier and may not exist yet
    between first login and the async play reaching the network, while this
    mechanism itself is CORE and must work offline.
-5. Record the pick, `gatherd-tablet-mode on`, then open the file fullscreen in
-   `{{ music_stand_viewer }}`.
+5. Record the pick, `gatherd-tablet-mode on`, then open the file in
+   `{{ music_stand_viewer }}`'s presentation mode (tap to turn the page).
 
 Both levels use `fuzzel --dmenu` with enlarged entries for touch targets. Empty
 or cancelled selection at either level → exit 0, leaving tablet mode as it was
@@ -262,14 +262,23 @@ just loses a race it cannot win. Since `inhibit_idle fullscreen` only inhibits
 and the screen blanks mid-piece: the one thing this feature exists to prevent.
 
 **The fix is to stop fighting papers for fullscreen state and instead launch
-into it.** `papers -f` wins outright — a re-captured trace ends
+into it.** `papers -f` won outright at the time — a captured trace ended
 `fullscreen_mode=1`, `rect=1371x857`, `idle_inhibitors={"user":"fullscreen"}`,
-stable at 8 seconds. `gatherd-music-stand` now passes this flag
-(`{{ music_stand_fullscreen_flag }}`, derived from `{{ music_stand_viewer }}`
+stable at 8 seconds. `gatherd-music-stand` passed this flag
+(`{{ music_stand_viewer_flag }}`, derived from `{{ music_stand_viewer }}`
 the same way `{{ music_stand_app_id }}` is) when launching the viewer, and
 `roles/desktop/tasks/tablet_mode.yml` drops the `fullscreen enable` for_window
 rule entirely — the evidence shows it fires and is then overridden, so it
 bought nothing but a visible flicker.
+
+The flag has since moved from `-f` to `-s` (presentation mode — see Viewer
+choice below): first real use at the piano rejected continuous scrolling in
+favour of tap-to-turn, and presentation mode turned out to subsume
+fullscreen anyway. A re-captured trace with `-s` shows `fullscreen_mode=1`,
+`rect=1371x857`, and papers additionally holding its own idle inhibitor —
+`idle_inhibitors={"user":"fullscreen","application":"enabled"}` — so the
+`inhibit_idle visible` rule below and the tablet-mode-wide inhibitor are now
+belt-and-braces rather than the only defence.
 
 **Inhibition is now split into two layers, on two different properties, for
 two different reasons:**
@@ -402,14 +411,26 @@ dependencies pulled in:
 | `evince` | GTK3 | 5 | superseded by Papers |
 | `okular` | Qt6/KDE | **25** | richest touch features, whole KDE stack |
 
-`papers` wins on toolkit rather than feature list: GTK4 provides kinetic
-touch-drag scrolling and pinch-zoom natively. `okular`'s 25 KDE Frameworks
-packages for one PDF viewer is the trade `docs/vnc.md` already flags.
+`papers` was originally chosen on toolkit rather than feature list: the claim
+was that GTK4 provides kinetic touch-drag scrolling and pinch-zoom natively.
+That reasoning is wrong — per the GNOME developer blog on Papers, Evince's
+swipe-gesture code "stopped doing its job in Papers with the port to GTK 4".
+`papers` remains the choice anyway, but for a different reason now: its
+presentation mode (`-s`), not its toolkit — see Idle inhibition above.
+`xreader`, a GTK3 Evince fork with 0 new dependencies, is the fallback
+precisely because it predates that GTK4 regression. `okular`'s 25 KDE
+Frameworks packages for one PDF viewer is the trade `docs/vnc.md` already
+flags.
 
-Configure the viewer for **continuous scroll, fit-width, fullscreen**. A score
-is a ribbon; dragging it upward with one finger is a smaller and more forgiving
-mid-piece motion than hitting a page-turn target, and it never strands the
-reader on a page boundary in the middle of a system.
+Configure the viewer for **presentation mode** (`-s`), not continuous scroll.
+Continuous scroll was the original plan, on the reasoning that dragging a
+score upward with one finger is a smaller and more forgiving mid-piece motion
+than hitting a page-turn target — but it was rejected at the instrument: the
+human tried it against the real hardware and wants to tap to turn the page,
+not scroll. This was a design assumption corrected by first real use, not a
+change of requirements. Presentation mode delivers tap-to-turn directly, and
+as a bonus is inherently fullscreen (no race with sway's `for_window` rule —
+see Idle inhibition above) and self-inhibits idle.
 
 ## Phase 2 — hinge-angle trigger
 

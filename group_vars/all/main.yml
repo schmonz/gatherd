@@ -302,8 +302,20 @@ tablet_mode_supported: "{{ has_touchscreen | default(false) and has_acceleromete
 # if the fold puts the wrong edge at the top.
 tablet_mode_transform: normal
 music_stand_root: "{{ target_home }}/Documents/forscore"
+# music_stand_viewer and music_stand_app_id must change together: the app_id
+# is what roles/desktop/tasks/tablet_mode.yml's for_window rules (fullscreen +
+# idle-inhibit while reading) match against, and it does not follow from the
+# package name. Switching the viewer without updating the mapping below
+# leaves both rules matching nothing — the score opens windowed AND the
+# screen blanks mid-piece, which is the one thing this feature exists to
+# prevent. xreader's app_id below is the documented zero-cost fallback
+# (evince/xreader's GtkApplication ID); confirm it with `swaymsg -t get_tree`
+# before relying on it, since it has not been exercised on this hardware.
+music_stand_viewer_app_ids:
+  papers: org.gnome.Papers
+  xreader: xreader
 music_stand_viewer: papers
-music_stand_app_id: org.gnome.Papers
+music_stand_app_id: "{{ music_stand_viewer_app_ids[music_stand_viewer] }}"
 
 # iCloud Drive sync. The folder list is data on purpose: widening coverage is a
 # list edit, not a code change. Downloads is excluded on the merits — 310 MB of

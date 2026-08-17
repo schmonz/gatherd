@@ -458,6 +458,34 @@ assert_out 'after going back, the second choice opened' "$SCORES/12 Etudes, Op. 
     viewer_log
 gatherd-music-stand off >/dev/null 2>&1 || true
 
+# ── gatherd-music-stand: viewer preflight ────────────────────────────────────
+# papers is REST-tier and is not installed until the async play reaches the
+# network, after login. Between first login and async completion, a pick must
+# not rotate the screen and disable the keyboard only to find no viewer to
+# hand the score to — that is exactly what the file-exists check one line
+# above it in the real script exists to prevent.
+
+_mru_before_preflight=$(cat "$XDG_STATE_HOME/gatherd/music-stand-scores" 2>/dev/null || true)
+OLD_MUSIC_STAND_VIEWER="$MUSIC_STAND_VIEWER"
+MUSIC_STAND_VIEWER=no-such-viewer-anywhere
+export MUSIC_STAND_VIEWER
+reset_picker 'Medtner' 'Two Skazki'
+if gatherd-music-stand on 2>"$WORK/no-viewer.err"; then
+    bad 'a missing viewer does not report success'
+else
+    ok 'a missing viewer does not report success'
+fi
+assert_fail 'a missing viewer does not enter tablet mode' gatherd-tablet-mode status
+if [ -s "$WORK/no-viewer.err" ]; then
+    ok 'a missing viewer warns on stderr'
+else
+    bad 'a missing viewer warns on stderr'
+fi
+assert_out 'a missing viewer does not update the MRU' "$_mru_before_preflight" \
+    cat "$XDG_STATE_HOME/gatherd/music-stand-scores"
+MUSIC_STAND_VIEWER="$OLD_MUSIC_STAND_VIEWER"
+export MUSIC_STAND_VIEWER
+
 # ── gatherd-music-stand: stale MRU rows ──────────────────────────────────────
 # forScore's library syncs from the iPad, so scores genuinely get renamed and
 # deleted; the MRU persists across index refreshes, so a stale row is a matter

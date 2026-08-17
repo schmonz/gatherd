@@ -96,6 +96,14 @@ turn_on() {
     # the human folded over the keyboard with it disabled and a blank screen.
     [ -f "$root/$file" ] || { echo "gatherd-music-stand: file missing: $root/$file" >&2; exit 1; }
 
+    # Same reasoning, same guard: $viewer (papers) is REST tier and only
+    # arrives after login, over the network, while this mechanism itself is
+    # CORE and works offline. Between first login and async completion there
+    # would be no viewer to hand the file to — check BEFORE tablet mode for
+    # the same reason as the file check above.
+    command -v "$viewer" >/dev/null 2>&1 \
+        || { echo "gatherd-music-stand: viewer not found: $viewer" >&2; exit 1; }
+
     remember "$composer" "$title" "$file"
     gatherd-tablet-mode on
     # Fullscreen and idle inhibition are sway for_window rules, not flags here:

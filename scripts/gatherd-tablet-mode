@@ -1,0 +1,85 @@
+#!/bin/sh
+# Put the session into (or out of) tablet mode: rotate the internal panel to
+# portrait and stop the built-in keyboard and touchpad from typing against
+# whatever the folded machine is resting on.
+#
+# This is the only thing that touches sway state. The keybinding, the power
+# button and (later) a hinge-angle daemon are all callers — which is what lets
+# the trigger change without reopening the mechanism. See
+# docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
+set -eu
+
+state_dir="${XDG_RUNTIME_DIR:-/tmp}/gatherd"
+state_file="$state_dir/tablet-mode"
+config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
+
+transform=normal
+# shellcheck source=/dev/null
+[ -r "$config" ] && . "$config"
+transform="${GATHERD_TABLET_TRANSFORM:-$transform}"
+
+# Matched by connector name rather than index because the resting transform is
+# NOT necessarily "normal": where the panel is physically mounted rotated,
+# wlroots applies the DRM panel-orientation quirk itself and upright landscape
+# is transform 90. We record whatever we find and restore that.
+internal_output() {
+    swaymsg -t get_outputs \
+        | jq -r 'first(.[] | select(.name | test("^(eDP|DSI|LVDS)")) | .name) // empty'
+}
+
+# Built-in keyboards only: the i8042 controller enumerates as 1:1:*. An external
+# or Bluetooth keyboard has a real vendor:product id and must keep working while
+# folded — a page-turner pedal presents as exactly that, and silencing it would
+# defeat the point of using this at a piano.
+builtin_keyboards() {
+    swaymsg -t get_inputs \
+        | jq -r '.[] | select(.type == "keyboard")
+                     | select(.identifier | startswith("1:1:"))
+                     | .identifier' \
+        | sort -u
+}
+
+set_builtin_events() {
+    for _id in $(builtin_keyboards); do
+        swaymsg input "$_id" events "$1" >/dev/null
+    done
+    swaymsg input type:touchpad events "$1" >/dev/null
+}
+
+is_on() { [ -f "$state_file" ]; }
+
+turn_on() {
+    if is_on; then return 0; fi
+    _output=$(internal_output)
+    if [ -z "$_output" ]; then
+        echo "gatherd-tablet-mode: no internal output found" >&2
+        exit 1
+    fi
+    mkdir -p "$state_dir"
+    # Written before rotating, so `off` restores the real resting transform.
+    swaymsg -t get_outputs \
+        | jq -r --arg o "$_output" 'first(.[] | select(.name == $o) | .transform)' \
+        > "$state_file"
+    swaymsg output "$_output" transform "$transform" >/dev/null
+    set_builtin_events disabled
+}
+
+turn_off() {
+    if ! is_on; then return 0; fi
+    _output=$(internal_output)
+    _prior=$(cat "$state_file")
+    [ -n "$_prior" ] || _prior=normal
+    if [ -n "$_output" ]; then
+        swaymsg output "$_output" transform "$_prior" >/dev/null
+    fi
+    set_builtin_events enabled
+    rm -f "$state_file"
+}
+
+case "${1:-toggle}" in
+    on)     turn_on ;;
+    off)    turn_off ;;
+    toggle) if is_on; then turn_off; else turn_on; fi ;;
+    status) is_on ;;
+    *)      echo "usage: $0 on|off|toggle|status" >&2; exit 2 ;;
+esac

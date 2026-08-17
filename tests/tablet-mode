@@ -1,0 +1,146 @@
+#!/bin/sh
+# Unit tests for gatherd-tablet-mode.
+#
+# Fakes swaymsg so the decision logic — record-then-restore of the real resting
+# transform, and disabling ONLY built-in input — is exercised without a running
+# compositor. Those two are the parts that must not be discovered to be wrong
+# while the machine is folded on a music stand.
+#
+# Usage: tests/tablet-mode
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+PASS=0
+FAIL=0
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+FAKEBIN="$WORK/bin"
+mkdir -p "$FAKEBIN"
+PATH="$FAKEBIN:$REPO/scripts:$PATH"
+export PATH
+
+XDG_RUNTIME_DIR="$WORK/run"
+XDG_CONFIG_HOME="$WORK/config"
+mkdir -p "$XDG_RUNTIME_DIR" "$XDG_CONFIG_HOME"
+export XDG_RUNTIME_DIR XDG_CONFIG_HOME
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+assert_out() {
+    _d=$1; _want=$2; shift 2
+    _got=$("$@" 2>/dev/null || true)
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want [$_want] got [$_got])"; fi
+}
+assert_ok()   { _d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$_d"; else bad "$_d (expected success)"; fi; }
+assert_fail() { _d=$1; shift; if "$@" >/dev/null 2>&1; then bad "$_d (expected failure)"; else ok "$_d"; fi; }
+
+# The resting transform is 90, not normal: wlroots applies the DRM
+# panel-orientation quirk on this rotated panel. Seeding the fake with 90 is
+# what makes the restore test meaningful.
+printf '90' > "$WORK/transform"
+
+cat > "$WORK/inputs.json" <<'JSON'
+[
+  {"identifier":"1:1:AT_Translated_Set_2_keyboard","type":"keyboard"},
+  {"identifier":"0:1:Power_Button","type":"keyboard"},
+  {"identifier":"1234:5678:AirTurn_PEDpro","type":"keyboard"},
+  {"identifier":"2321:21128:XXXX0000:05_0911:5288_Touchpad","type":"touchpad"},
+  {"identifier":"1046:9110:Goodix_Capacitive_TouchScreen","type":"touch"}
+]
+JSON
+
+cat > "$FAKEBIN/swaymsg" <<EOF
+#!/bin/sh
+WORK='$WORK'
+case "\$1" in
+  -t)
+    case "\$2" in
+      get_outputs)
+        printf '[{"name":"DSI-1","transform":"%s","rect":{"width":1371,"height":857}}]' "\$(cat "\$WORK/transform")" ;;
+      get_inputs) cat "\$WORK/inputs.json" ;;
+    esac ;;
+  output)
+    printf '%s\n' "\$*" >> "\$WORK/swaymsg.log"
+    printf '%s' "\$4" > "\$WORK/transform" ;;
+  input)
+    printf '%s\n' "\$*" >> "\$WORK/swaymsg.log" ;;
+esac
+EOF
+chmod +x "$FAKEBIN/swaymsg"
+
+log_has() { grep -qF "$1" "$WORK/swaymsg.log" 2>/dev/null; }
+reset_log() { : > "$WORK/swaymsg.log"; }
+
+# ── status before anything ────────────────────────────────────────────────────
+
+assert_fail 'status exits non-zero when inactive' gatherd-tablet-mode status
+
+# ── on ────────────────────────────────────────────────────────────────────────
+
+reset_log
+assert_ok 'on succeeds' gatherd-tablet-mode on
+assert_out 'on rotates to portrait' 'normal' cat "$WORK/transform"
+assert_ok 'on records the resting transform' test "$(cat "$XDG_RUNTIME_DIR/gatherd/tablet-mode")" = 90
+assert_ok 'status exits zero when active' gatherd-tablet-mode status
+
+if log_has 'input 1:1:AT_Translated_Set_2_keyboard events disabled'; then
+    ok 'on disables the built-in keyboard'
+else
+    bad 'on disables the built-in keyboard'
+fi
+if log_has 'input type:touchpad events disabled'; then
+    ok 'on disables the touchpad'
+else
+    bad 'on disables the touchpad'
+fi
+if log_has 'AirTurn'; then
+    bad 'on leaves external keyboards alone'
+else
+    ok 'on leaves external keyboards alone'
+fi
+
+# ── on is idempotent ──────────────────────────────────────────────────────────
+
+assert_ok 'on again succeeds' gatherd-tablet-mode on
+assert_ok 'on again does not clobber the recorded transform' \
+    test "$(cat "$XDG_RUNTIME_DIR/gatherd/tablet-mode")" = 90
+
+# ── off ───────────────────────────────────────────────────────────────────────
+
+reset_log
+assert_ok 'off succeeds' gatherd-tablet-mode off
+assert_out 'off restores the recorded 90, not a hardcoded normal' '90' cat "$WORK/transform"
+assert_fail 'status exits non-zero after off' gatherd-tablet-mode status
+if log_has 'input 1:1:AT_Translated_Set_2_keyboard events enabled'; then
+    ok 'off re-enables the built-in keyboard'
+else
+    bad 'off re-enables the built-in keyboard'
+fi
+
+assert_ok 'off again is a no-op' gatherd-tablet-mode off
+
+# ── toggle ────────────────────────────────────────────────────────────────────
+
+assert_ok 'toggle turns on' gatherd-tablet-mode toggle
+assert_out 'toggle rotated to portrait' 'normal' cat "$WORK/transform"
+assert_ok 'toggle turns off' gatherd-tablet-mode toggle
+assert_out 'toggle restored landscape' '90' cat "$WORK/transform"
+
+# ── config file ───────────────────────────────────────────────────────────────
+
+mkdir -p "$XDG_CONFIG_HOME/gatherd"
+printf 'transform=180\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+assert_ok 'on with config succeeds' gatherd-tablet-mode on
+assert_out 'config file sets the transform' '180' cat "$WORK/transform"
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+
+# ── bad usage ─────────────────────────────────────────────────────────────────
+
+assert_fail 'unknown subcommand fails' gatherd-tablet-mode wibble
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

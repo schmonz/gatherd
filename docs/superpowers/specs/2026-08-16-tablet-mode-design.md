@@ -114,7 +114,7 @@ the REST plays and this must be CORE.
 ## `gatherd-tablet-mode`
 
 `on | off | toggle | status`. Idempotent; state in
-`$XDG_RUNTIME_DIR/gatherd-tablet-mode`.
+`$XDG_RUNTIME_DIR/gatherd/tablet-mode`.
 
 **on:**
 
@@ -195,14 +195,21 @@ levels MRU-ordered.
 
 **on:**
 
-1. `gatherd-tablet-mode on`.
-2. Refresh the index if stale (above).
-3. **Level 1 — composer.** Distinct composers, most-recently-played first, then
+1. Refresh the index if stale (above).
+2. **Level 1 — composer.** Distinct composers, most-recently-played first, then
    alphabetical. 28 entries today.
-4. **Level 2 — score.** That composer's scores, most-recently-played first, then
+3. **Level 2 — score.** That composer's scores, most-recently-played first, then
    alphabetical; at most 24 entries today (Medtner). Displays the index `title`,
    falling back to the filename stem. A `‹ Back` entry returns to level 1.
-5. Record the pick, then open the file fullscreen in `{{ music_stand_viewer }}`.
+4. Confirm the picked file is still on disk, and that `{{ music_stand_viewer }}`
+   is actually installed (`command -v`). Either check failing exits without
+   touching tablet mode — deliberately in this order, so a cancelled or failed
+   pick never leaves tablet mode half-applied: the index can lag a forScore
+   deletion, and `{{ music_stand_viewer }}` is REST tier and may not exist yet
+   between first login and the async play reaching the network, while this
+   mechanism itself is CORE and must work offline.
+5. Record the pick, `gatherd-tablet-mode on`, then open the file fullscreen in
+   `{{ music_stand_viewer }}`.
 
 Both levels use `fuzzel --dmenu` with enlarged entries for touch targets. Empty
 or cancelled selection at either level → exit 0, leaving tablet mode as it was

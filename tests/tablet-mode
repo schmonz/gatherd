@@ -53,6 +53,36 @@ cat > "$WORK/inputs.json" <<'JSON'
 ]
 JSON
 
+# Two views (app_id set) nested under output/workspace containers (app_id
+# null), matching the real `get_tree` shape: outputs and workspaces are
+# containers, not views, and must never be targeted by inhibit_idle.
+cat > "$WORK/tree.json" <<'JSON'
+{
+  "type": "root",
+  "id": 1,
+  "app_id": null,
+  "nodes": [
+    {
+      "type": "output",
+      "id": 2,
+      "app_id": null,
+      "nodes": [
+        {
+          "type": "workspace",
+          "id": 3,
+          "app_id": null,
+          "nodes": [
+            {"type": "con", "id": 101, "app_id": "org.gnome.Papers"},
+            {"type": "con", "id": 102, "app_id": "foot"}
+          ],
+          "floating_nodes": []
+        }
+      ]
+    }
+  ]
+}
+JSON
+
 cat > "$FAKEBIN/swaymsg" <<EOF
 #!/bin/sh
 WORK='$WORK'
@@ -62,6 +92,7 @@ case "\$1" in
       get_outputs)
         printf '[{"name":"DSI-1","transform":"%s","rect":{"width":1371,"height":857}}]' "\$(cat "\$WORK/transform")" ;;
       get_inputs) cat "\$WORK/inputs.json" ;;
+      get_tree) cat "\$WORK/tree.json" ;;
     esac ;;
   output)
     printf '%s\n' "\$*" >> "\$WORK/swaymsg.log"
@@ -75,12 +106,16 @@ case "\$1" in
     printf '%s' "\$4" > "\$WORK/transform" ;;
   input)
     printf '%s\n' "\$*" >> "\$WORK/swaymsg.log" ;;
+  *)
+    # Catches `swaymsg '[con_id=N]' inhibit_idle <mode>`.
+    printf '%s\n' "\$*" >> "\$WORK/swaymsg.log" ;;
 esac
 EOF
 chmod +x "$FAKEBIN/swaymsg"
 
 log_has() { grep -qF "$1" "$WORK/swaymsg.log" 2>/dev/null; }
 reset_log() { : > "$WORK/swaymsg.log"; }
+log_line() { grep -n -F "$1" "$WORK/swaymsg.log" 2>/dev/null | head -1 | cut -d: -f1; }
 
 # ── status before anything ────────────────────────────────────────────────────
 
@@ -110,6 +145,17 @@ else
     ok 'on leaves external keyboards alone'
 fi
 
+if log_has '[con_id=101] inhibit_idle open' && log_has '[con_id=102] inhibit_idle open'; then
+    ok 'on sets inhibit_idle open on every view in the tree'
+else
+    bad 'on sets inhibit_idle open on every view in the tree'
+fi
+if log_has '[con_id=2] inhibit_idle' || log_has '[con_id=3] inhibit_idle'; then
+    bad 'on does not target output/workspace containers, only views'
+else
+    ok 'on does not target output/workspace containers, only views'
+fi
+
 # ── on is idempotent ──────────────────────────────────────────────────────────
 
 assert_ok 'on again succeeds' gatherd-tablet-mode on
@@ -126,6 +172,30 @@ if log_has 'input 1:1:AT_Translated_Set_2_keyboard events enabled'; then
     ok 'off re-enables the built-in keyboard'
 else
     bad 'off re-enables the built-in keyboard'
+fi
+
+if log_has '[con_id=101] inhibit_idle none' && log_has '[con_id=102] inhibit_idle none'; then
+    ok 'off sets inhibit_idle none on every view in the tree'
+else
+    bad 'off sets inhibit_idle none on every view in the tree'
+fi
+
+# Ordering, not just presence: input re-enable must be logged before the
+# inhibitor clearing and before the rotation restore, in that position. A
+# regression that moves input re-enable later (e.g. back to after the
+# rotation) must be caught here, not just by an "eventually happens" check.
+_input_line=$(log_line 'input 1:1:AT_Translated_Set_2_keyboard events enabled')
+_inhibit_line=$(log_line '[con_id=101] inhibit_idle none')
+_rotate_line=$(log_line 'output DSI-1 transform')
+if [ -n "$_input_line" ] && [ -n "$_inhibit_line" ] && [ "$_input_line" -lt "$_inhibit_line" ]; then
+    ok 'off re-enables input before clearing idle inhibitors'
+else
+    bad 'off re-enables input before clearing idle inhibitors'
+fi
+if [ -n "$_input_line" ] && [ -n "$_rotate_line" ] && [ "$_input_line" -lt "$_rotate_line" ]; then
+    ok 'off re-enables input before restoring the rotation'
+else
+    bad 'off re-enables input before restoring the rotation'
 fi
 
 assert_ok 'off again is a no-op' gatherd-tablet-mode off
@@ -195,6 +265,18 @@ if log_has 'input 1:1:AT_Translated_Set_2_keyboard events enabled'; then
     ok 'input is re-enabled even when the rotation call fails'
 else
     bad 'input is re-enabled even when the rotation call fails'
+fi
+if log_has '[con_id=101] inhibit_idle none'; then
+    ok 'idle inhibitors are still cleared even when the rotation call fails'
+else
+    bad 'idle inhibitors are still cleared even when the rotation call fails'
+fi
+_input_line=$(log_line 'input 1:1:AT_Translated_Set_2_keyboard events enabled')
+_rotate_line=$(log_line 'output DSI-1 transform')
+if [ -n "$_input_line" ] && [ -n "$_rotate_line" ] && [ "$_input_line" -lt "$_rotate_line" ]; then
+    ok 'input is re-enabled before the rotation is even attempted, failing or not'
+else
+    bad 'input is re-enabled before the rotation is even attempted, failing or not'
 fi
 assert_fail 'the state file is cleared even when the rotation call fails' \
     test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
@@ -548,6 +630,27 @@ Bach	Present Work	Present.pdf' \
 MUSIC_STAND_ROOT="$OLD_MUSIC_STAND_ROOT2"
 XDG_STATE_HOME="$OLD_XDG_STATE_HOME2"
 export MUSIC_STAND_ROOT XDG_STATE_HOME
+
+# ── gatherd-music-stand: viewer fullscreen flag ──────────────────────────────
+# sway's `for_window ... fullscreen enable` rule fires but papers immediately
+# restores its own persisted (non-fullscreen) window state and clobbers it;
+# launching with the viewer's own fullscreen flag is what actually sticks. See
+# docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
+
+MUSIC_STAND_FULLSCREEN_FLAG=-f
+export MUSIC_STAND_FULLSCREEN_FLAG
+reset_picker 'Medtner' 'Two Skazki'
+assert_ok 'music-stand on succeeds with a fullscreen flag configured' gatherd-music-stand on
+assert_out 'the viewer is launched with the configured fullscreen flag' \
+    "-f $SCORES/2 Skazki, Op. 48.pdf" viewer_log
+gatherd-music-stand off >/dev/null 2>&1 || true
+
+unset MUSIC_STAND_FULLSCREEN_FLAG
+reset_picker 'Medtner' 'Two Skazki'
+assert_ok 'music-stand on succeeds with no fullscreen flag configured' gatherd-music-stand on
+assert_out 'a viewer with no configured flag still launches, with no leading flag argument' \
+    "$SCORES/2 Skazki, Op. 48.pdf" viewer_log
+gatherd-music-stand off >/dev/null 2>&1 || true
 
 # ── gatherd-power-button ──────────────────────────────────────────────────────
 

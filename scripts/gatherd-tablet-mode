@@ -50,6 +50,21 @@ set_builtin_events() {
     swaymsg input type:touchpad events "$1" >/dev/null
 }
 
+# Every application window (not outputs, not workspaces — those are
+# containers with no app_id) currently in the tree. This is what makes idle
+# inhibition tablet-mode-scoped rather than viewer-scoped: the score being on
+# screen is only one of the things a folded, keyboard-disabled machine must
+# stay awake for.
+view_ids() {
+    swaymsg -t get_tree | jq -r '.. | objects | select(.app_id != null) | .id'
+}
+
+set_inhibitors() {
+    for _id in $(view_ids); do
+        swaymsg "[con_id=$_id]" inhibit_idle "$1" >/dev/null
+    done
+}
+
 is_on() { [ -f "$state_file" ]; }
 
 turn_on() {
@@ -69,6 +84,7 @@ turn_on() {
         > "$state_file"
     swaymsg output "$_output" transform "$transform" >/dev/null
     set_builtin_events disabled
+    set_inhibitors open
 }
 
 turn_off() {
@@ -84,6 +100,12 @@ turn_off() {
     # and touchpad and no way to get them back. Confirmed on this hardware:
     # `swaymsg output DSI-1 transform null` exits 2.
     set_builtin_events enabled
+
+    # Clearing idle inhibitors happens second, and is non-fatal (|| true) for
+    # the same reason the rotation restore below is: input is already safe by
+    # this point, and a compositor error here must never stop the rotation
+    # restore or state cleanup that follow it from running.
+    set_inhibitors none || true
 
     # Only rotate to a value sway itself would accept. Do NOT fall back to
     # "normal" when the recorded value is missing or bogus (e.g. the literal

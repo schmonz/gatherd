@@ -444,7 +444,7 @@ keeps working while folded."
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `gatherd-music-index [--print]`. Writes `${XDG_STATE_HOME:-$HOME/.local/state}/gatherd/music-index.tsv` with `composer<TAB>title<TAB>filename` rows, one per PDF, sorted by filename; `--print` writes to stdout instead. Reads `MUSIC_STAND_ROOT` (default `~/Documents/forscore`). Task 4 consumes this file.
+- Produces: `gatherd-music-index [--print]`. Writes `${XDG_STATE_HOME:-$HOME/.local/state}/gatherd/music-index.tsv` with `composer<TAB>title<TAB>filename` rows, one per PDF, **sorted by (composer, title)** — case-insensitively, which is what lets Task 4's picker read both levels straight off the file without re-sorting; `--print` writes to stdout instead. Reads `MUSIC_STAND_ROOT` (default `~/Documents/forscore`). Task 4 consumes this file.
 
 - [ ] **Step 1: Write the failing test**
 

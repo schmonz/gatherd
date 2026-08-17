@@ -49,10 +49,41 @@ section_remove() {
 # (passed as arguments), leaving any lines you added by hand. If nothing of
 # yours remains under the header, drop the header too. This is how "done" steps
 # get pruned without ever eating your own notes.
+# Drop boilerplate bullets wherever they sit, ignoring section boundaries. Needed
+# because h() and li() both append at end of file: when a bullet is added while
+# its header already exists further up, h() is skipped and the bullet lands under
+# whatever section is currently last. prune_section is scoped to its own header
+# and so can never reach those orphans. Matching is on the whole rendered bullet,
+# so this only ever removes text this script itself wrote.
+prune_bullets_anywhere() {
+    _own=$(for _b in "$@"; do wrap_bullet "$_b"; printf '@@PRUNE_SEP@@\n'; done)
+    PRUNE_OWN="$_own" awk '
+        BEGIN {
+            n = split(ENVIRON["PRUNE_OWN"], L, "\n")
+            b = ""
+            for (i = 1; i <= n; i++) {
+                if (L[i] == "@@PRUNE_SEP@@") { if (b != "") own[b] = 1; b = ""; continue }
+                b = (b == "") ? L[i] : b "\n" L[i]
+            }
+        }
+        function endgrp(   j, m, gl) {
+            if (!ingrp) return
+            if (!(g in own)) { m = split(g, gl, "\n"); for (j = 1; j <= m; j++) print gl[j] }
+            ingrp = 0; g = ""
+        }
+        /^- /          { endgrp(); ingrp = 1; g = $0; next }
+        ingrp && /^  / { g = g "\n" $0; next }
+                       { endgrp(); print }
+        END            { endgrp() }
+    ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+}
+
 prune_section() {
     _name=$1
     shift
-    section_present "$_name" || return
+    # A missing header does not mean the bullets are gone — they may be orphaned
+    # under a later section. Sweep for them instead of returning empty-handed.
+    section_present "$_name" || { prune_bullets_anywhere "$@"; return; }
     # Re-render each boilerplate bullet exactly as li() wrote it (wrapping and
     # all), separated by a sentinel line, so awk matches and drops the whole
     # possibly-multi-line bullet as a unit while leaving hand-added lines verbatim.
@@ -157,6 +188,15 @@ section_other_logins() {
     b_bootstrap='iCloud: run `gatherd-icloud-config bootstrap` (once per fleet; needs `rclone config` + 2FA first if this is the very first machine)'
     b_reauth='iCloud needs re-authentication: run `rclone config reconnect icloud:` and complete 2FA — every other machine picks it up automatically'
     b_plaintext='iCloud config is plaintext (a live iCloud token sits unencrypted on disk): run `rclone config encryption set`'
+
+    # The bullet this feature replaced. prune_section matches on bullet text, so
+    # renaming a bullet orphans the old wording in every notes file that already
+    # had it — self-pruning only ever removes text it can still name. A machine
+    # provisioned before the fleet-config work therefore kept telling its human
+    # to run `rclone config` long after that step became both unnecessary and
+    # actively wrong. Prune it unconditionally, forever: it is cheap, and a
+    # machine that legitimately needs setup gets b_bootstrap below instead.
+    prune_section 'Other Logins' 'iCloud: run `rclone config` and follow prompts to add a remote named `icloud`; complete 2FA when prompted'
 
     # Each branch prunes its own bullet before possibly re-adding it, not just
     # when it's due to disappear: `li` only appends, so guarding the add with

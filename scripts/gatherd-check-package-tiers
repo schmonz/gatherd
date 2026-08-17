@@ -37,6 +37,7 @@ ALLOWED = {
     'iio-sensor-proxy': 'hardware-gated (has_screen_backlight/has_kbd_backlight)',
     'clight': 'hardware-gated (has_screen_backlight/has_kbd_backlight)',
     'python-validity': 'hardware-gated (has_fingerprint_reader)',
+    'libjpeg-turbo': 'hardware-gated (has_rotated_panel)',
 }
 
 

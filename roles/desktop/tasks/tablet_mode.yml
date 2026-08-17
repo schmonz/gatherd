@@ -30,14 +30,22 @@
     - binding: $mod+Shift+t
       script: gatherd-music-stand
 
-# Declarative rather than flags passed at launch: setting fullscreen and idle
-# inhibition as window rules avoids racing the viewer's own startup, and the
-# inhibitor cannot leak because sway drops it when the window stops being
-# fullscreen.
-- name: Keep the score fullscreen and the screen awake
+# NOT `fullscreen enable`: sway's own rule fires (event trace confirms
+# fullscreen_mode=1 moments after mapping) but papers immediately restores its
+# own persisted (non-fullscreen) window state and clobbers it, so the rule
+# bought nothing but a visible flicker. gatherd-music-stand launches the
+# viewer with its own fullscreen flag instead, which is what actually sticks.
+#
+# NOT `inhibit_idle fullscreen` either: that inhibits only while fullscreen,
+# so the moment papers wins the race above, the inhibitor disengages and the
+# screen blanks mid-piece — the one thing this feature exists to prevent.
+# `visible` inhibits for as long as the score is on screen, fullscreen or not,
+# which is the actual safety property wanted. gatherd-tablet-mode additionally
+# inhibits `open` on every view for the whole of tablet mode, not just this
+# one window; see docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
+- name: Keep the screen awake while the score is visible
   ansible.builtin.blockinfile:
     path: "{{ target_home }}/.config/sway/config.d/default"
     marker: "# {mark} ANSIBLE MANAGED BLOCK: music stand"
     block: |
-      for_window [app_id="{{ music_stand_app_id }}"] fullscreen enable
-      for_window [app_id="{{ music_stand_app_id }}"] inhibit_idle fullscreen
+      for_window [app_id="{{ music_stand_app_id }}"] inhibit_idle visible

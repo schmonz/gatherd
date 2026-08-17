@@ -13,10 +13,12 @@ set -eu
 config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
 root="$HOME/Documents/forscore"
 viewer=papers
+viewer_fullscreen_flag=""
 # shellcheck source=/dev/null
 [ -r "$config" ] && . "$config"
 root="${MUSIC_STAND_ROOT:-$root}"
 viewer="${MUSIC_STAND_VIEWER:-$viewer}"
+viewer_fullscreen_flag="${MUSIC_STAND_FULLSCREEN_FLAG:-$viewer_fullscreen_flag}"
 
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd"
 index="$state_dir/music-index.tsv"
@@ -106,9 +108,17 @@ turn_on() {
 
     remember "$composer" "$title" "$file"
     gatherd-tablet-mode on
-    # Fullscreen and idle inhibition are sway for_window rules, not flags here:
-    # setting them declaratively avoids racing the viewer's own startup.
-    "$viewer" "$root/$file" >/dev/null 2>&1 &
+    # sway's own `for_window ... fullscreen enable` rule fires but papers
+    # restores its own persisted (non-fullscreen) window state moments later
+    # and clobbers it — confirmed by event trace. The viewer's own fullscreen
+    # flag is what actually sticks; idle inhibition stays a declarative sway
+    # rule (`inhibit_idle visible`), since that doesn't race the viewer's
+    # startup the way fullscreen state does.
+    if [ -n "$viewer_fullscreen_flag" ]; then
+        "$viewer" "$viewer_fullscreen_flag" "$root/$file" >/dev/null 2>&1 &
+    else
+        "$viewer" "$root/$file" >/dev/null 2>&1 &
+    fi
 }
 
 turn_off() {

@@ -4,7 +4,10 @@
 into a gatherd-managed, fleet-wide iCloud Drive sync.
 
 **Date:** 2026-08-10
-**Status:** Approved design; implementation plan pending.
+**Status:** Implemented and live as of 2026-08-17. Plan:
+`plans/2026-08-10-icloud-sync.md`. R1 resolved (§10); migration completed itself
+(§7); verified end to end against the real remote (§11.3). Outstanding: T4
+(long-run token rotation, not blocking) and the §12 deferrals.
 **Related:** `specs/2026-06-29-travel-repave-design.md` (SP3 unattended completion,
 SP4 credential lifecycle) — this retires the standing `rclone config` manual step.
 
@@ -253,21 +256,38 @@ Unattended runs are silent unless a human must decide.
 | Concurrent run | `flock` non-blocking, exit 0. |
 | No network / captive portal | Fail fast, quiet exit. `gatherd-prompt-captiveportal` owns that problem. |
 
-## 7. Migration (one-time, manual — not playbook logic)
+## 7. Migration — **completed itself automatically, 2026-08-12**
 
-1. `mv ~/notes ~/Documents/iCloud/FSNotes`
-2. `gatherd-icloud-sync --init FSNotes` — the move invalidates the old baseline, so this
-   takes the populated-local path, correctly requiring a human to watch.
-3. Remove `~/.local/bin/fsnotes-sync` and `~/.config/rclone/fsnotes.filter`.
+**What was planned:** `mv ~/notes ~/Documents/iCloud/FSNotes`, then
+`gatherd-icloud-sync --init FSNotes` to rebuild a baseline over populated local
+data, watched by a human because the predecessor's silent failure (§10 R4) meant
+the two sides might have diverged.
 
-**Not a formality.** The predecessor script, `fsnotes-sync`, used a
-`--backup-dir` flag on the wrong side (Path1, the remote, instead of Path2)
-and aborted before it ever transferred anything — its log
-(`~/.local/state/rclone-fsnotes.log`) shows zero successful bisyncs. The two
-sides may have diverged, silently, for as long as that script ran, and may
-never have actually been in sync. Treat step 2 as a real reconciliation to
-watch, not a rubber stamp, and take an independent copy of both sides before
-running it.
+**What actually happened, and it is better:** the `--init-if-empty` path in
+§6 fired on its own at the first login after converge, while
+`~/Documents/iCloud/FSNotes` was still empty — provably the safe case, which is
+exactly the condition D3 exists to detect. It resynced from iCloud unattended.
+No `--init` over populated data was ever needed, and no human watched anything.
+
+Verified 2026-08-17, after the fact:
+
+- **208 files on each side, recursively, byte-identical.** A null-safe
+  file-by-file `cmp` of `~/notes` against `~/Documents/iCloud/FSNotes` found zero
+  differences and zero files present on one side only.
+- The sole structural difference is an **empty `Welcome/` directory** in
+  `~/notes`. bisync does not propagate empty directories without
+  `--create-empty-src-dirs`, so this is correct behaviour, not drift.
+- The remote carries `projects.state`, `*.textbundle` and `Trash/`, all of which
+  the filter file excludes by design.
+- A real baseline exists at
+  `~/.local/state/gatherd/bisync/FSNotes/…path{1,2}.lst`, written 2026-08-12 and
+  updated 2026-08-13 — i.e. bisync has completed successfully against the real
+  remote more than once.
+
+So the divergence §10 R4 warned about did not materialise: the two sides matched
+despite the predecessor never completing a sync. Remaining step: remove the now
+redundant `~/notes`, plus `~/.local/bin/fsnotes-sync` and
+`~/.config/rclone/fsnotes.filter`.
 
 ## 8. Post-setup notes changes
 
@@ -302,10 +322,17 @@ repave-suggestion threshold but only just.
 
 ## 10. Risks
 
-**R1 — Shared session token across machines (informational, not blocking).** Whether
+**R1 — Shared session token across machines — RESOLVED 2026-08-11, no change needed.**
+T1/T2/T3 in §11.1 all passed: a byte-identical config copy authenticated alongside the
+original, ten rounds of concurrent use left neither session invalidated and neither
+config rotated, and the same held with PIA connected. The hard-revocation outcome that
+would have broken D5 did not occur. T5 then confirmed the recovery path works even if it
+ever does. The per-machine-config fallback below is retained for the record, not planned.
+
+The original framing, kept because it is why the risk was never blocking: whether
 iCloud tolerates one session token in use from several machines is not settleable on
-paper, and there is no second machine available to test on. §11 substitutes a
-single-machine shadow-config test.
+paper, and no second machine was available, so §11 substituted a single-machine
+shadow-config test.
 
 R1 is **informational** because the acceptance criterion was never "Apple never
 invalidates a shared session" — it is "when it does, the fleet heals without a human,"
@@ -326,6 +353,31 @@ per expiry, rather than once per machine per repave — not whether.
 **R3 — `op` unavailable while locked.** `rclone` at the terminal will fail while
 1Password is locked. Accepted; identical to PIA's behavior today.
 
+**R4 — Fakes that are more permissive than the tools they stand for.** This is the
+live risk in this design, and the one that actually bit. `tests/icloud` drives faked
+`rclone` and `op` so the guard logic can be tested without an account or a network —
+which is right, and caught real defects. But a fake only tests the contract you
+imagined, and two shipped defects came from imagining it wrong:
+
+- **`--backup-dir1` on a remote Path1.** rclone requires `--backup-dir` on the
+  destination's remote; Path1 *is* the remote. Every bisync aborted with exit 7,
+  transferring nothing. Inherited verbatim from the predecessor `fsnotes-sync`, whose
+  log (`~/.local/state/rclone-fsnotes.log`) shows **zero** successful bisyncs — it had
+  never worked either. The faked `rclone` accepted any argv and returned success, so
+  eleven argv assertions passed against a command that could not run.
+- **`op document create -` with a redirect.** `op` reports "expected data on stdin but
+  none found" for a redirected regular file; its own example pipes. The faked `op` read
+  stdin, which the real one does not, so seven upload assertions passed against a call
+  that failed on first contact with a real vault.
+
+Both were invisible to review and to the suite, and both surfaced only when real tools
+were involved — one via §11.3's live round trip, one via `bootstrap` against the real
+vault. Mitigation adopted: the `op` fake now **rejects** the stdin form the way `op`
+does (reverting the script fails seven assertions), and §11.3 records the live
+exercise. The residual risk stands: any remaining faked surface may encode a contract
+the real tool does not honour. Prefer one live exercise per external interface over
+more assertions against a fake.
+
 ## 11. Pre-completion testing
 
 ### 11.1 The shadow-config test (replaces the two-machine test)
@@ -337,13 +389,33 @@ D5 a fleet machine holds a **byte-identical copy** of the encrypted config — s
 see except the network, it *is* one. Two rclone processes hold the same session
 independently, each free to refresh and rewrite its own file.
 
-| | What it tests | Time |
+| | What it tests | Result |
 |---|---|---|
-| **T1** Copy authenticates | `RCLONE_CONFIG=<shadow> rclone lsd icloud:` succeeds alongside the real one | minutes |
-| **T2** Concurrent use | Repeated simultaneous operations from both; neither errors, neither is forced to re-auth | minutes |
-| **T3** Divergent egress | T2 again with the shadow's traffic over PIA, so the sessions arrive from different public IPs | minutes |
-| **T4** Refresh/rotation | Both copies exercised on a cadence for 1–2 weeks: does rclone rewrite either config, does one side's refresh kill the other | weeks |
-| **T5** Self-healing | Stale-ify one copy's session; confirm `gatherd-icloud-config pull` restores it from the fleet copy with no 2FA | minutes |
+| **T1** Copy authenticates | `RCLONE_CONFIG=<shadow> rclone lsd icloud:` succeeds alongside the real one | **PASS** 2026-08-11 |
+| **T2** Concurrent use | Repeated simultaneous operations from both; neither errors, neither is forced to re-auth | **PASS** — 10 rounds, neither config rotated |
+| **T3** Divergent egress | T2 again with the shadow's traffic over PIA, so the sessions arrive from different public IPs | **PASS** with PIA connected; see caveat below |
+| **T4** Refresh/rotation | Both copies exercised on a cadence for 1–2 weeks: does rclone rewrite either config, does one side's refresh kill the other | open — not blocking |
+| **T5** Self-healing | Stale-ify one copy's session; confirm `gatherd-icloud-config pull` restores it from the fleet copy with no 2FA | **PASS** 2026-08-17 |
+
+**R1 is answered: shared session tokens hold.** T1/T2 passed cleanly and T3 passed
+with PIA connected, so the design's D5 premise stands and the per-machine-config
+fallback is not needed.
+
+**T3 caveat.** The probe ran to completion over the VPN, but the egress IP could
+not be captured — `curl https://api.ipify.org` timed out through the tunnel on
+every attempt while rclone reached iCloud fine. So "different public IP" is
+inferred from PIA being connected and general traffic routing via `tun0`, not
+directly observed. Related: on a CGNAT-addressed network, connecting PIA severs
+the Tailscale-backed NFS mount (see `plans/TODO.md`) — which is what made this
+awkward to run at all.
+
+**T5 detail** (2026-08-17). Overwrote the live `~/.config/rclone/rclone.conf` with
+`CORRUPT`, having backed it up. `status` correctly reported
+`config: plaintext, unreachable; fleet: unknown` — note `unknown` rather than a
+false `in sync`, i.e. the non-empty-plaintext guard behaving as designed when the
+local config cannot decrypt. `gatherd-icloud-config pull` then healed it in **5
+seconds with stdin closed**, so any 2FA or password prompt would have failed
+rather than blocked, and the restored config was byte-identical to the original.
 
 T3 covers the one axis a same-machine shadow genuinely misses: Apple's fraud heuristics
 may key on source IP, and PIA supplies a second egress without a second computer. A qemu
@@ -357,10 +429,27 @@ evidence gathers without attention. Remove the shadow once T4 concludes.
 
 ### 11.2 Remaining tests
 
-1. `--init-if-empty` against an empty dir.
+1. **`--init-if-empty` against an empty dir — PASS, in production.** It fired
+   unattended at the first login after converge and populated
+   `~/Documents/iCloud/FSNotes` from iCloud with 208 files. See §7.
 2. Push-back guard: deliberately break the local config, confirm nothing is published.
+   Covered by `tests/icloud` against fakes; not yet exercised against the live vault.
 3. 1Password locked (not merely absent) produces "not ready," not a failure notification
    — the `authorization timeout` case, observed live on 2026-08-10.
+
+### 11.3 Live end-to-end verification (2026-08-17)
+
+Against the real `icloud:` remote, not fakes:
+
+- `gatherd-icloud-config bootstrap` published the encrypted config; `status` returned
+  `config: encrypted, verified; fleet: in sync`.
+- A probe file created locally appeared on the remote after `gatherd-icloud-sync
+  FSNotes` (exit 0); deleting it locally and syncing again removed it from the remote.
+  418 checks, 8 seconds.
+- This is the first real-remote exercise of the bisync flag set. The unit suite drives a
+  faked `rclone` that always succeeds, so the argv had never met a real backend — the
+  class of gap that hid the `--backup-dir1` defect (§10 R4) and the `op document create -`
+  defect. Both were found only when real tools were involved.
 
 ## 12. Out of scope
 

@@ -20,6 +20,7 @@
     - .cache/captive-browser/Default
     - .config/xdg-desktop-portal
     - .config/wayvnc
+    - .config/gatherd
 
 - name: Enable system dark mode
   # Without this, the default ('default') leaves GTK, Flutter, and other apps guessing.
@@ -112,10 +113,16 @@
     regexp: '^# Auth with polkit'
     state: absent
 
+# On a convertible the power button is the only control still reachable once the
+# built-in keyboard is disabled, so it routes through our dispatcher there. On
+# every other machine it stays bound to the stock menu.
 - name: Add XF86PowerOff binding to sway config
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/default"
-    line: "bindsym XF86PowerOff exec $powermenu"
+    line: >-
+      bindsym XF86PowerOff exec
+      {{ (target_home ~ '/.local/bin/gatherd-power-button')
+         if tablet_mode_supported else '$powermenu' }}
     regexp: '^\s*bindsym\s+XF86PowerOff\b'
 
 - name: Disable numlock in sway
@@ -883,3 +890,7 @@
 
 - name: Configure the Remmina VNC-over-SSH launcher
   ansible.builtin.import_tasks: remmina.yml
+
+- name: Configure tablet mode
+  ansible.builtin.import_tasks: tablet_mode.yml
+  when: tablet_mode_supported

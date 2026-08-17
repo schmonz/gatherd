@@ -1,0 +1,43 @@
+---
+- name: Install the tablet-mode scripts
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/{{ item }}"
+    dest: "{{ target_home }}/.local/bin/{{ item }}"
+    mode: '0755'
+    remote_src: true
+  loop:
+    - gatherd-tablet-mode
+    - gatherd-music-index
+    - gatherd-music-stand
+    - gatherd-power-button
+
+- name: Configure tablet mode
+  ansible.builtin.template:
+    src: tablet-mode.conf.j2
+    dest: "{{ target_home }}/.config/gatherd/tablet-mode.conf"
+    mode: '0644'
+
+# `binding`, not `keys`: Jinja2 resolves item.keys to the dict's built-in
+# keys() method rather than the value, which fails silently and confusingly.
+- name: Bind tablet mode and music stand in sway
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/sway/config.d/default"
+    line: "bindsym {{ item.binding }} exec {{ target_home }}/.local/bin/{{ item.script }} toggle"
+    regexp: "^\\s*bindsym\\s+{{ item.binding | regex_escape }}\\s"
+  loop:
+    - binding: $mod+t
+      script: gatherd-tablet-mode
+    - binding: $mod+Shift+t
+      script: gatherd-music-stand
+
+# Declarative rather than flags passed at launch: setting fullscreen and idle
+# inhibition as window rules avoids racing the viewer's own startup, and the
+# inhibitor cannot leak because sway drops it when the window stops being
+# fullscreen.
+- name: Keep the score fullscreen and the screen awake
+  ansible.builtin.blockinfile:
+    path: "{{ target_home }}/.config/sway/config.d/default"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK: music stand"
+    block: |
+      for_window [app_id="{{ music_stand_app_id }}"] fullscreen enable
+      for_window [app_id="{{ music_stand_app_id }}"] inhibit_idle fullscreen

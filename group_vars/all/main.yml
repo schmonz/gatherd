@@ -79,6 +79,8 @@ rest_packages:
   - fwupd
   # text editor
   - xed
+  # sheet music / PDF reading in tablet mode
+  - papers
   # lightweight fallback browser for low-end/constrained machines
   - netsurf
   # favicon conversion for web-app desktop entries (ICO→PNG for fuzzel)
@@ -291,6 +293,17 @@ web_apps:
     comment: Social
     codename: Reddit
     app_store_id: "1064216828"
+
+# Tablet mode. Gated on capability rather than model: DMI is useless here, since
+# the MiniBook X reports chassis_type 10 (Notebook), not 31 (Convertible).
+tablet_mode_supported: "{{ has_touchscreen | default(false) and has_accelerometer | default(false) }}"
+# Portrait. NOT 90: where the panel is physically mounted rotated, wlroots
+# applies the DRM orientation quirk itself and 90 is upright landscape. Use 180
+# if the fold puts the wrong edge at the top.
+tablet_mode_transform: normal
+music_stand_root: "{{ target_home }}/Documents/forscore"
+music_stand_viewer: papers
+music_stand_app_id: org.gnome.Papers
 
 # iCloud Drive sync. The folder list is data on purpose: widening coverage is a
 # list edit, not a code change. Downloads is excluded on the merits — 310 MB of

@@ -1,0 +1,29 @@
+#!/bin/sh
+# Dispatch the power button on tablet state.
+#
+# The power button is on an edge of the chassis and stays reachable when the
+# machine is folded, which makes it the only usable escape hatch once the
+# built-in keyboard is disabled. Unfolded, this is transparent: it execs the
+# stock EndeavourOS power menu unchanged, so behaviour on every other machine
+# and in every other pose is untouched.
+#
+# See docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
+set -eu
+
+powermenu="$HOME/.config/sway/scripts/power_menu.sh"
+
+if ! gatherd-tablet-mode status; then
+    exec "$powermenu"
+fi
+
+selection=$(printf '%s\n' \
+    '󰊓 Exit tablet mode' \
+    '󰎈 Exit music stand' \
+    '󰐥 Power…' \
+    | fuzzel --dmenu --prompt 'tablet: ' --lines 3 --width 24) || exit 0
+
+case "$selection" in
+    *'Exit tablet mode'*) gatherd-tablet-mode off ;;
+    *'Exit music stand'*) gatherd-music-stand off ;;
+    *'Power'*)            exec "$powermenu" ;;
+esac

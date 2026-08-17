@@ -447,5 +447,40 @@ MUSIC_STAND_ROOT="$OLD_MUSIC_STAND_ROOT2"
 XDG_STATE_HOME="$OLD_XDG_STATE_HOME2"
 export MUSIC_STAND_ROOT XDG_STATE_HOME
 
+# ── gatherd-power-button ──────────────────────────────────────────────────────
+
+mkdir -p "$WORK/home/.config/sway/scripts"
+HOME="$WORK/home"
+export HOME
+cat > "$HOME/.config/sway/scripts/power_menu.sh" <<EOF
+#!/bin/sh
+printf 'power_menu\n' >> '$WORK/powermenu.log'
+EOF
+chmod +x "$HOME/.config/sway/scripts/power_menu.sh"
+
+: > "$WORK/powermenu.log"
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+reset_picker ''
+assert_ok 'power button works in laptop mode' gatherd-power-button
+assert_out 'laptop mode goes straight to the power menu' 'power_menu' \
+    cat "$WORK/powermenu.log"
+assert_out 'laptop mode shows no tablet menu' '' cat "$WORK/fuzzel.in"
+
+# In tablet mode the button must offer a touch escape instead.
+gatherd-tablet-mode on >/dev/null 2>&1
+: > "$WORK/powermenu.log"
+reset_picker 'Exit tablet mode'
+assert_ok 'power button works in tablet mode' gatherd-power-button
+assert_fail 'exit tablet mode left tablet mode off' gatherd-tablet-mode status
+assert_out 'tablet mode did not open the power menu' '' cat "$WORK/powermenu.log"
+
+# Power… must still reach the real menu, one tap deeper.
+gatherd-tablet-mode on >/dev/null 2>&1
+: > "$WORK/powermenu.log"
+reset_picker 'Power…'
+assert_ok 'power button chains to the power menu' gatherd-power-button
+assert_out 'Power… reaches the real power menu' 'power_menu' cat "$WORK/powermenu.log"
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

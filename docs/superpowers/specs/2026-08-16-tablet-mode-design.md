@@ -130,6 +130,9 @@ the REST plays and this must be CORE.
    `type:keyboard` is load-bearing: a Bluetooth page-turner pedal enumerates as
    a keyboard with a real vendor:product ID, and must keep working. The same
    goes for any external keyboard on a machine docked in tablet orientation.
+   Touchpads are disabled unconditionally rather than filtered by identifier,
+   since the i8042 heuristic does not transfer to touchpads and Sway exposes no
+   internal-device flag.
 
 **off:** restore the recorded transform, re-enable both device classes, clear
 the state file. Restoring the *recorded* value rather than hardcoding `normal`

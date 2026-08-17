@@ -43,6 +43,10 @@ set_builtin_events() {
     for _id in $(builtin_keyboards); do
         swaymsg input "$_id" events "$1" >/dev/null
     done
+    # The i8042 identifier heuristic does not transfer to touchpads: the built-in
+    # touchpad is indistinguishable by identifier from an external one, and Sway
+    # exposes no "internal device" flag. The constraint (keeping external input
+    # working while folded) is keyboard-specific and is protected by the pedal case.
     swaymsg input type:touchpad events "$1" >/dev/null
 }
 

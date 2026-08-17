@@ -459,6 +459,19 @@ Against the real `icloud:` remote, not fakes:
   class of gap that hid the `--backup-dir1` defect (§10 R4) and the `op document create -`
   defect. Both were found only when real tools were involved.
 
+**Post-reboot convergence, same day.** A reboot re-ran both tiers from a deployed
+tree that had moved past its sentinel — `gatherd.service` `ok=197 changed=4 failed=0`,
+`gatherd-async.service` `ok=124 changed=6 failed=0`, `last-run: ok`, all three
+sentinels landing on the deployed HEAD. Afterwards every mechanical item in
+`section_verify` passed, including this one.
+
+This is the strongest available evidence for the plan's deliberate departure from §4
+(the `icloud` role in `site-core.yml` rather than `site-async.yml`): the scripts were
+installed before the greeter, so `gatherd-prompt-icloud` existed at the *first* login
+of the boot, ran, completed its work and exited rather than lingering. Under the REST
+placement the spec originally called for, it would not have been on disk yet. Short of
+an actual repave, this is the closest the fresh-machine path has been exercised.
+
 ## 12. Out of scope
 
 - Scheduled/timer-driven sync, and the NetworkManager dispatcher trigger.

@@ -331,9 +331,15 @@ export MUSIC_STAND_ROOT
 
 MUSIC_STAND_VIEWER=fakeviewer
 export MUSIC_STAND_VIEWER
-cat > "$FAKEBIN/fakeviewer" <<EOF
+# Reads $VIEWER_LOG rather than a fixed path, because a real viewer is
+# launched with `&` and reparented — reset_picker below cannot wait() on the
+# previous pick's process before starting the next one. A backgrounded
+# process from pick N writing after reset_picker N+1 truncates a shared log
+# is exactly the flake this avoided: giving every pick its own log file means
+# a late writer from an earlier pick can never land in the current one.
+cat > "$FAKEBIN/fakeviewer" <<'EOF'
 #!/bin/sh
-printf '%s\n' "\$*" >> '$WORK/viewer.log'
+printf '%s\n' "$*" >> "${VIEWER_LOG:-/dev/null}"
 EOF
 chmod +x "$FAKEBIN/fakeviewer"
 
@@ -352,7 +358,12 @@ chmod +x "$FAKEBIN/fuzzel"
 
 reset_picker() {
     : > "$WORK/fuzzel.in"
-    : > "$WORK/viewer.log"
+    _n=$(cat "$WORK/viewer.count" 2>/dev/null || echo 0)
+    _n=$((_n + 1))
+    printf '%s' "$_n" > "$WORK/viewer.count"
+    VIEWER_LOG="$WORK/viewer-$_n.log"
+    : > "$VIEWER_LOG"
+    export VIEWER_LOG
     printf '1' > "$WORK/fuzzel.turn"
     printf '%s\n' "$@" > "$WORK/fuzzel.answers"
 }
@@ -360,13 +371,15 @@ reset_picker() {
 # The viewer is deliberately launched with `&` (a real fullscreen viewer never
 # exits, so the picker cannot wait on it) — so a fake viewer's write to the log
 # races the next line of this test. Poll instead of reading straight through.
+# Safe to poll for absence too, now that each pick gets its own log file
+# (reset_picker above): there is no earlier writer that could ever land here.
 viewer_log() {
     _i=0
-    while [ ! -s "$WORK/viewer.log" ] && [ "$_i" -lt 100 ]; do
+    while [ ! -s "$VIEWER_LOG" ] && [ "$_i" -lt 100 ]; do
         _i=$((_i + 1))
         sleep 0.02
     done
-    cat "$WORK/viewer.log" 2>/dev/null
+    cat "$VIEWER_LOG" 2>/dev/null
 }
 
 rm -f "$XDG_STATE_HOME/gatherd/music-stand-scores"
@@ -429,11 +442,14 @@ assert_out 'level 1 offers the most recent composer first' 'Medtner' \
 assert_out 'the MRU holds both distinct picks without duplicates' '2' \
     sh -c 'wc -l < "$XDG_STATE_HOME/gatherd/music-stand-scores" | tr -d " "'
 
-# Cancelling must not rotate the screen or open anything.
+# Cancelling must not rotate the screen or open anything. Read $VIEWER_LOG
+# directly rather than via viewer_log()'s poll: cancelling exits before the
+# script ever reaches the viewer-launch line, so there is no background
+# writer racing this read the way there is after a completed pick.
 reset_picker ''
 assert_ok 'cancelling at level 1 exits cleanly' gatherd-music-stand on
 assert_fail 'cancelling left tablet mode off' gatherd-tablet-mode status
-assert_out 'cancelling opened nothing' '' cat "$WORK/viewer.log"
+assert_out 'cancelling opened nothing' '' cat "$VIEWER_LOG"
 
 # Back at level 2 returns to level 1 rather than opening a score.
 reset_picker 'Medtner' '‹ Back' 'Alkan' 'Twelve Etudes'
@@ -492,11 +508,10 @@ if [ -s "$WORK/deleted-file.err" ]; then
 else
     bad 'picking a since-deleted file warns on stderr'
 fi
-# The viewer log is shared with earlier sections and is written by
-# backgrounded, reparented processes this shell cannot wait() on, so it is not
-# a reliable place to assert absence. remember() only ever prepends, so an
-# unchanged MRU file is deterministic proof the missing-file exit happened
-# before remember() ran, not just before tablet mode.
+# A viewer would never even be launched here (the missing-file exit happens
+# before that line), so there is no log to check. remember() only ever
+# prepends, so an unchanged MRU file is deterministic proof the missing-file
+# exit happened before remember() ran, not just before tablet mode.
 assert_out 'picking a since-deleted file did not update the MRU' \
     'Ghost	Phantom Etude	ghost.pdf
 Bach	Present Work	Present.pdf' \

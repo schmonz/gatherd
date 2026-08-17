@@ -317,7 +317,16 @@ The dispatcher branches on `gatherd-tablet-mode status`:
 - **laptop mode** → exec EndeavourOS's `power_menu.sh` unchanged. Behaviour on
   every non-tablet machine, and on this one when unfolded, is untouched.
 - **tablet mode** → a `fuzzel --dmenu` touch menu: *Exit tablet mode*,
-  *Exit music stand*, *Power…* (which chains to `power_menu.sh`).
+  *Exit music stand*, *Pick another score*, *Power…* (which chains to
+  `power_menu.sh`).
+
+*Pick another score* dispatches to `gatherd-music-stand on`, not `toggle`:
+found in real use at the piano, where reading a score and wanting to switch to
+a different one left no touch-reachable path — `$mod+Shift+t` is unreachable
+with the keyboard disabled, and the menu offered only ways out of tablet mode.
+`on` re-runs the composer/score picker and, since tablet mode is already
+active, `gatherd-tablet-mode on` inside it is a no-op — the fold is never
+interrupted. `toggle` would have exited tablet mode instead.
 
 `roles/desktop/tasks/core.yml:115` already manages the
 `bindsym XF86PowerOff exec $powermenu` line, so this is a change to an existing

@@ -19,11 +19,16 @@ fi
 selection=$(printf '%s\n' \
     '󰊓 Exit tablet mode' \
     '󰎈 Exit music stand' \
+    '󰈙 Pick another score' \
     '󰐥 Power…' \
-    | fuzzel --dmenu --prompt 'tablet: ' --lines 3 --width 24) || exit 0
+    | fuzzel --dmenu --prompt 'tablet: ' --lines 4 --width 24) || exit 0
 
 case "$selection" in
-    *'Exit tablet mode'*) gatherd-tablet-mode off ;;
-    *'Exit music stand'*) gatherd-music-stand off ;;
-    *'Power'*)            exec "$powermenu" ;;
+    *'Exit tablet mode'*)   gatherd-tablet-mode off ;;
+    *'Exit music stand'*)   gatherd-music-stand off ;;
+    # `on`, not `toggle`: tablet mode is already active here, so toggle would
+    # exit it. `gatherd-tablet-mode on` is a no-op when already active, so
+    # re-running the picker never interrupts the fold.
+    *'Pick another score'*) gatherd-music-stand on ;;
+    *'Power'*)              exec "$powermenu" ;;
 esac

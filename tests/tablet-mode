@@ -679,6 +679,18 @@ assert_ok 'power button works in tablet mode' gatherd-power-button
 assert_fail 'exit tablet mode left tablet mode off' gatherd-tablet-mode status
 assert_out 'tablet mode did not open the power menu' '' cat "$WORK/powermenu.log"
 
+# Pick another score must reopen the composer/score picker without ever
+# leaving tablet mode: found in real use at the piano, where there was no
+# touch-reachable way to switch scores while folded.
+gatherd-tablet-mode on >/dev/null 2>&1
+: > "$WORK/powermenu.log"
+reset_picker 'Pick another score' 'Medtner' 'Two Skazki'
+assert_ok 'power button offers pick another score' gatherd-power-button
+assert_out 'pick another score opened the newly chosen viewer' \
+    "$SCORES/2 Skazki, Op. 48.pdf" viewer_log
+assert_ok 'pick another score never left tablet mode' gatherd-tablet-mode status
+assert_out 'pick another score did not open the power menu' '' cat "$WORK/powermenu.log"
+
 # Power… must still reach the real menu, one tap deeper.
 gatherd-tablet-mode on >/dev/null 2>&1
 : > "$WORK/powermenu.log"

@@ -344,7 +344,17 @@ assert_fail 'music-stand off left tablet mode off' gatherd-tablet-mode status
 reset_picker 'Alkan' 'Twelve Etudes'
 assert_ok 'second pick succeeds' gatherd-music-stand on
 gatherd-music-stand off >/dev/null 2>&1 || true
-assert_out 'most recent composer leads the MRU' 'Alkan' \
+
+# Re-pick Medtner (already in the MRU from the very first pick) so it becomes
+# most recent again. Alkan is alphabetically first among the fixture's
+# composers, so asserting that Alkan leads level 1 would pass identically
+# whether MRU ordering works or is missing entirely — plain alphabetical
+# order would produce the same result. Ending on Medtner forces the
+# assertions below to actually depend on recency, not on the alphabet.
+reset_picker 'Medtner' 'Two Skazki'
+assert_ok 'third pick succeeds' gatherd-music-stand on
+gatherd-music-stand off >/dev/null 2>&1 || true
+assert_out 'most recent composer leads the MRU' 'Medtner' \
     sh -c 'head -1 "$XDG_STATE_HOME/gatherd/music-stand-scores" | cut -f1'
 
 # The list level 1 SHOWS during a pick is necessarily generated before that
@@ -352,9 +362,12 @@ assert_out 'most recent composer leads the MRU' 'Alkan' \
 # Cancel a fresh probe pick to capture the list the *next* invocation would see.
 reset_picker ''
 gatherd-music-stand on >/dev/null 2>&1 || true
-assert_out 'level 1 offers the most recent composer first' 'Alkan' \
+assert_out 'level 1 offers the most recent composer first' 'Medtner' \
     sh -c 'head -1 "'"$WORK"'/fuzzel.in"'
-assert_out 'the MRU holds both picks without duplicates' '2' \
+# Three picks were made (Medtner, Alkan, Medtner again), but the repeat of
+# Medtner/Two Skazki is byte-identical to the first pick's MRU row, so it
+# dedupes rather than adding a third entry.
+assert_out 'the MRU holds both distinct picks without duplicates' '2' \
     sh -c 'wc -l < "$XDG_STATE_HOME/gatherd/music-stand-scores" | tr -d " "'
 
 # Cancelling must not rotate the screen or open anything.

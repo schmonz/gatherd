@@ -484,9 +484,10 @@ confirm a one-finger drag scrolls the score.
 
 ## Open questions
 
-- **Rotation direction** — `normal` or `180`. Both are measured portrait; which
-  one reads right-side-up depends on which edge ends up at the top when folded.
-  Settled by looking at it once; a variable regardless.
+- ~~**Rotation direction**~~ — **settled on hardware.** `normal` reads correctly
+  when the machine is folded, and there is no preferred "up" for this use, so
+  either choice would have been acceptable. `tablet_mode_transform: normal`
+  stands; `180` remains available as a variable if a preference emerges.
 - **`papers` touch-drag** — cannot be verified without a finger on the glass.
   If it disappoints, `music_stand_viewer: xreader` costs nothing.
 - **Hinge sign convention and threshold** — phase 2 only. The geometry is

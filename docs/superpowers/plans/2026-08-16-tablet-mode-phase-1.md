@@ -1233,6 +1233,19 @@ because the rotated panel inverts the intuition."
 
 Not in this plan, tracked in the spec: the udev rule binding the second accelerometer at boot, the hinge-angle daemon (signed rotation about the `y` axis, magnitude filtering, degenerate-pose state holding), and auto-rotation. The `LTSM` firmware path has its own deferral section in the spec.
 
-## Manual check after execution
+## Manual check after execution — DONE
 
-The plan cannot settle one thing mechanically: whether `normal` or `180` puts the score right-side-up when the machine is actually folded. Fold it, look at it, and if it is upside down set `tablet_mode_transform: 180` in `group_vars/all/main.yml` and re-converge.
+Exercised on the real machine before converging, with a dead-man switch arming a
+restore in case anything failed:
+
+| Check | Result |
+|---|---|
+| `on` → portrait | `90` → `normal`, 857×1371; state file recorded `90` |
+| `off` → restore | back to `90`, 1371×857; keyboard and touchpad re-enabled |
+| Orientation while folded | correct; no preferred "up" for this use, so `normal` stands |
+| Touch tracking while rotated | pointer lands under the finger — wlroots remaps touch through the output transform |
+| Physical power button while folded | fires the binding, shows the touch menu, `Exit tablet mode` restores everything |
+| Viewer preflight with `papers` absent | refuses and does NOT enter tablet mode |
+
+The only thing not yet exercised is `papers` itself, which is REST tier and not
+installed. Converging is what supplies it.

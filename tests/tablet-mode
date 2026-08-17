@@ -268,5 +268,107 @@ fi
 MUSIC_STAND_ROOT="$OLD_MUSIC_STAND_ROOT"
 export MUSIC_STAND_ROOT
 
+# ── gatherd-music-stand ───────────────────────────────────────────────────────
+
+MUSIC_STAND_VIEWER=fakeviewer
+export MUSIC_STAND_VIEWER
+cat > "$FAKEBIN/fakeviewer" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> '$WORK/viewer.log'
+EOF
+chmod +x "$FAKEBIN/fakeviewer"
+
+# fuzzel replays one canned answer per invocation, so a two-level picker can be
+# driven end to end.
+cat > "$FAKEBIN/fuzzel" <<EOF
+#!/bin/sh
+WORK='$WORK'
+cat >> "\$WORK/fuzzel.in"
+printf -- '---\n' >> "\$WORK/fuzzel.in"
+_n=\$(cat "\$WORK/fuzzel.turn" 2>/dev/null || echo 1)
+printf '%s' \$((_n + 1)) > "\$WORK/fuzzel.turn"
+sed -n "\${_n}p" "\$WORK/fuzzel.answers"
+EOF
+chmod +x "$FAKEBIN/fuzzel"
+
+reset_picker() {
+    : > "$WORK/fuzzel.in"
+    : > "$WORK/viewer.log"
+    printf '1' > "$WORK/fuzzel.turn"
+    printf '%s\n' "$@" > "$WORK/fuzzel.answers"
+}
+
+# The viewer is deliberately launched with `&` (a real fullscreen viewer never
+# exits, so the picker cannot wait on it) — so a fake viewer's write to the log
+# races the next line of this test. Poll instead of reading straight through.
+viewer_log() {
+    _i=0
+    while [ ! -s "$WORK/viewer.log" ] && [ "$_i" -lt 100 ]; do
+        _i=$((_i + 1))
+        sleep 0.02
+    done
+    cat "$WORK/viewer.log" 2>/dev/null
+}
+
+rm -f "$XDG_STATE_HOME/gatherd/music-stand-scores"
+reset_picker 'Medtner' 'Two Skazki'
+assert_ok 'music-stand on succeeds' gatherd-music-stand on
+assert_out 'the viewer opened the chosen score' "$SCORES/2 Skazki, Op. 48.pdf" \
+    viewer_log
+assert_ok 'music-stand turned tablet mode on' gatherd-tablet-mode status
+assert_out 'the pick was recorded in the MRU' \
+    'Medtner	Two Skazki	2 Skazki, Op. 48.pdf' \
+    cat "$XDG_STATE_HOME/gatherd/music-stand-scores"
+
+# Level 1 offers composers, not scores; level 2 offers that composer's scores.
+if grep -q '^Alkan$' "$WORK/fuzzel.in" && grep -q '^Medtner$' "$WORK/fuzzel.in"; then
+    ok 'level 1 lists composers'
+else
+    bad 'level 1 lists composers'
+fi
+if grep -q '^Two Skazki$' "$WORK/fuzzel.in"; then
+    ok 'level 2 lists that composer titles'
+else
+    bad 'level 2 lists that composer titles'
+fi
+if grep -q 'Twelve Etudes' "$WORK/fuzzel.in"; then
+    bad 'level 2 excludes other composers'
+else
+    ok 'level 2 excludes other composers'
+fi
+
+assert_ok 'music-stand off succeeds' gatherd-music-stand off
+assert_fail 'music-stand off left tablet mode off' gatherd-tablet-mode status
+
+# MRU ordering: the most recently played composer must lead level 1.
+reset_picker 'Alkan' 'Twelve Etudes'
+assert_ok 'second pick succeeds' gatherd-music-stand on
+gatherd-music-stand off >/dev/null 2>&1 || true
+assert_out 'most recent composer leads the MRU' 'Alkan' \
+    sh -c 'head -1 "$XDG_STATE_HOME/gatherd/music-stand-scores" | cut -f1'
+
+# The list level 1 SHOWS during a pick is necessarily generated before that
+# pick's own result lands in the MRU, so it cannot itself prove MRU ordering.
+# Cancel a fresh probe pick to capture the list the *next* invocation would see.
+reset_picker ''
+gatherd-music-stand on >/dev/null 2>&1 || true
+assert_out 'level 1 offers the most recent composer first' 'Alkan' \
+    sh -c 'head -1 "'"$WORK"'/fuzzel.in"'
+assert_out 'the MRU holds both picks without duplicates' '2' \
+    sh -c 'wc -l < "$XDG_STATE_HOME/gatherd/music-stand-scores" | tr -d " "'
+
+# Cancelling must not rotate the screen or open anything.
+reset_picker ''
+assert_ok 'cancelling at level 1 exits cleanly' gatherd-music-stand on
+assert_fail 'cancelling left tablet mode off' gatherd-tablet-mode status
+assert_out 'cancelling opened nothing' '' cat "$WORK/viewer.log"
+
+# Back at level 2 returns to level 1 rather than opening a score.
+reset_picker 'Medtner' '‹ Back' 'Alkan' 'Twelve Etudes'
+assert_ok 'back at level 2 returns to level 1' gatherd-music-stand on
+assert_out 'after going back, the second choice opened' "$SCORES/12 Etudes, Op. 39.pdf" \
+    viewer_log
+gatherd-music-stand off >/dev/null 2>&1 || true
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -1,0 +1,101 @@
+#!/bin/sh
+# Read sheet music at the piano: tablet mode, then pick a score by composer and
+# open it fullscreen.
+#
+# The picker is progressive because there is no keyboard in tablet mode and so
+# no type-to-filter — one flat list of every score is a long finger-scroll,
+# whereas composer-then-score is two short lists, and MRU ordering makes the
+# common case two taps with no scrolling at all.
+#
+# See docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
+set -eu
+
+config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
+root="$HOME/Documents/forscore"
+viewer=papers
+# shellcheck source=/dev/null
+[ -r "$config" ] && . "$config"
+root="${MUSIC_STAND_ROOT:-$root}"
+viewer="${MUSIC_STAND_VIEWER:-$viewer}"
+
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd"
+index="$state_dir/music-index.tsv"
+mru="$state_dir/music-stand-scores"
+max_mru=20
+back='‹ Back'
+
+# fuzzel entries are the touch targets here, so they are deliberately taller and
+# wider than the launcher's defaults.
+pick() {
+    fuzzel --dmenu --prompt "$1" --lines 12 --width 40 || true
+}
+
+# Regenerate whenever forScore's backup is newer than the index. A stat
+# comparison keeps this self-maintaining: no cron, no manual refresh step.
+refresh_index() {
+    _backup="$root/Automatic Backup.4sb"
+    if [ ! -f "$index" ] || { [ -f "$_backup" ] && [ "$_backup" -nt "$index" ]; }; then
+        MUSIC_STAND_ROOT="$root" gatherd-music-index || true
+    fi
+}
+
+# Most-recently-played first, then everything else. awk dedupes in one pass and
+# preserves first-seen order, so the MRU head wins without a second sort.
+composers() {
+    { [ -r "$mru" ] && cut -f1 "$mru"; cut -f1 "$index"; } 2>/dev/null \
+        | awk 'NF && !seen[$0]++'
+}
+
+titles_for() {
+    { [ -r "$mru" ] && awk -F'\t' -v c="$1" '$1 == c { print $2 }' "$mru"
+      awk -F'\t' -v c="$1" '$1 == c { print $2 }' "$index"; } 2>/dev/null \
+        | awk 'NF && !seen[$0]++'
+}
+
+file_for() {
+    awk -F'\t' -v c="$1" -v t="$2" '$1 == c && $2 == t { print $3; exit }' "$index"
+}
+
+remember() {
+    mkdir -p "$state_dir" 2>/dev/null || return 0
+    { printf '%s\t%s\t%s\n' "$1" "$2" "$3"
+      [ -r "$mru" ] && cat "$mru"; } 2>/dev/null \
+        | awk 'NF && !seen[$0]++' | head -n "$max_mru" > "$mru.tmp" \
+        && mv "$mru.tmp" "$mru"
+}
+
+turn_on() {
+    refresh_index
+    [ -s "$index" ] || { echo "gatherd-music-stand: no scores indexed" >&2; exit 1; }
+
+    while :; do
+        composer=$(composers | pick 'composer: ')
+        [ -n "$composer" ] || exit 0
+
+        title=$( { titles_for "$composer"; printf '%s\n' "$back"; } | pick 'score: ')
+        [ -n "$title" ] || exit 0
+        [ "$title" = "$back" ] || break
+    done
+
+    file=$(file_for "$composer" "$title")
+    [ -n "$file" ] || { echo "gatherd-music-stand: no file for $title" >&2; exit 1; }
+
+    remember "$composer" "$title" "$file"
+    gatherd-tablet-mode on
+    # Fullscreen and idle inhibition are sway for_window rules, not flags here:
+    # setting them declaratively avoids racing the viewer's own startup.
+    "$viewer" "$root/$file" >/dev/null 2>&1 &
+}
+
+turn_off() {
+    # The viewer is left running: closing a document the human may still want is
+    # not this script's business.
+    gatherd-tablet-mode off
+}
+
+case "${1:-toggle}" in
+    on)     turn_on ;;
+    off)    turn_off ;;
+    toggle) if gatherd-tablet-mode status; then turn_off; else turn_on; fi ;;
+    *)      echo "usage: $0 on|off|toggle" >&2; exit 2 ;;
+esac

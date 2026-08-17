@@ -142,5 +142,55 @@ gatherd-tablet-mode off >/dev/null 2>&1 || true
 
 assert_fail 'unknown subcommand fails' gatherd-tablet-mode wibble
 
+# ── gatherd-music-index ────────────────────────────────────────────────────
+
+SCORES="$WORK/scores"
+mkdir -p "$SCORES"
+touch "$SCORES/2 Skazki, Op. 48.pdf" "$SCORES/12 Etudes, Op. 39.pdf" "$SCORES/Untitled.pdf"
+# Non-PDF residue forScore leaves in its sync folder; must never be indexed.
+touch "$SCORES/syncFolderState" "$SCORES/syncFolderLog"
+
+# Build a synthetic backup in forScore's real container format: an ASCII header,
+# then gzip, then a binary plist keyed "<filename>|<field>".
+python3 - "$SCORES/Automatic Backup.4sb" <<'PY'
+import gzip, plistlib, sys
+payload = plistlib.dumps({
+    "2 Skazki, Op. 48.pdf|composer": "Medtner",
+    "2 Skazki, Op. 48.pdf|title": "Two Skazki",
+    "12 Etudes, Op. 39.pdf|composer": "Alkan",
+    "12 Etudes, Op. 39.pdf|title": "Twelve Etudes",
+    "&SYS;lastLeftMenu": 0,
+}, fmt=plistlib.FMT_BINARY)
+with open(sys.argv[1], "wb") as f:
+    f.write(b"<--4SBV02-->" + b" " * 68)
+    f.write(gzip.compress(payload))
+PY
+
+MUSIC_STAND_ROOT="$SCORES"
+XDG_STATE_HOME="$WORK/state"
+export MUSIC_STAND_ROOT XDG_STATE_HOME
+
+assert_out 'index maps composer, title and filename' \
+    'Alkan	Twelve Etudes	12 Etudes, Op. 39.pdf
+Medtner	Two Skazki	2 Skazki, Op. 48.pdf
+Unknown	Untitled	Untitled.pdf' \
+    gatherd-music-index --print
+
+assert_ok 'index writes the TSV' gatherd-music-index
+assert_ok 'index TSV exists' test -f "$XDG_STATE_HOME/gatherd/music-index.tsv"
+assert_out 'index covers every PDF and nothing else' '3' \
+    sh -c 'wc -l < "$XDG_STATE_HOME/gatherd/music-index.tsv" | tr -d " "'
+
+# Graceful degradation: a missing or corrupt backup must still list the scores.
+mv "$SCORES/Automatic Backup.4sb" "$WORK/backup.bak"
+assert_out 'a missing backup still lists every score as Unknown' \
+    'Unknown	12 Etudes, Op. 39	12 Etudes, Op. 39.pdf
+Unknown	2 Skazki, Op. 48	2 Skazki, Op. 48.pdf
+Unknown	Untitled	Untitled.pdf' \
+    gatherd-music-index --print
+printf 'not a backup' > "$SCORES/Automatic Backup.4sb"
+assert_ok 'a corrupt backup does not crash' gatherd-music-index --print
+mv "$WORK/backup.bak" "$SCORES/Automatic Backup.4sb"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+# Decode forScore's "Automatic Backup.4sb" into a composer/title/filename index.
+#
+# Composer lives nowhere else: the filenames carry only a work title
+# ("2 Skazki, Op. 48.pdf") and the PDFs' own metadata is scanner residue. The
+# backup is an ASCII header, then gzip, then an Apple binary plist keyed
+# "<filename>|<field>" — both formats are Python stdlib, so this adds no
+# packages and the feature stays CORE.
+#
+# The parse is isolated here on purpose. forScore's format is proprietary and
+# may change; when it does the index goes stale rather than the picker breaking,
+# and a score with no recoverable metadata still gets listed under "Unknown".
+#
+# See docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
+
+import os
+import plistlib
+import sys
+import zlib
+
+BACKUP = "Automatic Backup.4sb"
+GZIP_MAGIC = b"\x1f\x8b"
+FIELDS = ("composer", "title")
+
+
+def default_root():
+    return os.environ.get(
+        "MUSIC_STAND_ROOT", os.path.expanduser("~/Documents/forscore")
+    )
+
+
+def index_path():
+    state = os.environ.get(
+        "XDG_STATE_HOME", os.path.expanduser("~/.local/state")
+    )
+    return os.path.join(state, "gatherd", "music-index.tsv")
+
+
+def load_metadata(root):
+    """Map filename -> {composer, title}. Empty on any failure: the index must
+    degrade to a flat list rather than refuse to produce one."""
+    try:
+        with open(os.path.join(root, BACKUP), "rb") as handle:
+            blob = handle.read()
+        # Locate the payload by magic rather than a fixed offset, so a header
+        # length change in a future forScore release does not break the parse.
+        start = blob.find(GZIP_MAGIC)
+        if start < 0:
+            return {}
+        plist = plistlib.loads(zlib.decompress(blob[start:], 47))
+    except Exception:
+        return {}
+
+    meta = {}
+    for key, value in plist.items():
+        name, sep, field = key.rpartition("|")
+        if not sep or field not in FIELDS or not isinstance(value, str):
+            continue
+        meta.setdefault(name, {})[field] = value
+    return meta
+
+
+def clean(text):
+    # Tabs and newlines would corrupt the TSV that every consumer splits on.
+    return " ".join(text.split())
+
+
+def rows(root):
+    meta = load_metadata(root)
+    try:
+        names = sorted(n for n in os.listdir(root) if n.lower().endswith(".pdf"))
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        entry = meta.get(name, {})
+        composer = clean(entry.get("composer", "")) or "Unknown"
+        title = clean(entry.get("title", "")) or name[:-4]
+        out.append((composer, title, name))
+    # Composer first so the picker's first level needs no re-sort.
+    out.sort(key=lambda r: (r[0].lower(), r[1].lower()))
+    return out
+
+
+def main(argv):
+    root = default_root()
+    lines = ["\t".join(r) for r in rows(root)]
+    body = "".join(line + "\n" for line in lines)
+
+    if "--print" in argv[1:]:
+        sys.stdout.write(body)
+        return 0
+
+    path = index_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(body)
+    os.replace(tmp, path)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

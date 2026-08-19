@@ -657,7 +657,12 @@ gatherd-music-stand off >/dev/null 2>&1 || true
 
 # ── gatherd-music-stand: touch target font ────────────────────────────────────
 # The composer/score lists are the longest lists tapped while folded, so
-# pick() gets the same derived --font as the power button's escape menu.
+# pick() gets the same derived --font as the power button's escape menu — but
+# ONLY while a finger, not a keyboard, is doing the tapping. turn_on() picks
+# before it flips tablet mode on, so a plain keyboard-invoked `on` (tablet
+# mode inactive at pick time) must stay keyboard-sized; only "Pick another
+# score" from the already-folded power-button menu (tablet mode active at
+# pick time) should get the touch-sized font.
 
 reset_picker 'Medtner' 'Two Skazki'
 assert_ok 'music-stand on succeeds with no menu_font configured' gatherd-music-stand on
@@ -670,12 +675,24 @@ gatherd-music-stand off >/dev/null 2>&1 || true
 
 printf 'transform=180\nmenu_font=JetBrainsMono-Regular:size=22\n' \
     > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+
+gatherd-tablet-mode off >/dev/null 2>&1 || true
 reset_picker 'Medtner' 'Two Skazki'
-assert_ok 'music-stand on succeeds with menu_font configured' gatherd-music-stand on
-if grep -q -- '--font JetBrainsMono-Regular:size=22' "$WORK/fuzzel.args.log"; then
-    ok 'pick passes --font through to fuzzel when menu_font is configured'
+assert_ok 'music-stand on succeeds with tablet mode inactive' gatherd-music-stand on
+if grep -q -- '--font' "$WORK/fuzzel.args.log"; then
+    bad 'pick omits --font when tablet mode is inactive, even with menu_font configured'
 else
-    bad 'pick passes --font through to fuzzel when menu_font is configured'
+    ok 'pick omits --font when tablet mode is inactive, even with menu_font configured'
+fi
+gatherd-music-stand off >/dev/null 2>&1 || true
+
+gatherd-tablet-mode on >/dev/null 2>&1
+reset_picker 'Medtner' 'Two Skazki'
+assert_ok 'music-stand on succeeds with tablet mode active' gatherd-music-stand on
+if grep -q -- '--font JetBrainsMono-Regular:size=22' "$WORK/fuzzel.args.log"; then
+    ok 'pick passes --font through to fuzzel when tablet mode is active'
+else
+    bad 'pick passes --font through to fuzzel when tablet mode is active'
 fi
 gatherd-music-stand off >/dev/null 2>&1 || true
 printf 'transform=180\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"

@@ -32,9 +32,20 @@ back='‹ Back'
 # multiple of foot_font_size, not a constant, so these stay tappable on any
 # other machine gatherd converges; absent or empty, fuzzel just uses its own
 # default.
+#
+# The --font override itself is conditional on tablet mode being ACTIVE, not
+# just on menu_font being configured: turn_on() below reaches pick() before it
+# flips tablet mode on, so a keyboard-invoked pick (human at the keyboard,
+# about to fold) sees tablet mode inactive and must stay keyboard-sized. Only
+# "Pick another score" from the power button's already-folded escape menu
+# (gatherd-power-button) sees tablet mode active, and that's the finger-tap
+# case this size is for. A size-22 menu at the keyboard was reported as
+# needlessly huge - this is that fix.
 pick() {
     set -- --dmenu --prompt "$1" --lines 12 --width 40
-    [ -n "$menu_font" ] && set -- "$@" --font "$menu_font"
+    if gatherd-tablet-mode status >/dev/null 2>&1; then
+        [ -n "$menu_font" ] && set -- "$@" --font "$menu_font"
+    fi
     fuzzel "$@" || true
 }
 

@@ -758,8 +758,8 @@ printf 'transform=180\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
 # ── gatherd-hinge-daemon ──────────────────────────────────────────────────────
 # Fakes gatherd-tablet-mode itself (rather than reusing the real script's
 # swaymsg fake) so these tests exercise only the daemon's decision logic —
-# geometry, hysteresis, the degenerate pose, and ownership — without also
-# depending on the compositor plumbing already covered above.
+# geometry, the lid gate, hysteresis, the degenerate pose, and ownership —
+# without also depending on the compositor plumbing already covered above.
 
 # fake_bin NAME BODY — install a fake executable that shadows the real one.
 # Matches tests/icloud's helper; tests/tablet-mode had not needed it until now.
@@ -790,9 +790,11 @@ hash -r
 
 HINGE_LID="$WORK/hinge-lid"
 HINGE_BASE="$WORK/hinge-base"
+HINGE_LID_STATE="$WORK/hinge-lid-state"
 GATHERD_HINGE_LID_DEVICE="$HINGE_LID"
 GATHERD_HINGE_BASE_DEVICE="$HINGE_BASE"
-export GATHERD_HINGE_LID_DEVICE GATHERD_HINGE_BASE_DEVICE
+GATHERD_HINGE_LID_STATE="$HINGE_LID_STATE"
+export GATHERD_HINGE_LID_DEVICE GATHERD_HINGE_BASE_DEVICE GATHERD_HINGE_LID_STATE
 unset GATHERD_HINGE_ENTER GATHERD_HINGE_EXIT
 
 # write_vector DIR X Y Z — plants raw sysfs-style accelerometer counts.
@@ -803,54 +805,96 @@ write_vector() {
     printf '%s\n' "$4" > "$1/in_accel_z_raw"
 }
 
+# write_lid_state open|closed — mimics /proc/acpi/button/lid/LID0/state's format.
+write_lid_state() {
+    printf 'state:      %s\n' "$1" > "$HINGE_LID_STATE"
+}
+
 # Every fixture below shares the same lid vector and varies only the base
 # vector's rotation about the hinge (y) axis, so each row isolates exactly
 # the signed-angle geometry under test. Raw counts precomputed offline from
-# the theta = 180 - phi relationship the script implements; each was checked
-# to round-trip to its target phi to within 0.02 degrees before being baked
-# in here, so a passing assertion means the formula, not the fixture, is right.
+# the atan2 formula the script implements (theta itself, no further
+# transform); each was checked to round-trip to its target theta to within
+# 0.02 degrees before being baked in here, so a passing assertion means the
+# formula, not the fixture, is right. Lid defaults to open on every reset -
+# tests that care about the closed lid set it explicitly.
 reset_daemon_state() {
     rm -f "$FAKETM_STATE" "$XDG_RUNTIME_DIR/gatherd/hinge-daemon-owns"
     : > "$FAKETM_LOG"
+    write_lid_state open
 }
 
 hinge_print() {
     gatherd-hinge-daemon --print
 }
 
-# ── the four measured poses ──────────────────────────────────────────────────
+# ── the measured poses ────────────────────────────────────────────────────────
+# theta is the hinge angle itself (atan2-wrapped to +-180), not "180 - theta":
+# typing reads ~108, flat reads ~178, a part-folded tent reads ~-92, and fully
+# folded reads ~-2. All four are exercised here so the corrected geometry, not
+# just the corrected threshold, is under test.
 
 reset_daemon_state
 write_vector "$HINGE_LID" 1024 100 0
 write_vector "$HINGE_BASE" -920 100 449
-assert_out 'nearly shut reads phi near 26' 'phi=26.0 action=hold' hinge_print
+assert_out 'a part-open tent reads theta near 154, well clear of the fold band' \
+    'theta=154.0 action=hold' hinge_print
 
 reset_daemon_state
 write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" 178 100 1008
-assert_out 'typing angle reads phi near 100' 'phi=100.0 action=hold' hinge_print
+write_vector "$HINGE_BASE" -317 100 976
+assert_out 'typing angle reads theta near 108 and does not enter' \
+    'theta=108.0 action=hold' hinge_print
 
 reset_daemon_state
 write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" 1023 100 36
-assert_out 'flat and coplanar reads phi near 178' 'phi=178.0 action=hold' hinge_print
+write_vector "$HINGE_BASE" -1026 100 36
+assert_out 'flat reads theta near 178 and does not enter' \
+    'theta=178.0 action=hold' hinge_print
 
 reset_daemon_state
 write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -54 100 -1023
-assert_out 'folded past flat reads phi near 273 and crosses enter' \
-    'phi=273.0 action=enter' hinge_print
-assert_ok 'folding past flat actually turned tablet mode on' gatherd-tablet-mode status
+write_vector "$HINGE_BASE" -36 100 -1023
+assert_out 'a part-folded tent reads theta near 92 and does not enter' \
+    'theta=92.0 action=hold' hinge_print
+assert_fail 'the tent pose alone never turns tablet mode on' gatherd-tablet-mode status
 
-# ── hysteresis: a phi between the thresholds changes nothing ────────────────
-# 220 sits between the default exit (200) and enter (240) thresholds. Tested
-# from both sides of the dead zone: rising from inactive must not enter, and
-# falling from an owned-active state must not exit either.
+# ── the fully folded pose and the lid gate ───────────────────────────────────
+# theta near -2 is what a shut lid ALSO reads (atan2 wraps at +-180, not at
+# zero) - the lid switch is what tells the two apart. This is the fix itself.
 
 reset_daemon_state
 write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" 784 100 -658
-assert_out 'a mid-band phi does not enter from inactive' 'phi=220.0 action=hold' hinge_print
+write_vector "$HINGE_BASE" 1023 100 -36
+assert_out 'folded (theta near -2) with the lid open enters tablet mode' \
+    'theta=2.0 action=enter' hinge_print
+assert_ok 'folding with the lid open actually turned tablet mode on' gatherd-tablet-mode status
+
+reset_daemon_state
+write_lid_state closed
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" 1023 100 -36
+assert_out 'the same theta with the lid closed does not enter' \
+    'theta=2.0 action=hold' hinge_print
+assert_fail 'a closed lid never turns tablet mode on' gatherd-tablet-mode status
+
+reset_daemon_state
+rm -f "$HINGE_LID_STATE"
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" 1023 100 -36
+assert_out 'an unreadable lid file is treated as not open and does not enter' \
+    'theta=2.0 action=hold' hinge_print
+assert_fail 'an unreadable lid file never turns tablet mode on' gatherd-tablet-mode status
+
+# ── hysteresis: a theta between the thresholds changes nothing ──────────────
+# 40 sits between the default fold_exit (50) and fold_enter (30) thresholds.
+# Tested from both sides of the dead zone: falling from inactive must not
+# enter, and rising from an owned-active state must not exit either.
+
+reset_daemon_state
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" 784 100 658
+assert_out 'a mid-band theta does not enter from inactive' 'theta=40.0 action=hold' hinge_print
 assert_fail 'still inactive after a mid-band reading' gatherd-tablet-mode status
 
 reset_daemon_state
@@ -858,8 +902,8 @@ mkdir -p "$XDG_RUNTIME_DIR/gatherd"
 gatherd-tablet-mode on >/dev/null 2>&1
 : > "$XDG_RUNTIME_DIR/gatherd/hinge-daemon-owns"
 : > "$FAKETM_LOG"
-assert_out 'a mid-band phi does not exit from an owned-active state' \
-    'phi=220.0 action=hold' hinge_print
+assert_out 'a mid-band theta does not exit from an owned-active state' \
+    'theta=40.0 action=hold' hinge_print
 assert_ok 'still active after a mid-band reading' gatherd-tablet-mode status
 # The log legitimately holds "status" calls (the daemon's own state check,
 # plus this test's direct one above) — only "off" would prove the bug.
@@ -877,13 +921,13 @@ fi
 reset_daemon_state
 write_vector "$HINGE_LID" 0 1024 0
 write_vector "$HINGE_BASE" 0 1024 0
-assert_out 'the degenerate pose reports no phi and no decision' \
-    'phi=degenerate action=hold' hinge_print
+assert_out 'the degenerate pose reports no theta and no decision' \
+    'theta=degenerate action=hold' hinge_print
 assert_out 'the degenerate pose never calls gatherd-tablet-mode at all' '' cat "$FAKETM_LOG"
 
 # ── the ownership rule ────────────────────────────────────────────────────────
-# The human's real workflow: trigger tablet mode manually, then fold. At that
-# moment phi is a typing angle, far below exit — the exact case that must not
+# The human's real workflow: trigger tablet mode manually, then fold to flat.
+# At that moment theta is well above fold_exit — the exact case that must not
 # flap the mode back off, because the daemon never turned this session on.
 
 reset_daemon_state
@@ -892,9 +936,9 @@ gatherd-tablet-mode on >/dev/null 2>&1
 # Deliberately no hinge-daemon-owns marker: this session was started manually.
 : > "$FAKETM_LOG"
 write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" 178 100 1008
+write_vector "$HINGE_BASE" -317 100 976
 assert_out 'a manually-started session at typing angle is left alone' \
-    'phi=100.0 action=hold' hinge_print
+    'theta=108.0 action=hold' hinge_print
 assert_ok 'a manually-started tablet mode is still active afterward' gatherd-tablet-mode status
 # Same reasoning as the mid-band case above: "status" calls are expected;
 # only "off" would mean the ownership rule was violated.
@@ -907,48 +951,48 @@ gatherd-tablet-mode off >/dev/null 2>&1 || true
 
 # ── thresholds are overridable ───────────────────────────────────────────────
 # Required by spec: enter/exit must be tunable via environment variables
-# without editing code. Lowering GATHERD_HINGE_ENTER below a typing-angle phi
-# proves the override is actually read, not just accepted and ignored.
+# without editing code. Raising GATHERD_HINGE_ENTER above the tent pose's
+# theta proves the override is actually read, not just accepted and ignored.
 
 reset_daemon_state
-GATHERD_HINGE_ENTER=50
+GATHERD_HINGE_ENTER=100
 export GATHERD_HINGE_ENTER
 write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" 178 100 1008
-assert_out 'a lowered GATHERD_HINGE_ENTER makes typing angle cross the threshold' \
-    'phi=100.0 action=enter' hinge_print
+write_vector "$HINGE_BASE" -36 100 -1023
+assert_out 'a raised GATHERD_HINGE_ENTER makes the tent pose cross the threshold' \
+    'theta=92.0 action=enter' hinge_print
 unset GATHERD_HINGE_ENTER
 gatherd-tablet-mode off >/dev/null 2>&1 || true
 
 # ── thresholds are configurable via tablet-mode.conf ─────────────────────────
 # The daemon shares gatherd-tablet-mode's config file rather than inventing
-# its own. hinge_enter_deg/hinge_exit_deg must be read from it, an env var
+# its own. fold_enter_deg/fold_exit_deg must be read from it, an env var
 # override must still win over it, and a malformed file must not crash the
 # daemon - just fall back to the built-in defaults.
 
 reset_daemon_state
-printf 'transform=180\nhinge_enter_deg=50\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+printf 'transform=180\nfold_enter_deg=100\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
 write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" 178 100 1008
-assert_out 'a config-file hinge_enter_deg makes typing angle cross the threshold' \
-    'phi=100.0 action=enter' hinge_print
+write_vector "$HINGE_BASE" -36 100 -1023
+assert_out 'a config-file fold_enter_deg makes the tent pose cross the threshold' \
+    'theta=92.0 action=enter' hinge_print
 
 reset_daemon_state
-GATHERD_HINGE_ENTER=500
+GATHERD_HINGE_ENTER=10
 export GATHERD_HINGE_ENTER
 write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -54 100 -1023
-assert_out 'GATHERD_HINGE_ENTER still overrides a config-file hinge_enter_deg' \
-    'phi=273.0 action=hold' hinge_print
+write_vector "$HINGE_BASE" -36 100 -1023
+assert_out 'GATHERD_HINGE_ENTER still overrides a config-file fold_enter_deg' \
+    'theta=92.0 action=hold' hinge_print
 unset GATHERD_HINGE_ENTER
 
 reset_daemon_state
-printf 'this is not a key=value config\nhinge_enter_deg\n=200\n' \
+printf 'this is not a key=value config\nfold_enter_deg\n=200\n' \
     > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
 write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -54 100 -1023
+write_vector "$HINGE_BASE" 1023 100 -36
 assert_out 'a malformed config file falls back to the default enter threshold' \
-    'phi=273.0 action=enter' hinge_print
+    'theta=2.0 action=enter' hinge_print
 
 rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
 gatherd-tablet-mode off >/dev/null 2>&1 || true

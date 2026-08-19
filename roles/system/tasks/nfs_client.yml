@@ -89,6 +89,31 @@
 #    first, releasing file handles on NFS mounts before autofs unmounts them.
 # 2. After=tailscaled.service: autofs stops before tailscaled, so umount.nfs4 can
 #    still reach the NFS server over Tailscale.
+# 3. KillMode=mixed + TimeoutStopSec: the one place we knowingly diverge from the
+#    vendor [Service] block. Vendor ships KillMode=process, so stopping autofs
+#    signals only automount and orphans any umount helper still running. Ours
+#    reliably wedges after its umount(2) has already succeeded — the mount is
+#    gone from mountinfo in 19ms, but the helper never exits, so autofs abandons
+#    it at its 12s umount_wait. Orphaned outside any cgroup, it then survives
+#    until systemd-shutdown, where it blocks sync() for 30s and ignores SIGTERM
+#    for the full 90s grace: ~120s of a ~140s shutdown, all after journald has
+#    stopped writing. KillMode=mixed keeps SIGTERM going to automount alone, so
+#    the orderly expire still runs, but puts stragglers in the cgroup that gets
+#    SIGKILLed. Because Before=user-<uid>.slice and After=tailscaled.service put
+#    this stop between the session dying and the network going away, the kill
+#    lands while the process is still killable. TimeoutStopSec caps the whole
+#    stop; SIGKILL cannot be sent before it elapses, so it is the shutdown floor.
+#    Killing after umount(2) returned cannot lose data.
+#
+#    The helper wedges on every shutdown, so the cap is paid in full every time
+#    and its value IS the cost: measured 12.9s total at 8s, 7.9s at 3s. An
+#    unwedged stop needs well under 1s (/net and /misc unmount in 0.2s each, the
+#    nfs4 umount(2) in 19ms), so 3s is ample. What the cap cannot buy is a clean
+#    exit: while the helper wedges, the cgroup never empties, so autofs always
+#    ends as `Failed with result 'timeout'` and leaves the .autofs-mounts
+#    autofs mountpoint behind. systemd-shutdown unmounts that in under 2ms, so
+#    the failure is cosmetic -- but it means an autofs `failed` state after a
+#    reboot is expected here, not a symptom to chase.
 - name: Take autofs off network-online, and order it for clean shutdown
   ansible.builtin.copy:
     dest: /etc/systemd/system/autofs.service
@@ -104,8 +129,10 @@
       EnvironmentFile=-/etc/default/autofs
       ExecStart=/usr/bin/automount $OPTIONS --systemd-service --dont-check-daemon
       ExecReload=/usr/bin/kill -HUP $MAINPID
-      KillMode=process
+      KillMode=mixed
       TimeoutSec=180
+      # Must follow TimeoutSec=, which would otherwise set the stop timeout too.
+      TimeoutStopSec=3
 
       [Install]
       WantedBy=multi-user.target
@@ -115,8 +142,9 @@
     # replaces the unit's FragmentPath outright, so systemd reloads it fresh and
     # the new dependencies apply to the already-running autofs immediately
     # (verified: the network-online edges clear before any restart). Restarting
-    # would drop the NFS automounts for no gain, and the [Service] block is
-    # byte-identical to the vendor unit anyway.
+    # would drop the NFS automounts for no gain, and the two [Service] lines we
+    # changed are both read when the unit stops, so a reload is enough for them
+    # to take effect on the running autofs.
     - Reload systemd
     - Etckeeper commit
 

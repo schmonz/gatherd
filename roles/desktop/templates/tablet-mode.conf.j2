@@ -5,3 +5,11 @@ viewer={{ music_stand_viewer }}
 viewer_flag={{ music_stand_viewer_flag }}
 hinge_enter_deg={{ tablet_mode_hinge_enter_deg }}
 hinge_exit_deg={{ tablet_mode_hinge_exit_deg }}
+# A multiple of foot_font_size, not a constant: it derives from the panel's
+# EDID (see gatherd-font-size), so the touch targets in the tablet escape menu
+# and the music-stand picker stay comfortably tappable on any other machine
+# gatherd converges, not just the one this multiple (22/10) was confirmed on
+# by hand. The whole fontconfig string lives here, not just a bare size, so
+# gatherd-power-button and gatherd-music-stand do no parsing and the family
+# can be overridden too.
+menu_font=JetBrainsMono-Regular:size={{ (22 * foot_font_size / 10) | round | int }}

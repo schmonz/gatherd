@@ -430,6 +430,7 @@ chmod +x "$FAKEBIN/fakeviewer"
 cat > "$FAKEBIN/fuzzel" <<EOF
 #!/bin/sh
 WORK='$WORK'
+printf '%s\n' "\$*" >> "\$WORK/fuzzel.args.log"
 cat >> "\$WORK/fuzzel.in"
 printf -- '---\n' >> "\$WORK/fuzzel.in"
 _n=\$(cat "\$WORK/fuzzel.turn" 2>/dev/null || echo 1)
@@ -440,6 +441,7 @@ chmod +x "$FAKEBIN/fuzzel"
 
 reset_picker() {
     : > "$WORK/fuzzel.in"
+    : > "$WORK/fuzzel.args.log"
     _n=$(cat "$WORK/viewer.count" 2>/dev/null || echo 0)
     _n=$((_n + 1))
     printf '%s' "$_n" > "$WORK/viewer.count"
@@ -653,6 +655,31 @@ assert_out 'a viewer with no configured flag still launches, with no leading fla
     "$SCORES/2 Skazki, Op. 48.pdf" viewer_log
 gatherd-music-stand off >/dev/null 2>&1 || true
 
+# ── gatherd-music-stand: touch target font ────────────────────────────────────
+# The composer/score lists are the longest lists tapped while folded, so
+# pick() gets the same derived --font as the power button's escape menu.
+
+reset_picker 'Medtner' 'Two Skazki'
+assert_ok 'music-stand on succeeds with no menu_font configured' gatherd-music-stand on
+if grep -q -- '--font' "$WORK/fuzzel.args.log"; then
+    bad 'pick omits --font when menu_font is unset'
+else
+    ok 'pick omits --font when menu_font is unset'
+fi
+gatherd-music-stand off >/dev/null 2>&1 || true
+
+printf 'transform=180\nmenu_font=JetBrainsMono-Regular:size=22\n' \
+    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+reset_picker 'Medtner' 'Two Skazki'
+assert_ok 'music-stand on succeeds with menu_font configured' gatherd-music-stand on
+if grep -q -- '--font JetBrainsMono-Regular:size=22' "$WORK/fuzzel.args.log"; then
+    ok 'pick passes --font through to fuzzel when menu_font is configured'
+else
+    bad 'pick passes --font through to fuzzel when menu_font is configured'
+fi
+gatherd-music-stand off >/dev/null 2>&1 || true
+printf 'transform=180\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+
 # ── gatherd-power-button ──────────────────────────────────────────────────────
 
 mkdir -p "$WORK/home/.config/sway/scripts"
@@ -699,6 +726,34 @@ reset_picker 'Power…'
 assert_ok 'power button chains to the power menu' gatherd-power-button
 assert_out 'Power… reaches the real power menu' 'power_menu' cat "$WORK/powermenu.log"
 gatherd-tablet-mode off >/dev/null 2>&1 || true
+
+# ── gatherd-power-button: touch target font ───────────────────────────────────
+# The escape menu is the only control reachable while folded, so it must be
+# tappable too. Confirmed comfortable at size 22 (foot_font_size=10) by hand
+# at the machine; see menu_font's derivation in tablet-mode.conf.j2.
+
+gatherd-tablet-mode on >/dev/null 2>&1
+reset_picker 'Power…'
+assert_ok 'power button escape menu works with no menu_font configured' gatherd-power-button
+if grep -q -- '--font' "$WORK/fuzzel.args.log"; then
+    bad 'power button escape menu omits --font when menu_font is unset'
+else
+    ok 'power button escape menu omits --font when menu_font is unset'
+fi
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+
+printf 'transform=180\nmenu_font=JetBrainsMono-Regular:size=22\n' \
+    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+gatherd-tablet-mode on >/dev/null 2>&1
+reset_picker 'Power…'
+assert_ok 'power button escape menu works with menu_font configured' gatherd-power-button
+if grep -q -- '--font JetBrainsMono-Regular:size=22' "$WORK/fuzzel.args.log"; then
+    ok 'power button passes --font through to fuzzel when menu_font is configured'
+else
+    bad 'power button passes --font through to fuzzel when menu_font is configured'
+fi
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+printf 'transform=180\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
 
 # ── gatherd-hinge-daemon ──────────────────────────────────────────────────────
 # Fakes gatherd-tablet-mode itself (rather than reusing the real script's

@@ -14,6 +14,7 @@ config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
 root="$HOME/Documents/forscore"
 viewer=papers
 viewer_flag=""
+menu_font=""
 # shellcheck source=/dev/null
 [ -r "$config" ] && . "$config"
 root="${MUSIC_STAND_ROOT:-$root}"
@@ -27,9 +28,14 @@ max_mru=20
 back='‹ Back'
 
 # fuzzel entries are the touch targets here, so they are deliberately taller and
-# wider than the launcher's defaults.
+# wider than the launcher's defaults. menu_font (see tablet-mode.conf.j2) is a
+# multiple of foot_font_size, not a constant, so these stay tappable on any
+# other machine gatherd converges; absent or empty, fuzzel just uses its own
+# default.
 pick() {
-    fuzzel --dmenu --prompt "$1" --lines 12 --width 40 || true
+    set -- --dmenu --prompt "$1" --lines 12 --width 40
+    [ -n "$menu_font" ] && set -- "$@" --font "$menu_font"
+    fuzzel "$@" || true
 }
 
 # Regenerate whenever forScore's backup is newer than the index. A stat

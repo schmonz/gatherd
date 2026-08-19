@@ -16,12 +16,25 @@ if ! gatherd-tablet-mode status; then
     exec "$powermenu"
 fi
 
+config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
+menu_font=""
+# shellcheck source=/dev/null
+[ -r "$config" ] && . "$config"
+
+# menu_font (a whole fontconfig string, not just a size) is a multiple of
+# foot_font_size, not a constant: it derives from the panel via
+# tablet-mode.conf.j2, so this escape hatch stays tappable on any other
+# machine gatherd converges. Absent or empty, fuzzel just uses its own
+# default, unchanged from before this menu had a font override at all.
+set -- --dmenu --prompt 'tablet: ' --lines 4 --width 24
+[ -n "$menu_font" ] && set -- "$@" --font "$menu_font"
+
 selection=$(printf '%s\n' \
     '󰊓 Exit tablet mode' \
     '󰎈 Exit music stand' \
     '󰈙 Pick another score' \
     '󰐥 Power…' \
-    | fuzzel --dmenu --prompt 'tablet: ' --lines 4 --width 24) || exit 0
+    | fuzzel "$@") || exit 0
 
 case "$selection" in
     *'Exit tablet mode'*)   gatherd-tablet-mode off ;;

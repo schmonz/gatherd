@@ -463,29 +463,44 @@ hinge axis is preserved across a hinge, and exactly one axis behaves that way:
 | z | 665.4 |
 
 **The unsigned angle between the vectors is not usable.** It is symmetric about
-φ = 180°, so it reads identically at 90° and 270°, and identically closed and
-fully folded — it cannot distinguish laptop from tablet, which is the only
-question being asked. The daemon must take the **signed** rotation about the
-hinge axis, projecting both vectors onto the x–z plane:
+180°, so it reads identically at 90° and 270° — it cannot distinguish a normal
+typing angle from folded past flat, which the daemon needs to tell apart. It
+must take the **signed** rotation about the hinge axis, projecting both
+vectors onto the x–z plane:
 
 ```
 θ = atan2(a0.x·a1.z − a0.z·a1.x,  a0.x·a1.x + a0.z·a1.z)
-φ = 180° − θ            # hinge angle, 0°=closed … 180°=flat … 360°=folded
 ```
 
-Validated against the sweep: flat-open reads φ = 179.9° with both magnitudes at
-1.01 g, a normal typing angle reads φ = 107.8°, and the folded-past-flat samples
-come back as φ = 204.8°, 238.8° and 259.9° — the half of the range the unsigned
-angle collapses onto the other.
+**θ is the hinge angle itself** (to within a small fixed sensor-mounting
+offset) — there is no further transform. An earlier draft of this spec applied
+one anyway (`φ = 180° − θ`) on the theory that it produced an asymmetry
+letting the daemon "tell a shut laptop from a folded-back tablet". That claim
+was false, and cost real use of the device to find: `atan2` wraps at ±180°,
+not at zero, so hinge 0° (shut) and hinge 360° (folded all the way back) both
+land at θ ≈ 0° regardless of which transform is applied to θ afterward. No
+function of θ alone breaks that tie — closed and folded are the same angle.
+
+That earlier draft also read the calibration sweep backwards. It recorded
+"flat-open reads φ = 179.9°" — under the θ-is-the-angle correction, that
+sample is θ ≈ 0°, not θ ≈ 180°. θ ≈ 0° is what **aligned** sensors read, and
+aligned sensors mean the two bodies are parallel and stacked — shut or folded
+— not coplanar and flat. What was recorded as the flat pose was actually a
+shut-or-folded one; flat-open is the θ ≈ 178°–180° reading instead, matched in
+the same sweep by the "normal typing angle reads φ = 107.8°" sample, which
+under the same correction is θ ≈ 72°, in the same neighborhood as the typing
+angle actually is once the offset is accounted for.
+
+**The lid switch disambiguates what the angle cannot.** Since θ ≈ 0° means
+either shut or folded, the daemon gates entry on the lid switch reading open
+(`/proc/acpi/button/lid/LID0/state`), readable without privileges. Refusing to
+act when the lid state can't be read is the safe default: acting means
+disabling the keyboard.
 
 **Reject contaminated samples.** These sensors measure all acceleration, not
 just gravity; 6 of 16 sampled points in a hand-held sweep had magnitudes outside
 1 g by more than 15%. Discard any sample where either magnitude deviates from
 1 g by more than ~15%, rather than feeding it to `atan2`.
-
-Still to pin down in a controlled run, since a hand-held sweep cannot: the sign
-convention (whether folding back drives φ toward 360° or toward 0°), and where
-the tablet threshold and its hysteresis band belong.
 
 ### The degenerate pose
 
@@ -572,10 +587,11 @@ confirm a one-finger drag scrolls the score.
   stands; `180` remains available as a variable if a preference emerges.
 - **`papers` touch-drag** — cannot be verified without a finger on the glass.
   If it disappoints, `music_stand_viewer: xreader` costs nothing.
-- **Hinge sign convention and threshold** — phase 2 only. The geometry is
-  measured (hinge axis `y`, signed-angle formula, 164° swing confirming a lid
-  sensor); what remains is a controlled run to fix whether folding back drives
-  φ toward 360° or 0°, and to place the tablet threshold and hysteresis band.
+- ~~**Hinge sign convention and threshold**~~ — **settled by real use.** θ is
+  the hinge angle itself; folding drives it toward 0° (wrapping past ±180°,
+  not through it), and closed reads the same. `gatherd-hinge-daemon` detects
+  on `|θ|` near zero (`fold_enter_deg`/`fold_exit_deg`, default 30/50) gated
+  on the lid switch reading open, which is what tells closed from folded.
 
 ## Repave cadence
 

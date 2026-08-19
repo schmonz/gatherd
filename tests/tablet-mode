@@ -866,9 +866,19 @@ assert_fail 'the tent pose alone never turns tablet mode on' gatherd-tablet-mode
 reset_daemon_state
 write_vector "$HINGE_LID" 1024 100 0
 write_vector "$HINGE_BASE" 1023 100 -36
-assert_out 'folded (theta near -2) with the lid open enters tablet mode' \
+assert_out 'folded (theta near -2) with the lid open reports the enter decision' \
     'theta=2.0 action=enter' hinge_print
-assert_ok 'folding with the lid open actually turned tablet mode on' gatherd-tablet-mode status
+# --print is diagnostic only: it must report the decision it would take and
+# then do nothing. This is the exact fixture that used to make --print
+# itself rotate the display and disable the keyboard. The log legitimately
+# holds a "status" call (decide()'s own read of the current state) - only
+# "on" would prove --print acted.
+if grep -qx on "$FAKETM_LOG"; then
+    bad '--print issues no gatherd-tablet-mode on/off command, even for a decision that would act'
+else
+    ok '--print issues no gatherd-tablet-mode on/off command, even for a decision that would act'
+fi
+assert_fail '--print alone never turns tablet mode on' gatherd-tablet-mode status
 
 reset_daemon_state
 write_lid_state closed

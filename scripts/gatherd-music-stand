@@ -26,6 +26,13 @@ index="$state_dir/music-index.tsv"
 mru="$state_dir/music-stand-scores"
 max_mru=20
 back='‹ Back'
+# Escape needs a keyboard and the human's fuzzel.ini disables
+# exit-on-keyboard-focus-loss (tapping elsewhere doesn't dismiss it either),
+# so with the keyboard off in tablet mode there is otherwise no way out of
+# either level of this picker without choosing a score. Cancel funnels
+# composer/title back to empty so it rejoins pick()'s existing
+# nothing-chosen path rather than adding a second "do nothing" path.
+cancel='󰅖 Cancel'
 
 # fuzzel entries are the touch targets here, so they are deliberately taller and
 # wider than the launcher's defaults. menu_font (see tablet-mode.conf.j2) is a
@@ -99,10 +106,13 @@ turn_on() {
     [ -s "$index" ] || { echo "gatherd-music-stand: no scores indexed" >&2; exit 1; }
 
     while :; do
-        composer=$(composers | pick 'composer: ')
+        composer=$( { composers; printf '%s\n' "$cancel"; } | pick 'composer: ')
+        [ "$composer" = "$cancel" ] && composer=''
         [ -n "$composer" ] || exit 0
 
-        title=$( { titles_for "$composer"; printf '%s\n' "$back"; } | pick 'score: ')
+        title=$( { titles_for "$composer"; printf '%s\n' "$back"; printf '%s\n' "$cancel"; } \
+            | pick 'score: ')
+        [ "$title" = "$cancel" ] && title=''
         [ -n "$title" ] || exit 0
         [ "$title" = "$back" ] || break
     done

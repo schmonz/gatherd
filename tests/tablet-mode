@@ -542,6 +542,54 @@ assert_out 'after going back, the second choice opened' "$SCORES/12 Etudes, Op. 
     viewer_log
 gatherd-music-stand off >/dev/null 2>&1 || true
 
+# ── gatherd-music-stand: cancel escape ────────────────────────────────────────
+# The composer list and the score list are the only controls reachable while
+# folded, so each must offer a way out that performs no action at all — not
+# even Back's "go up one level". Cancel funnels into pick()'s existing
+# empty-return path (the same path Escape/no-keyboard cancellation already
+# uses), so there is exactly one "do nothing" path, not two.
+
+cancel='󰅖 Cancel'
+
+_mru_before_cancel1=$(cat "$XDG_STATE_HOME/gatherd/music-stand-scores" 2>/dev/null || true)
+reset_log
+# Extra answers queued behind cancel: if cancel were ever treated as a real
+# composer choice instead of funnelling to empty, the picker would consume
+# these next and either open a score or blow up on a bogus composer/title
+# pair — either way, not the clean no-op this asserts.
+reset_picker "$cancel" 'Medtner' 'Two Skazki'
+assert_ok 'cancel at level 1 exits cleanly' gatherd-music-stand on
+assert_out 'cancel at level 1 opened nothing' '' cat "$VIEWER_LOG"
+assert_fail 'cancel at level 1 left tablet mode off' gatherd-tablet-mode status
+assert_out 'cancel at level 1 touched no sway state' '' cat "$WORK/swaymsg.log"
+assert_out 'cancel at level 1 did not update the MRU' "$_mru_before_cancel1" \
+    cat "$XDG_STATE_HOME/gatherd/music-stand-scores"
+if grep -qF "$cancel" "$WORK/fuzzel.in"; then
+    ok 'level 1 offers a cancel entry'
+else
+    bad 'level 1 offers a cancel entry'
+fi
+
+_mru_before_cancel2=$(cat "$XDG_STATE_HOME/gatherd/music-stand-scores" 2>/dev/null || true)
+reset_log
+reset_picker 'Medtner' "$cancel"
+assert_ok 'cancel at level 2 exits cleanly' gatherd-music-stand on
+assert_out 'cancel at level 2 opened nothing' '' cat "$VIEWER_LOG"
+assert_fail 'cancel at level 2 left tablet mode off' gatherd-tablet-mode status
+assert_out 'cancel at level 2 touched no sway state' '' cat "$WORK/swaymsg.log"
+assert_out 'cancel at level 2 did not update the MRU' "$_mru_before_cancel2" \
+    cat "$XDG_STATE_HOME/gatherd/music-stand-scores"
+if grep -qF "$cancel" "$WORK/fuzzel.in"; then
+    ok 'level 2 offers a cancel entry alongside back'
+else
+    bad 'level 2 offers a cancel entry alongside back'
+fi
+if grep -qF '‹ Back' "$WORK/fuzzel.in"; then
+    ok 'level 2 still offers back alongside cancel'
+else
+    bad 'level 2 still offers back alongside cancel'
+fi
+
 # ── gatherd-music-stand: viewer preflight ────────────────────────────────────
 # papers is REST-tier and is not installed until the async play reaches the
 # network, after login. Between first login and async completion, a pick must
@@ -742,6 +790,27 @@ gatherd-tablet-mode on >/dev/null 2>&1
 reset_picker 'Power…'
 assert_ok 'power button chains to the power menu' gatherd-power-button
 assert_out 'Power… reaches the real power menu' 'power_menu' cat "$WORK/powermenu.log"
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+
+# ── gatherd-power-button: cancel escape ───────────────────────────────────────
+# The tablet escape menu is the only control reachable once folded, so it must
+# offer a way out that changes nothing — not even a rotation-restoring "exit
+# tablet mode".
+
+gatherd-tablet-mode on >/dev/null 2>&1
+: > "$WORK/powermenu.log"
+reset_log
+reset_picker "$cancel"
+assert_ok 'power button offers cancel' gatherd-power-button
+assert_ok 'cancelling the escape menu left tablet mode on' gatherd-tablet-mode status
+assert_out 'cancelling the escape menu did not open the power menu' '' cat "$WORK/powermenu.log"
+assert_out 'cancelling the escape menu opened nothing' '' cat "$VIEWER_LOG"
+assert_out 'cancelling the escape menu touched no sway state' '' cat "$WORK/swaymsg.log"
+if grep -qF "$cancel" "$WORK/fuzzel.in"; then
+    ok 'tablet escape menu offers a cancel entry'
+else
+    bad 'tablet escape menu offers a cancel entry'
+fi
 gatherd-tablet-mode off >/dev/null 2>&1 || true
 
 # ── gatherd-power-button: touch target font ───────────────────────────────────

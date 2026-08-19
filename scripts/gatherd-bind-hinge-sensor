@@ -1,0 +1,57 @@
+#!/bin/sh
+# Instantiate the second Chuwi MiniBook X accelerometer (the base sensor used
+# to detect hinge angle) at boot. The DSDT declares MXC6655:00/:01 with
+# _STA=0 and only binds a third node, MDA6655:00 — the lid sensor. The base
+# sensor is alive on the bus but never bound by firmware, so it must be
+# instantiated by hand every boot; gatherd-hinge-daemon then reads it as
+# iio:device1. See docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
+set -eu
+
+# The PCI function is stable across boots; the i2c bus number under it is not
+# (observed i2c-11 on this machine, but nothing pins that number down) — so
+# the bus is resolved by globbing under the PCI path each time rather than
+# hardcoded.
+PCI_PATH="/sys/devices/pci0000:00/0000:00:15.0"
+ADDR="0x15"
+ADDR_SUFFIX="0015"
+DRIVER="mxc6655"
+
+# Resolve the i2c-N sysfs dir under $PCI_PATH/i2c_designware.*/i2c-*, or
+# print nothing and return failure if the adapter isn't present on this
+# machine (e.g. any machine other than the MiniBook X).
+resolve_bus_dir() {
+    for d in "$PCI_PATH"/i2c_designware.*/i2c-*; do
+        [ -d "$d" ] || continue
+        printf '%s\n' "$d"
+        return 0
+    done
+    return 1
+}
+
+if [ "${1:-}" = "--print" ]; then
+    if ! bus_dir=$(resolve_bus_dir); then
+        echo "bus: not found under $PCI_PATH"
+        exit 0
+    fi
+    bus_num=${bus_dir##*/i2c-}
+    echo "bus: $bus_dir (i2c-$bus_num)"
+    if [ -d "$bus_dir/$bus_num-$ADDR_SUFFIX" ]; then
+        echo "already bound: yes"
+    else
+        echo "already bound: no"
+    fi
+    exit 0
+fi
+
+# Never fail a boot: if the adapter, the bus, or new_device is missing, this
+# machine simply isn't a MiniBook X (or the layout has moved again, as the
+# design doc notes happened on at least one other unit) — quietly do nothing.
+bus_dir=$(resolve_bus_dir) || exit 0
+bus_num=${bus_dir##*/i2c-}
+
+[ -d "$bus_dir/$bus_num-$ADDR_SUFFIX" ] && exit 0
+
+new_device="$bus_dir/new_device"
+[ -w "$new_device" ] || exit 0
+
+echo "$DRIVER $ADDR" > "$new_device" 2>/dev/null || exit 0

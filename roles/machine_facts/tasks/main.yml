@@ -207,6 +207,26 @@
     has_accelerometer: true
   when: _accelerometer.stdout == 'true'
 
+# Chuwi MiniBook X: firmware declares two MXC6655 accelerometer ACPI nodes
+# (one per body) but binds only one; the second must be instantiated by hand
+# at boot (gatherd-bind-hinge-sensor). Node count is the only way to tell a
+# dual-sensor convertible from a single-sensor one — neither is bound yet
+# when this probe runs, so has_accelerometer (IIO-based) can't distinguish them.
+- name: Check for a second MXC6655 ACPI accelerometer node  # noqa: risky-shell-pipe
+  ansible.builtin.shell: |
+    set -o pipefail
+    count=$(ls -d /sys/bus/acpi/devices/MXC6655:* 2>/dev/null | wc -l)
+    [ "$count" -ge 2 ] && echo true || echo false
+  args:
+    executable: /bin/bash
+  register: _dual_accelerometer
+  changed_when: false
+
+- name: Detect has_dual_accelerometer
+  ansible.builtin.set_fact:
+    has_dual_accelerometer: true
+  when: _dual_accelerometer.stdout == 'true'
+
 # >= 8 GB RAM → skip zswap.
 - name: Detect has_plenty_of_ram
   ansible.builtin.set_fact:
@@ -422,6 +442,7 @@
     has_plenty_of_ram: "{{ has_plenty_of_ram }}"
     has_rotated_panel: "{{ has_rotated_panel }}"
     has_accelerometer: "{{ has_accelerometer }}"
+    has_dual_accelerometer: "{{ has_dual_accelerometer }}"
     has_avx: "{{ has_avx }}"
     has_screen_backlight: "{{ has_screen_backlight }}"
     has_touchscreen: "{{ has_touchscreen }}"

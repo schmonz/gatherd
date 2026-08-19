@@ -1,0 +1,21 @@
+[Unit]
+Description=Bind the MiniBook X base accelerometer (hinge sensor)
+# No Before=greetd.service: unlike gatherd.service this isn't gating first
+# boot, it's a small sysfs write with its own idempotency and failure
+# handling built in (see the script). Runs early enough for
+# gatherd-hinge-daemon to find iio:device1 once the desktop starts.
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+[Service]
+Type=oneshot
+# The script itself no-ops on any missing PCI path/adapter/address and
+# never errors, so this unit cannot fail a boot even on non-MiniBook-X
+# hardware.
+ExecStart=/usr/local/lib/gatherd/scripts/gatherd-bind-hinge-sensor
+RemainAfterExit=no
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

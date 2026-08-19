@@ -1212,28 +1212,42 @@ PY
 }
 
 # ── the measured captures (calibration table) ────────────────────────────────
-# Reference angle 177.0. Three of the four are directly measured; the 90-turn
-# case was never captured (the human's sweep skipped straight from 0 to 180),
-# so it is INFERRED from the linear fit, not measured - included anyway
-# because the mapping (rotation -> nearest-quadrant transform) must still be
-# right for it, and the daemon's own header/README should say so, which is
-# checked separately below.
+# Reference angle 267.0 - the atan2 reading in the PORTRAIT score-reading
+# pose, which is the pose that must map to transform `normal`. The four raw
+# captures below were all taken in the LANDSCAPE (open-laptop) orientation,
+# 90 degrees off portrait; calling capture 1 "the reading position" is what
+# put an earlier reference at 177.0 and every quadrant 90 degrees out.
+# Three of the four are directly measured; the remaining quadrant was never
+# captured (the human's sweep skipped one), so it is INFERRED from the linear
+# fit - included anyway because the mapping (rotation -> nearest-quadrant
+# transform) must still be right for it, and the daemon's own header should
+# say so, which is checked separately below.
+#
+# An open laptop rests in landscape, i.e. at transform 90 - which is exactly
+# what capture 1 yields here, and is the independent check that these labels
+# are now the right way round.
 
-assert_out 'the measured reading position (atan2=177.0) maps to transform normal' \
-    'normal' rotation_probe_one 177.0
-assert_out 'the measured 180-turn (atan2=2.8) maps to transform 180' \
-    '180' rotation_probe_one 2.8
-assert_out 'the measured 270-turn (atan2=-94.1) maps to transform 270' \
-    '270' rotation_probe_one -94.1
-assert_out 'the measured return-to-start (atan2=179.3) maps to transform normal' \
-    'normal' rotation_probe_one 179.3
-assert_out 'the INFERRED 90-turn (atan2=87.0, never captured) maps to transform 90' \
-    '90' rotation_probe_one 87.0
+assert_out 'the measured landscape/laptop pose (atan2=177.0) maps to transform 90' \
+    '90' rotation_probe_one 177.0
+assert_out 'the measured 180-turn (atan2=2.8) maps to transform 270' \
+    '270' rotation_probe_one 2.8
+assert_out 'the measured 270-turn (atan2=-94.1) maps to transform normal' \
+    'normal' rotation_probe_one -94.1
+assert_out 'the measured return-to-start (atan2=179.3) maps to transform 90' \
+    '90' rotation_probe_one 179.3
+assert_out 'the INFERRED quadrant (atan2=87.0, never captured) maps to transform 180' \
+    '180' rotation_probe_one 87.0
+
+# The portrait reading pose is the whole point of the reference: it is what
+# gatherd-tablet-mode sets on entry and what the human reads music at, so it
+# must come out as `normal` or auto-rotation fights the entry transform.
+assert_out 'the portrait reading pose (atan2=267.0, the reference itself) maps to transform normal' \
+    'normal' rotation_probe_one 267.0
 
 if grep -qi 'inferred' "$REPO/scripts/gatherd-hinge-daemon"; then
-    ok 'the daemon documents the 90-degree point as inferred, not measured'
+    ok 'the daemon documents the uncaptured quadrant as inferred, not measured'
 else
-    bad 'the daemon documents the 90-degree point as inferred, not measured'
+    bad 'the daemon documents the uncaptured quadrant as inferred, not measured'
 fi
 
 # ── the flat pose: gravity along the screen normal ───────────────────────────
@@ -1255,7 +1269,7 @@ tracker.update((0.0, 0.0, 1024.0))
 print(tracker.transform())
 PY
 )
-if [ "$FLAT_SEQUENCE" = "$(printf 'normal\nnormal')" ]; then
+if [ "$FLAT_SEQUENCE" = "$(printf '90\n90')" ]; then
     ok 'a flat pose holds the previously committed transform instead of flipping'
 else
     bad "a flat pose holds the previously committed transform instead of flipping (got [$FLAT_SEQUENCE])"
@@ -1300,7 +1314,7 @@ unset GATHERD_HINGE_WINDOW
 
 rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
 assert_out 'a missing config file falls back to the default rotation reference' \
-    '177.0' rotation_reference
+    '267.0' rotation_reference
 
 printf 'transform=180\nrotation_reference_deg=90.5\n' \
     > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
@@ -1315,7 +1329,7 @@ unset GATHERD_HINGE_ROTATION_REFERENCE
 printf 'rotation_reference_deg=not-a-number\n' \
     > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
 assert_out 'a malformed rotation_reference_deg falls back to the default without crashing' \
-    '177.0' rotation_reference
+    '267.0' rotation_reference
 
 rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
 
@@ -1367,15 +1381,22 @@ gatherd-tablet-mode on >/dev/null 2>&1
 assert_out 'the resting transform recorded at entry is 90' \
     '90' cat "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
 
-write_vector "$HINGE_LID" -1023 54 0
+# atan2(-1022, -54) = 267.0 - the reference itself, i.e. the portrait
+# score-reading pose. This is the assertion that an earlier reference of
+# 177.0 got wrong: it applied 270 here, leaving the display a quarter turn
+# anticlockwise of what the human was holding.
+write_vector "$HINGE_LID" -54 -1022 0
 poll_rotation_once
-assert_out 'rotation applies transform normal for the reading-position pose' \
+assert_out 'rotation applies transform normal for the portrait reading pose' \
     'normal' cat "$WORK/transform"
 
-write_vector "$HINGE_LID" -73 -1021 0
+# atan2(54, -1023) = 177.0 - the landscape/laptop pose, a quarter turn off
+# the one above, so this both proves rotation is actually acting and pins
+# the direction: landscape is transform 90, not 270.
+write_vector "$HINGE_LID" -1023 54 0
 poll_rotation_once
-assert_out 'rotation applies transform 270 mid-sequence, proving it is actually acting' \
-    '270' cat "$WORK/transform"
+assert_out 'rotation applies transform 90 for the landscape pose, proving it is actually acting' \
+    '90' cat "$WORK/transform"
 
 assert_out 'the recorded resting transform is untouched by rotation while folded' \
     '90' cat "$XDG_RUNTIME_DIR/gatherd/tablet-mode"

@@ -46,23 +46,38 @@
 #
 #     rotation = (REFERENCE_ANGLE - degrees(atan2(y, x))) mod 360
 #
-# Four captures, turning counterclockwise from the normal reading position
-# (REFERENCE_ANGLE = 177.0, the atan2 reading at that pose):
+# REFERENCE_ANGLE is BY DEFINITION the atan2 reading in the portrait
+# score-reading pose, because that pose is the one that must come out as
+# transform `normal` (rotation 0) - it is what gatherd-tablet-mode sets on
+# entry, and what the human actually reads music at.
+#
+# Four captures, turning counterclockwise. Every one of them was taken with
+# the machine in its LANDSCAPE (open-laptop) orientation, NOT in the portrait
+# reading pose - that mislabelling is what made an earlier REFERENCE_ANGLE of
+# 177.0 put every quadrant 90 degrees out. Landscape sits 90 degrees from
+# portrait, so REFERENCE_ANGLE = 177.0 + 90 = 267.0, and the same raw
+# captures then read out as the landscape poses they always were:
 #
 #   capture                    atan2(y,x)   rotation   transform
-#   normal reading position    177.0        0          normal
-#   (a 180 turn)               2.8          174.2      180
-#   (a 270 turn)               -94.1        271.1      270
-#   back to start               179.3       357.7      normal
+#   landscape (as a laptop)    177.0        90         90
+#   (a 180 turn)               2.8          264.2      270
+#   (a 270 turn)               -94.1        1.1        normal
+#   back to start              179.3        87.7       90
+#
+# Confirming the relabelling: an open laptop rests at transform 90, which is
+# exactly what row 1 now yields. Independently measured afterwards, the
+# resting lid reads atan2 ~= 180 (proj ratio 0.78 at a typing angle, 0.98
+# with the lid vertical) - the same landscape pose as row 1, 90 degrees off
+# portrait, as the geometry requires.
 #
 # Only THREE poses were actually captured - the sweep went straight from the
-# normal position to the 180 turn, so the 90-degree point below is INFERRED
-# from the linear fit (the other three land within ~1 degree of it), not
-# measured. Transform is the nearest quadrant, and the mapping from rotation
-# to transform is the IDENTITY (rotation 90 -> transform 90): `man 5 sway`
-# states sway's rotation is performed clockwise, so a device turned 90
-# degrees counterclockwise needs a 90-degree clockwise transform to
-# compensate - checked in the man page, not recalled.
+# first position to the 180 turn, so the fourth quadrant is INFERRED from the
+# linear fit (the other three land within ~1 degree of it), not measured.
+# Transform is the nearest quadrant, and the mapping from rotation to
+# transform is the IDENTITY (rotation 90 -> transform 90): `man 5 sway-output`
+# states "The rotation is performed clockwise", so a device turned 90 degrees
+# counterclockwise needs a 90-degree clockwise transform to compensate -
+# checked in the man page, not recalled.
 #
 # The flat-pose guard mirrors the hinge's own degenerate-pose guard in
 # shape, not in axes: hinge degeneracy is the hinge axis (y) parallel to
@@ -96,7 +111,7 @@ MIN_PROJECTION_RATIO = 0.3
 # the measured value above, but re-calibrating on other hardware must be a
 # config edit (roles/desktop/templates/tablet-mode.conf.j2, driven from
 # group_vars/all/main.yml), never a code change.
-DEFAULT_ROTATION_REFERENCE_DEG = 177.0
+DEFAULT_ROTATION_REFERENCE_DEG = 267.0
 
 # Below this fraction of the lid sensor's own magnitude, x and y (the screen
 # plane) carry no signal - gravity is along the screen normal (z) instead,

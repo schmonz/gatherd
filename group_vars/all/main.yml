@@ -336,8 +336,13 @@ tablet_mode_hinge_median_window: 5
 # constant in the script, so re-calibrating on other hardware is an edit
 # here, never a code change: hold the folded tablet in the normal reading
 # position and read in_accel_{x,y}_raw off the lid sensor (iio:device0)
-# directly to re-derive it.
-tablet_mode_rotation_reference_deg: 177.0
+# directly to re-derive it. Hold it in PORTRAIT to do that, and check the
+# reading is ~90 degrees away from what the same sensor reads with the
+# machine sitting open as a laptop: an earlier value of 177.0 was captured
+# in the landscape/laptop orientation by mistake, which is indistinguishable
+# from a good calibration except that every quadrant then comes out a
+# quarter turn anticlockwise.
+tablet_mode_rotation_reference_deg: 267.0
 music_stand_root: "{{ target_home }}/Documents/forscore"
 # music_stand_viewer, music_stand_app_id and music_stand_viewer_flag must
 # all three change together: the app_id is what

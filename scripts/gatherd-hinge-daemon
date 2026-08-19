@@ -51,12 +51,53 @@ def base_device():
     return os.environ.get("GATHERD_HINGE_BASE_DEVICE", DEFAULT_BASE_DEVICE)
 
 
+def config_path():
+    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.environ.get("HOME", ""), ".config"
+    )
+    return os.path.join(config_home, "gatherd", "tablet-mode.conf")
+
+
+def config_value(key):
+    # Same file gatherd-tablet-mode and gatherd-music-stand source as shell
+    # (key=value lines); read here with a plain parser instead of sourcing it,
+    # since a stray shell metacharacter must not do anything but be ignored.
+    # Any read/parse failure (missing file, bad permissions, garbage line)
+    # falls through to None rather than raising - this daemon must never crash
+    # the session over a config typo.
+    try:
+        with open(config_path()) as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, _, value = line.partition("=")
+                if name.strip() == key:
+                    return value.strip()
+    except OSError:
+        return None
+    return None
+
+
+def threshold(env_name, config_key, default):
+    # Env var overrides the config file, which overrides the built-in default
+    # - existing GATHERD_HINGE_ENTER/EXIT overrides (relied on by tests) keep
+    # working even once the config file also carries these keys.
+    raw = os.environ.get(env_name)
+    if raw is None:
+        raw = config_value(config_key)
+    try:
+        return float(raw) if raw is not None else float(default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
 def enter_threshold():
-    return env_float("GATHERD_HINGE_ENTER", 240)
+    return threshold("GATHERD_HINGE_ENTER", "hinge_enter_deg", 240)
 
 
 def exit_threshold():
-    return env_float("GATHERD_HINGE_EXIT", 200)
+    return threshold("GATHERD_HINGE_EXIT", "hinge_exit_deg", 200)
 
 
 def poll_interval():

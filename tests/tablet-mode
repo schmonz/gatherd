@@ -865,5 +865,38 @@ assert_out 'a lowered GATHERD_HINGE_ENTER makes typing angle cross the threshold
 unset GATHERD_HINGE_ENTER
 gatherd-tablet-mode off >/dev/null 2>&1 || true
 
+# ── thresholds are configurable via tablet-mode.conf ─────────────────────────
+# The daemon shares gatherd-tablet-mode's config file rather than inventing
+# its own. hinge_enter_deg/hinge_exit_deg must be read from it, an env var
+# override must still win over it, and a malformed file must not crash the
+# daemon - just fall back to the built-in defaults.
+
+reset_daemon_state
+printf 'transform=180\nhinge_enter_deg=50\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" 178 100 1008
+assert_out 'a config-file hinge_enter_deg makes typing angle cross the threshold' \
+    'phi=100.0 action=enter' hinge_print
+
+reset_daemon_state
+GATHERD_HINGE_ENTER=500
+export GATHERD_HINGE_ENTER
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" -54 100 -1023
+assert_out 'GATHERD_HINGE_ENTER still overrides a config-file hinge_enter_deg' \
+    'phi=273.0 action=hold' hinge_print
+unset GATHERD_HINGE_ENTER
+
+reset_daemon_state
+printf 'this is not a key=value config\nhinge_enter_deg\n=200\n' \
+    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" -54 100 -1023
+assert_out 'a malformed config file falls back to the default enter threshold' \
+    'phi=273.0 action=enter' hinge_print
+
+rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

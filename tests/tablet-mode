@@ -700,5 +700,170 @@ assert_ok 'power button chains to the power menu' gatherd-power-button
 assert_out 'Power… reaches the real power menu' 'power_menu' cat "$WORK/powermenu.log"
 gatherd-tablet-mode off >/dev/null 2>&1 || true
 
+# ── gatherd-hinge-daemon ──────────────────────────────────────────────────────
+# Fakes gatherd-tablet-mode itself (rather than reusing the real script's
+# swaymsg fake) so these tests exercise only the daemon's decision logic —
+# geometry, hysteresis, the degenerate pose, and ownership — without also
+# depending on the compositor plumbing already covered above.
+
+# fake_bin NAME BODY — install a fake executable that shadows the real one.
+# Matches tests/icloud's helper; tests/tablet-mode had not needed it until now.
+fake_bin() {
+    printf '#!/bin/sh\n%s\n' "$2" > "$FAKEBIN/$1"
+    chmod +x "$FAKEBIN/$1"
+}
+
+FAKETM_STATE="$WORK/faketm-state"
+FAKETM_LOG="$WORK/faketm.log"
+fake_bin gatherd-tablet-mode '
+printf "%s\n" "$*" >> "'"$FAKETM_LOG"'"
+case "$1" in
+    on)     touch "'"$FAKETM_STATE"'" ;;
+    off)    rm -f "'"$FAKETM_STATE"'" ;;
+    status) [ -f "'"$FAKETM_STATE"'" ] ;;
+    *)      exit 2 ;;
+esac
+'
+# Every earlier section in this suite already invoked the real
+# gatherd-tablet-mode directly (not through a subprocess), so bash has this
+# command name hashed to $REPO/scripts/gatherd-tablet-mode. Prepending FAKEBIN
+# to $PATH does not by itself invalidate that cache — only `hash -r` does —
+# so without this, every direct call below silently keeps hitting the real
+# script while only gatherd-hinge-daemon's own subprocess calls (a fresh
+# process, with its own PATH search) would see the fake.
+hash -r
+
+HINGE_LID="$WORK/hinge-lid"
+HINGE_BASE="$WORK/hinge-base"
+GATHERD_HINGE_LID_DEVICE="$HINGE_LID"
+GATHERD_HINGE_BASE_DEVICE="$HINGE_BASE"
+export GATHERD_HINGE_LID_DEVICE GATHERD_HINGE_BASE_DEVICE
+unset GATHERD_HINGE_ENTER GATHERD_HINGE_EXIT
+
+# write_vector DIR X Y Z — plants raw sysfs-style accelerometer counts.
+write_vector() {
+    mkdir -p "$1"
+    printf '%s\n' "$2" > "$1/in_accel_x_raw"
+    printf '%s\n' "$3" > "$1/in_accel_y_raw"
+    printf '%s\n' "$4" > "$1/in_accel_z_raw"
+}
+
+# Every fixture below shares the same lid vector and varies only the base
+# vector's rotation about the hinge (y) axis, so each row isolates exactly
+# the signed-angle geometry under test. Raw counts precomputed offline from
+# the theta = 180 - phi relationship the script implements; each was checked
+# to round-trip to its target phi to within 0.02 degrees before being baked
+# in here, so a passing assertion means the formula, not the fixture, is right.
+reset_daemon_state() {
+    rm -f "$FAKETM_STATE" "$XDG_RUNTIME_DIR/gatherd/hinge-daemon-owns"
+    : > "$FAKETM_LOG"
+}
+
+hinge_print() {
+    gatherd-hinge-daemon --print
+}
+
+# ── the four measured poses ──────────────────────────────────────────────────
+
+reset_daemon_state
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" -920 100 449
+assert_out 'nearly shut reads phi near 26' 'phi=26.0 action=hold' hinge_print
+
+reset_daemon_state
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" 178 100 1008
+assert_out 'typing angle reads phi near 100' 'phi=100.0 action=hold' hinge_print
+
+reset_daemon_state
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" 1023 100 36
+assert_out 'flat and coplanar reads phi near 178' 'phi=178.0 action=hold' hinge_print
+
+reset_daemon_state
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" -54 100 -1023
+assert_out 'folded past flat reads phi near 273 and crosses enter' \
+    'phi=273.0 action=enter' hinge_print
+assert_ok 'folding past flat actually turned tablet mode on' gatherd-tablet-mode status
+
+# ── hysteresis: a phi between the thresholds changes nothing ────────────────
+# 220 sits between the default exit (200) and enter (240) thresholds. Tested
+# from both sides of the dead zone: rising from inactive must not enter, and
+# falling from an owned-active state must not exit either.
+
+reset_daemon_state
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" 784 100 -658
+assert_out 'a mid-band phi does not enter from inactive' 'phi=220.0 action=hold' hinge_print
+assert_fail 'still inactive after a mid-band reading' gatherd-tablet-mode status
+
+reset_daemon_state
+mkdir -p "$XDG_RUNTIME_DIR/gatherd"
+gatherd-tablet-mode on >/dev/null 2>&1
+: > "$XDG_RUNTIME_DIR/gatherd/hinge-daemon-owns"
+: > "$FAKETM_LOG"
+assert_out 'a mid-band phi does not exit from an owned-active state' \
+    'phi=220.0 action=hold' hinge_print
+assert_ok 'still active after a mid-band reading' gatherd-tablet-mode status
+# The log legitimately holds "status" calls (the daemon's own state check,
+# plus this test's direct one above) — only "off" would prove the bug.
+if grep -qx off "$FAKETM_LOG"; then
+    bad 'no off call was logged for the mid-band reading'
+else
+    ok 'no off call was logged for the mid-band reading'
+fi
+
+# ── the degenerate pose: hinge axis parallel to gravity ──────────────────────
+# Reading a score in portrait — x and z near zero on both sensors — carries
+# no signal about the fold; the daemon must make no decision at all, not just
+# a conservative one, and must not even touch gatherd-tablet-mode.
+
+reset_daemon_state
+write_vector "$HINGE_LID" 0 1024 0
+write_vector "$HINGE_BASE" 0 1024 0
+assert_out 'the degenerate pose reports no phi and no decision' \
+    'phi=degenerate action=hold' hinge_print
+assert_out 'the degenerate pose never calls gatherd-tablet-mode at all' '' cat "$FAKETM_LOG"
+
+# ── the ownership rule ────────────────────────────────────────────────────────
+# The human's real workflow: trigger tablet mode manually, then fold. At that
+# moment phi is a typing angle, far below exit — the exact case that must not
+# flap the mode back off, because the daemon never turned this session on.
+
+reset_daemon_state
+mkdir -p "$XDG_RUNTIME_DIR/gatherd"
+gatherd-tablet-mode on >/dev/null 2>&1
+# Deliberately no hinge-daemon-owns marker: this session was started manually.
+: > "$FAKETM_LOG"
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" 178 100 1008
+assert_out 'a manually-started session at typing angle is left alone' \
+    'phi=100.0 action=hold' hinge_print
+assert_ok 'a manually-started tablet mode is still active afterward' gatherd-tablet-mode status
+# Same reasoning as the mid-band case above: "status" calls are expected;
+# only "off" would mean the ownership rule was violated.
+if grep -qx off "$FAKETM_LOG"; then
+    bad 'the daemon never issued an off call against a session it does not own'
+else
+    ok 'the daemon never issued an off call against a session it does not own'
+fi
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+
+# ── thresholds are overridable ───────────────────────────────────────────────
+# Required by spec: enter/exit must be tunable via environment variables
+# without editing code. Lowering GATHERD_HINGE_ENTER below a typing-angle phi
+# proves the override is actually read, not just accepted and ignored.
+
+reset_daemon_state
+GATHERD_HINGE_ENTER=50
+export GATHERD_HINGE_ENTER
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" 178 100 1008
+assert_out 'a lowered GATHERD_HINGE_ENTER makes typing angle cross the threshold' \
+    'phi=100.0 action=enter' hinge_print
+unset GATHERD_HINGE_ENTER
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

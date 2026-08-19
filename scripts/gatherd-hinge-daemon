@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+# Fold-to-tablet-mode trigger: read the lid and base accelerometers, compute
+# the signed hinge angle, and call gatherd-tablet-mode across a hysteresis
+# band. gatherd-tablet-mode remains the only thing that touches sway state;
+# this is one more caller of it, alongside the keybinding and the power
+# button. See docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
+#
+# Geometry (measured on the real hardware, hinge axis is y): project both
+# gravity vectors onto the x-z plane and take the *signed* rotation between
+# them. The unsigned angle between the vectors is ~86 degrees at both a
+# normal typing angle and folded flat past the tablet position - it cannot
+# tell those apart, which is the only question this daemon exists to answer.
+#
+# Do NOT filter samples by magnitude. These sensors carry a large zero-offset
+# (~1.2g at rest) and the machine is sometimes used on a train, where the
+# magnitude is not 1g at all. A median over many samples is the noise
+# defense, not a magnitude gate.
+
+import math
+import os
+import statistics
+import subprocess
+import sys
+import time
+from collections import deque
+
+DEFAULT_LID_DEVICE = "/sys/bus/iio/devices/iio:device0"
+DEFAULT_BASE_DEVICE = "/sys/bus/iio/devices/iio:device1"
+TABLET_MODE_CMD = "gatherd-tablet-mode"
+
+# Below this fraction of a sensor's own magnitude, the x-z projection is
+# noise rather than signal: it means the hinge axis (y) is pointing along
+# gravity, which is exactly the pose of reading a portrait score. Any
+# threshold comfortably above zero and below the ~1.0 ratio a normal, non-
+# vertical pose produces works; this is not a tuned constant.
+MIN_PROJECTION_RATIO = 0.3
+
+
+def env_float(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def lid_device():
+    return os.environ.get("GATHERD_HINGE_LID_DEVICE", DEFAULT_LID_DEVICE)
+
+
+def base_device():
+    return os.environ.get("GATHERD_HINGE_BASE_DEVICE", DEFAULT_BASE_DEVICE)
+
+
+def enter_threshold():
+    return env_float("GATHERD_HINGE_ENTER", 240)
+
+
+def exit_threshold():
+    return env_float("GATHERD_HINGE_EXIT", 200)
+
+
+def poll_interval():
+    return env_float("GATHERD_HINGE_POLL_INTERVAL", 0.5)
+
+
+def window_size():
+    return max(1, int(env_float("GATHERD_HINGE_WINDOW", 10)))
+
+
+def state_dir():
+    return os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "gatherd")
+
+
+def owns_marker():
+    # Lives next to gatherd-tablet-mode's own state file, but is a separate
+    # file: its mere existence is the entire ownership record, and it must
+    # be independent of whatever gatherd-tablet-mode does with its own state.
+    return os.path.join(state_dir(), "hinge-daemon-owns")
+
+
+def read_vector(device_dir):
+    def axis(name):
+        path = os.path.join(device_dir, f"in_accel_{name}_raw")
+        with open(path) as handle:
+            return float(handle.read().strip())
+
+    return axis("x"), axis("y"), axis("z")
+
+
+def magnitude(vector):
+    return math.sqrt(sum(component * component for component in vector))
+
+
+def is_degenerate(vector):
+    x, _y, z = vector
+    mag = magnitude(vector)
+    if mag == 0:
+        return True
+    projection = math.sqrt(x * x + z * z)
+    return (projection / mag) < MIN_PROJECTION_RATIO
+
+
+def hinge_phi(lid, base):
+    # theta = atan2(a0.x*a1.z - a0.z*a1.x, a0.x*a1.x + a0.z*a1.z); phi = 180 - theta.
+    # Only the folded-past-flat pose gives a negative theta - that asymmetry
+    # is what lets phi distinguish typing angle from folded at all.
+    x0, _y0, z0 = lid
+    x1, _y1, z1 = base
+    theta = math.degrees(math.atan2(x0 * z1 - z0 * x1, x0 * x1 + z0 * z1))
+    return 180.0 - theta
+
+
+def tablet_mode_active():
+    return (
+        subprocess.run(
+            [TABLET_MODE_CMD, "status"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode
+        == 0
+    )
+
+
+def owned_by_daemon():
+    return os.path.exists(owns_marker())
+
+
+def activate():
+    subprocess.run([TABLET_MODE_CMD, "on"], check=True)
+    os.makedirs(state_dir(), exist_ok=True)
+    open(owns_marker(), "w").close()
+
+
+def deactivate():
+    subprocess.run([TABLET_MODE_CMD, "off"], check=True)
+    try:
+        os.remove(owns_marker())
+    except FileNotFoundError:
+        pass
+
+
+def decide(median_phi, active, owned):
+    # Hysteresis (never act between the two thresholds) plus the ownership
+    # rule: this daemon may only turn OFF a session it itself turned ON. The
+    # human's real workflow is to trigger tablet mode manually, then fold -
+    # at that moment phi is a typing angle, far below exit, and without the
+    # `owned` guard this would instantly reverse that manual session.
+    if not active and median_phi > enter_threshold():
+        return "enter"
+    if active and owned and median_phi < exit_threshold():
+        return "exit"
+    return "hold"
+
+
+def act(action):
+    if action == "enter":
+        activate()
+    elif action == "exit":
+        deactivate()
+
+
+def sample(history):
+    """Read both sensors once and fold a valid reading into history. Returns
+    True if the sample was degenerate (and therefore skipped: appending it
+    would let a single blind reading corrupt the whole rolling median)."""
+    lid = read_vector(lid_device())
+    base = read_vector(base_device())
+    if is_degenerate(lid) or is_degenerate(base):
+        return True
+    history.append(hinge_phi(lid, base))
+    return False
+
+
+def poll_once(history):
+    """One read-decide-act cycle. Returns (median_phi, action); median_phi is
+    None when this sample was degenerate and no decision was made at all -
+    the daemon holds whatever state it was already in."""
+    if sample(history):
+        return None, "hold"
+    median_phi = statistics.median(history)
+    action = decide(median_phi, tablet_mode_active(), owned_by_daemon())
+    act(action)
+    return median_phi, action
+
+
+def print_once():
+    history = deque(maxlen=window_size())
+    median_phi, action = poll_once(history)
+    if median_phi is None:
+        print("phi=degenerate action=hold")
+    else:
+        print(f"phi={median_phi:.1f} action={action}")
+
+
+def loop():
+    history = deque(maxlen=window_size())
+    while True:
+        poll_once(history)
+        time.sleep(poll_interval())
+
+
+def main(argv):
+    if "--print" in argv[1:]:
+        print_once()
+        return 0
+    loop()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

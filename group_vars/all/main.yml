@@ -327,6 +327,17 @@ tablet_mode_fold_exit_deg: 50
 # shortening this further should re-check both numbers against this table.
 tablet_mode_hinge_poll_interval: 0.1
 tablet_mode_hinge_median_window: 5
+# Auto-rotation (phase 3): follows the tablet's orientation in the hands
+# while tablet mode is active, reusing the same lid-sensor read above - see
+# gatherd-hinge-daemon's module header for the full geometry and the
+# measured calibration table this value comes from. This is the atan2(y, x)
+# reading of the lid sensor's gravity vector, measured BY HAND on this
+# hardware, in the upright "normal" reading position. A config value, not a
+# constant in the script, so re-calibrating on other hardware is an edit
+# here, never a code change: hold the folded tablet in the normal reading
+# position and read in_accel_{x,y}_raw off the lid sensor (iio:device0)
+# directly to re-derive it.
+tablet_mode_rotation_reference_deg: 177.0
 music_stand_root: "{{ target_home }}/Documents/forscore"
 # music_stand_viewer, music_stand_app_id and music_stand_viewer_flag must
 # all three change together: the app_id is what

@@ -1024,5 +1024,54 @@ assert_out 'a malformed config file falls back to the default enter threshold' \
 rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
 gatherd-tablet-mode off >/dev/null 2>&1 || true
 
+# ── poll_interval and median_window are configurable via tablet-mode.conf ────
+# These are read exactly like fold_enter_deg/fold_exit_deg above (env
+# overrides config overrides built-in default, malformed input falls back
+# silently) - but neither is observable through --print's decision output,
+# so introspect the two accessor functions directly rather than through a
+# behavioral proxy.
+hinge_timing() {
+    python3 - "$REPO/scripts/gatherd-hinge-daemon" "$1" <<'PY'
+import importlib.machinery, importlib.util, sys
+path, which = sys.argv[1], sys.argv[2]
+loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
+spec = importlib.util.spec_from_loader("hinge_daemon", loader)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(mod.poll_interval() if which == "poll_interval" else mod.window_size())
+PY
+}
+
+reset_daemon_state
+printf 'transform=180\npoll_interval=0.25\nmedian_window=7\n' \
+    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+assert_out 'a config-file poll_interval is read' '0.25' hinge_timing poll_interval
+assert_out 'a config-file median_window is read' '7' hinge_timing window_size
+
+GATHERD_HINGE_POLL_INTERVAL=0.05
+GATHERD_HINGE_WINDOW=3
+export GATHERD_HINGE_POLL_INTERVAL GATHERD_HINGE_WINDOW
+assert_out 'GATHERD_HINGE_POLL_INTERVAL still overrides a config-file poll_interval' \
+    '0.05' hinge_timing poll_interval
+assert_out 'GATHERD_HINGE_WINDOW still overrides a config-file median_window' \
+    '3' hinge_timing window_size
+unset GATHERD_HINGE_POLL_INTERVAL GATHERD_HINGE_WINDOW
+
+rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+assert_out 'a missing config file falls back to the default poll_interval' \
+    '0.1' hinge_timing poll_interval
+assert_out 'a missing config file falls back to the default median_window' \
+    '5' hinge_timing window_size
+
+printf 'transform=180\npoll_interval=not-a-number\nmedian_window=not-a-number\n' \
+    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+assert_out 'a malformed poll_interval falls back to the default without crashing' \
+    '0.1' hinge_timing poll_interval
+assert_out 'a malformed median_window falls back to the default without crashing' \
+    '5' hinge_timing window_size
+
+rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

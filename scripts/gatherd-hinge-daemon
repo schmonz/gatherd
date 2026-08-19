@@ -51,13 +51,6 @@ TABLET_MODE_CMD = "gatherd-tablet-mode"
 MIN_PROJECTION_RATIO = 0.3
 
 
-def env_float(name, default):
-    try:
-        return float(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return float(default)
-
-
 def lid_device():
     return os.environ.get("GATHERD_HINGE_LID_DEVICE", DEFAULT_LID_DEVICE)
 
@@ -120,11 +113,29 @@ def fold_exit_deg():
 
 
 def poll_interval():
-    return env_float("GATHERD_HINGE_POLL_INTERVAL", 0.5)
+    # 0.1s: measured at rest (see fold_enter_deg/fold_exit_deg's comment for
+    # the shared fixture), theta's stdev is 2.95 degrees. A rolling median of
+    # 5 (window_size below) over this poll leaves ~0.5s reaction latency - a
+    # 10x improvement over the previous 5s (window 10 at 0.5s) - while still
+    # holding 4x headroom against fold_enter_deg's 30-degree band (residual
+    # spread 6.8 degrees at window 5, vs 4.5 at the old window 10).
+    return threshold("GATHERD_HINGE_POLL_INTERVAL", "poll_interval", 0.1)
 
 
 def window_size():
-    return max(1, int(env_float("GATHERD_HINGE_WINDOW", 10)))
+    # 5: residual spread after this median is 6.8 degrees (measured), leaving
+    # ~23 degrees of margin against fold_enter_deg's 30-degree band - see
+    # poll_interval's comment for the full measurement and the latency this
+    # buys. A false ENTER from a resting typing angle (theta~=108) would
+    # still need a ~78-degree excursion, about 26 standard deviations of the
+    # measured noise, and the lid-switch gate blocks entry outright whenever
+    # the lid reads closed - so a shorter window is not spending margin the
+    # daemon actually needs at rest. What it does spend is protection against
+    # transients while the hinge is genuinely in motion (a captured fold
+    # showed intermediate readings before settling); that is judged
+    # acceptable because entering tablet mode slightly early during a
+    # deliberate fold is harmless - it's what the human is doing anyway.
+    return max(1, int(threshold("GATHERD_HINGE_WINDOW", "median_window", 5)))
 
 
 def state_dir():

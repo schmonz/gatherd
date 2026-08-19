@@ -311,6 +311,22 @@ tablet_mode_transform: normal
 # band; fully folded reads theta~=-2, well inside it.
 tablet_mode_fold_enter_deg: 30
 tablet_mode_fold_exit_deg: 50
+# Re-measured stationary (the note above): theta stdev at rest is 2.95
+# degrees, raw spread 16.2 degrees over 12s at 20Hz. Residual spread after a
+# rolling median: 10.7 deg at window 3, 6.8 at window 5, 4.5 at window 10
+# (the old default), 3.5 at window 20. window 5 at a 0.1s poll cuts reaction
+# latency from ~5s to ~0.5s while keeping ~4x headroom against
+# tablet_mode_fold_enter_deg's 30-degree band. A false ENTER from typing
+# angle (theta~=108) would need a ~78-degree excursion - about 26 standard
+# deviations of the measured noise - and the lid-switch gate blocks entry
+# outright whenever the lid reads closed, so that headroom is not spent on
+# resting-state noise. What a shorter window gives up is smoothing of
+# transients while the hinge is genuinely in motion (a captured fold showed
+# intermediate readings before settling); accepted because entering tablet
+# mode slightly early during a deliberate fold is harmless. A reader
+# shortening this further should re-check both numbers against this table.
+tablet_mode_hinge_poll_interval: 0.1
+tablet_mode_hinge_median_window: 5
 music_stand_root: "{{ target_home }}/Documents/forscore"
 # music_stand_viewer, music_stand_app_id and music_stand_viewer_flag must
 # all three change together: the app_id is what

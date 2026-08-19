@@ -1142,5 +1142,247 @@ assert_out 'a malformed median_window falls back to the default without crashing
 rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
 gatherd-tablet-mode off >/dev/null 2>&1 || true
 
+# ── auto-rotation ──────────────────────────────────────────────────────────
+# Follows the tablet in the human's hands while folded. Reuses the same lid
+# sensor already read for fold detection - no extra I2C - so the geometry,
+# hysteresis and flat-pose helpers below are exercised as pure functions via
+# the same importlib technique hinge_timing uses, rather than through
+# --print (a fresh process per call, unable to show hysteresis/persistence
+# across samples, and whose existing exact-string tests above must not gain
+# a rotation field).
+
+# rotation_probe: one ANGLE arg per sample, each an atan2(y,x) angle in
+# DEGREES - the same units the calibration table's middle column is in.
+# Prints the committed transform after each update() on a single tracker, so
+# several args can exercise persistence across samples. Samples are passed
+# as argv, not piped stdin: `python3 -` reads the SCRIPT itself from stdin
+# (that is what the heredoc below is), which consumes it entirely before
+# execution starts - a `for line in sys.stdin` inside the script would
+# always see EOF immediately.
+rotation_probe() {
+    python3 - "$REPO/scripts/gatherd-hinge-daemon" "$@" <<'PY'
+import importlib.machinery, importlib.util, math, sys
+path = sys.argv[1]
+loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
+spec = importlib.util.spec_from_loader("hinge_daemon", loader)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+tracker = mod.RotationTracker()
+for arg in sys.argv[2:]:
+    angle = math.radians(float(arg))
+    tracker.update((math.cos(angle), math.sin(angle), 0.0))
+    print(tracker.transform())
+PY
+}
+
+rotation_probe_one() { rotation_probe "$1"; }
+
+# rotation_probe_target: one ROTATION-degree value per arg (not atan2) - the
+# angle already run through rotation_deg()'s reference-angle subtraction.
+# Used for the pure hysteresis/persistence tests below, which care about
+# distance from a 45-degree boundary, not about the reference angle's exact
+# value. See rotation_probe's comment for why args, not piped stdin.
+rotation_probe_target() {
+    python3 - "$REPO/scripts/gatherd-hinge-daemon" "$@" <<'PY'
+import importlib.machinery, importlib.util, math, sys
+path = sys.argv[1]
+loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
+spec = importlib.util.spec_from_loader("hinge_daemon", loader)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+tracker = mod.RotationTracker()
+for arg in sys.argv[2:]:
+    target = float(arg)
+    angle = math.radians(mod.rotation_reference_deg() - target)
+    tracker.update((math.cos(angle), math.sin(angle), 0.0))
+    print(tracker.transform())
+PY
+}
+
+rotation_reference() {
+    python3 - "$REPO/scripts/gatherd-hinge-daemon" <<'PY'
+import importlib.machinery, importlib.util, sys
+path = sys.argv[1]
+loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
+spec = importlib.util.spec_from_loader("hinge_daemon", loader)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(mod.rotation_reference_deg())
+PY
+}
+
+# ── the measured captures (calibration table) ────────────────────────────────
+# Reference angle 177.0. Three of the four are directly measured; the 90-turn
+# case was never captured (the human's sweep skipped straight from 0 to 180),
+# so it is INFERRED from the linear fit, not measured - included anyway
+# because the mapping (rotation -> nearest-quadrant transform) must still be
+# right for it, and the daemon's own header/README should say so, which is
+# checked separately below.
+
+assert_out 'the measured reading position (atan2=177.0) maps to transform normal' \
+    'normal' rotation_probe_one 177.0
+assert_out 'the measured 180-turn (atan2=2.8) maps to transform 180' \
+    '180' rotation_probe_one 2.8
+assert_out 'the measured 270-turn (atan2=-94.1) maps to transform 270' \
+    '270' rotation_probe_one -94.1
+assert_out 'the measured return-to-start (atan2=179.3) maps to transform normal' \
+    'normal' rotation_probe_one 179.3
+assert_out 'the INFERRED 90-turn (atan2=87.0, never captured) maps to transform 90' \
+    '90' rotation_probe_one 87.0
+
+if grep -qi 'inferred' "$REPO/scripts/gatherd-hinge-daemon"; then
+    ok 'the daemon documents the 90-degree point as inferred, not measured'
+else
+    bad 'the daemon documents the 90-degree point as inferred, not measured'
+fi
+
+# ── the flat pose: gravity along the screen normal ───────────────────────────
+# x and y (the screen plane) vanish and "down" is undefined - the tracker
+# must hold whatever it last committed, not flip to some arbitrary angle.
+
+FLAT_SEQUENCE=$(python3 - "$REPO/scripts/gatherd-hinge-daemon" <<'PY'
+import importlib.machinery, importlib.util, math, sys
+path = sys.argv[1]
+loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
+spec = importlib.util.spec_from_loader("hinge_daemon", loader)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+tracker = mod.RotationTracker()
+angle = math.radians(177.0)
+tracker.update((math.cos(angle), math.sin(angle), 0.0))
+print(tracker.transform())
+tracker.update((0.0, 0.0, 1024.0))
+print(tracker.transform())
+PY
+)
+if [ "$FLAT_SEQUENCE" = "$(printf 'normal\nnormal')" ]; then
+    ok 'a flat pose holds the previously committed transform instead of flipping'
+else
+    bad "a flat pose holds the previously committed transform instead of flipping (got [$FLAT_SEQUENCE])"
+fi
+
+# ── hysteresis and persistence at the quadrant boundaries ────────────────────
+# 45 is the naive boundary between normal (0) and 90. A held-near-boundary
+# reading must not flap; a decisive, PERSISTENT excursion must still commit.
+# GATHERD_HINGE_WINDOW=1 isolates the margin/persistence logic on its own -
+# with the default window of 5, the median-over-samples smoothing already
+# damps these sequences, which would test that smoothing a second time
+# rather than the hysteresis mechanism this section is actually about.
+
+GATHERD_HINGE_WINDOW=1
+export GATHERD_HINGE_WINDOW
+
+BOUNDARY_SEQUENCE=$(rotation_probe_target 0 43 47 43 47 43)
+if [ "$(printf '%s' "$BOUNDARY_SEQUENCE" | sort -u)" = normal ]; then
+    ok 'oscillating near the 45-degree boundary never flips the transform'
+else
+    bad "oscillating near the 45-degree boundary never flips the transform (got [$BOUNDARY_SEQUENCE])"
+fi
+
+PERSIST_SEQUENCE=$(rotation_probe_target 0 70 70 70)
+assert_out 'a decisive excursion past the boundary holds until it persists, then commits' \
+    "$(printf 'normal\nnormal\nnormal\n90')" printf '%s' "$PERSIST_SEQUENCE"
+
+FLAP_RESIST_SEQUENCE=$(rotation_probe_target 0 70 200 70 200)
+if [ "$(printf '%s' "$FLAP_RESIST_SEQUENCE" | sort -u)" = normal ]; then
+    ok 'a challenger that keeps changing never accumulates enough persistence to commit'
+else
+    bad "a challenger that keeps changing never accumulates enough persistence to commit (got [$FLAP_RESIST_SEQUENCE])"
+fi
+
+unset GATHERD_HINGE_WINDOW
+
+# ── rotation_reference_deg is configurable via tablet-mode.conf ─────────────
+# Same tolerant read (env overrides config overrides built-in default,
+# malformed input falls back silently) as fold_enter_deg/poll_interval
+# above - required so re-calibrating on different hardware is a config edit,
+# never a code change.
+
+rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+assert_out 'a missing config file falls back to the default rotation reference' \
+    '177.0' rotation_reference
+
+printf 'transform=180\nrotation_reference_deg=90.5\n' \
+    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+assert_out 'a config-file rotation_reference_deg is read' '90.5' rotation_reference
+
+GATHERD_HINGE_ROTATION_REFERENCE=12.0
+export GATHERD_HINGE_ROTATION_REFERENCE
+assert_out 'GATHERD_HINGE_ROTATION_REFERENCE still overrides a config-file rotation_reference_deg' \
+    '12.0' rotation_reference
+unset GATHERD_HINGE_ROTATION_REFERENCE
+
+printf 'rotation_reference_deg=not-a-number\n' \
+    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+assert_out 'a malformed rotation_reference_deg falls back to the default without crashing' \
+    '177.0' rotation_reference
+
+rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+
+# ── integration: rotation only ever calls swaymsg, gated on tablet mode ─────
+# Exercised against the REAL gatherd-tablet-mode (not the fake used above)
+# and the real swaymsg fake installed at the top of this file, so the
+# state-file property is proven against the actual record-then-restore
+# code, not a stand-in for it. Placed last in this section so nothing after
+# it needs the gatherd-tablet-mode fake restored.
+rm -f "$FAKEBIN/gatherd-tablet-mode"
+hash -r
+
+poll_rotation_once() {
+    python3 - "$REPO/scripts/gatherd-hinge-daemon" <<'PY'
+import collections, importlib.machinery, importlib.util, sys
+path = sys.argv[1]
+loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
+spec = importlib.util.spec_from_loader("hinge_daemon", loader)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+history = collections.deque(maxlen=mod.window_size())
+tracker = mod.RotationTracker()
+mod.poll_once(history, tracker)
+PY
+}
+
+# Fixed base vector throughout: fold action is pinned to "hold" regardless
+# of its value here, since tablet mode is either inactive (blocks "enter")
+# or active-but-not-owned (blocks "exit") in every case below - see
+# decide()'s ownership rule, exercised earlier in this section.
+write_vector "$HINGE_BASE" -317 100 976
+
+reset_log
+rm -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
+printf 'untouched' > "$WORK/transform"
+write_vector "$HINGE_LID" -1023 54 0
+poll_rotation_once
+assert_out 'rotation issues no swaymsg call while tablet mode is inactive' \
+    'untouched' cat "$WORK/transform"
+if log_has 'output DSI-1 transform'; then
+    bad 'rotation never rotates an unfolded (tablet-mode-inactive) laptop'
+else
+    ok 'rotation never rotates an unfolded (tablet-mode-inactive) laptop'
+fi
+
+printf '90' > "$WORK/transform"
+reset_log
+gatherd-tablet-mode on >/dev/null 2>&1
+assert_out 'the resting transform recorded at entry is 90' \
+    '90' cat "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
+
+write_vector "$HINGE_LID" -1023 54 0
+poll_rotation_once
+assert_out 'rotation applies transform normal for the reading-position pose' \
+    'normal' cat "$WORK/transform"
+
+write_vector "$HINGE_LID" -73 -1021 0
+poll_rotation_once
+assert_out 'rotation applies transform 270 mid-sequence, proving it is actually acting' \
+    '270' cat "$WORK/transform"
+
+assert_out 'the recorded resting transform is untouched by rotation while folded' \
+    '90' cat "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
+
+gatherd-tablet-mode off >/dev/null 2>&1
+assert_out 'exiting restores the ORIGINAL resting transform, not the last rotation' \
+    '90' cat "$WORK/transform"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

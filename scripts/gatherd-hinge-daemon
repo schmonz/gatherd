@@ -29,9 +29,51 @@
 # (~1.2g at rest) and the machine is sometimes used on a train, where the
 # magnitude is not 1g at all. A median over many samples is the noise
 # defense, not a magnitude gate.
+#
+# Auto-rotation (phase 3): the lid sensor is already being read at 10Hz for
+# the fold trigger above, so following the display to how the tablet is
+# actually held in the hand costs zero extra I2C - I2C is the entire cost
+# here (~470us per axis transaction). A second process reading the sensor
+# and issuing its own `swaymsg output ... transform` would fight this one,
+# which is exactly the twitching an earlier version of this daemon produced;
+# rotation is folded into the same loop instead.
+#
+# Calibration (measured on the real hardware, do NOT re-derive without new
+# measurements): the screen plane is spanned by x and y (z is the screen
+# normal, used only by the flat-pose guard below, never for the angle
+# itself - it is ~10x noisier than x or y on this sensor). Gravity's
+# in-plane angle gives the rotation:
+#
+#     rotation = (REFERENCE_ANGLE - degrees(atan2(y, x))) mod 360
+#
+# Four captures, turning counterclockwise from the normal reading position
+# (REFERENCE_ANGLE = 177.0, the atan2 reading at that pose):
+#
+#   capture                    atan2(y,x)   rotation   transform
+#   normal reading position    177.0        0          normal
+#   (a 180 turn)               2.8          174.2      180
+#   (a 270 turn)               -94.1        271.1      270
+#   back to start               179.3       357.7      normal
+#
+# Only THREE poses were actually captured - the sweep went straight from the
+# normal position to the 180 turn, so the 90-degree point below is INFERRED
+# from the linear fit (the other three land within ~1 degree of it), not
+# measured. Transform is the nearest quadrant, and the mapping from rotation
+# to transform is the IDENTITY (rotation 90 -> transform 90): `man 5 sway`
+# states sway's rotation is performed clockwise, so a device turned 90
+# degrees counterclockwise needs a 90-degree clockwise transform to
+# compensate - checked in the man page, not recalled.
+#
+# The flat-pose guard mirrors the hinge's own degenerate-pose guard in
+# shape, not in axes: hinge degeneracy is the hinge axis (y) parallel to
+# gravity (portrait score-reading - x,z vanish); rotation degeneracy is the
+# screen normal (z) parallel to gravity (screen lying flat - x,y vanish).
+# They are independent conditions and neither gates the other.
 
+import json
 import math
 import os
+import re
 import statistics
 import subprocess
 import sys
@@ -49,6 +91,40 @@ TABLET_MODE_CMD = "gatherd-tablet-mode"
 # threshold comfortably above zero and below the ~1.0 ratio a normal, non-
 # vertical pose produces works; this is not a tuned constant.
 MIN_PROJECTION_RATIO = 0.3
+
+# Fallback when tablet-mode.conf carries no rotation_reference_deg - matches
+# the measured value above, but re-calibrating on other hardware must be a
+# config edit (roles/desktop/templates/tablet-mode.conf.j2, driven from
+# group_vars/all/main.yml), never a code change.
+DEFAULT_ROTATION_REFERENCE_DEG = 177.0
+
+# Below this fraction of the lid sensor's own magnitude, x and y (the screen
+# plane) carry no signal - gravity is along the screen normal (z) instead,
+# the pose of the tablet lying flat. Same shape of guard as
+# MIN_PROJECTION_RATIO above, different axes; see the module header.
+MIN_ROTATION_PROJECTION_RATIO = 0.3
+
+# How far past a quadrant's 45-degree boundary a reading must sit before it
+# is even considered a challenger - held near a boundary, distance oscillates
+# either side of 45 but rarely gets far past it. Combined with
+# ROTATION_PERSIST_SAMPLES below (a *different* held-near-boundary reading
+# would clear the margin but not repeat), so the hinge held exactly on a
+# boundary satisfies neither alone. Not tuned against measured boundary-
+# region data - no such data was captured, only the four interior points in
+# the module header - so treat this as a reasonable starting margin, not a
+# calibrated one.
+ROTATION_HYSTERESIS_MARGIN_DEG = 10
+
+# Consecutive same-candidate samples required before the committed transform
+# actually changes - see ROTATION_HYSTERESIS_MARGIN_DEG above.
+ROTATION_PERSIST_SAMPLES = 3
+
+TRANSFORM_BY_QUADRANT = {0: "normal", 90: "90", 180: "180", 270: "270"}
+
+# Duplicates gatherd-tablet-mode's own internal_output() connector-name
+# heuristic (there written in POSIX sh, needed again here in Python) - keep
+# the two in sync if the hardware match ever changes.
+INTERNAL_OUTPUT_RE = re.compile(r"^(eDP|DSI|LVDS)")
 
 
 def lid_device():
@@ -110,6 +186,14 @@ def fold_enter_deg():
 
 def fold_exit_deg():
     return threshold("GATHERD_HINGE_EXIT", "fold_exit_deg", 50)
+
+
+def rotation_reference_deg():
+    return threshold(
+        "GATHERD_HINGE_ROTATION_REFERENCE",
+        "rotation_reference_deg",
+        DEFAULT_ROTATION_REFERENCE_DEG,
+    )
 
 
 def poll_interval():
@@ -184,6 +268,163 @@ def hinge_theta(lid, base):
     return math.degrees(math.atan2(x0 * z1 - z0 * x1, x0 * x1 + z0 * z1))
 
 
+def is_flat(vector):
+    x, y, _z = vector
+    mag = magnitude(vector)
+    if mag == 0:
+        return True
+    projection = math.sqrt(x * x + y * y)
+    return (projection / mag) < MIN_ROTATION_PROJECTION_RATIO
+
+
+def rotation_deg(x, y):
+    # See the module header for the calibration this formula is measured
+    # from, and for the honesty note that the 90-degree quadrant is inferred
+    # rather than one of the captured points.
+    return (rotation_reference_deg() - math.degrees(math.atan2(y, x))) % 360
+
+
+def nearest_quadrant(deg):
+    return int(round(deg / 90)) % 4 * 90
+
+
+def distance_from_quadrant(deg, quadrant):
+    # Shortest signed distance from deg to quadrant's center, folded to
+    # [0, 180] - i.e. how far deg has wandered from that quadrant, in either
+    # direction, ignoring which side.
+    return abs(((deg - quadrant + 180) % 360) - 180)
+
+
+class RotationTracker:
+    """Smooths rotation samples with the same median-over-window defense the
+    fold trigger uses, then requires a challenger quadrant to both clear a
+    margin past the 45-degree boundary AND persist across several samples
+    before the committed transform changes - either guard alone still flaps
+    for a hinge held near a boundary long enough that a momentary read lands
+    on the far side of it; both together do not."""
+
+    def __init__(self):
+        self.window = deque(maxlen=window_size())
+        self.committed_quadrant = None
+        self.challenger_quadrant = None
+        self.challenger_count = 0
+        # Tracks what was last actually applied via swaymsg, distinct from
+        # committed_quadrant - see act_rotation(), which is what reads this.
+        self.last_applied = None
+
+    def update(self, vector):
+        x, y, _z = vector
+        if is_flat(vector):
+            return  # "down" is undefined in this pose - hold, decide nothing
+        median = self._smoothed(rotation_deg(x, y))
+        if self.committed_quadrant is None:
+            # No baseline yet: commit immediately rather than making the
+            # first-ever reading wait out the persistence guard below, which
+            # exists to resist flapping AWAY from an established quadrant,
+            # not to delay establishing one.
+            self.committed_quadrant = nearest_quadrant(median)
+            self._clear_challenger()
+            return
+        if distance_from_quadrant(median, self.committed_quadrant) <= (
+            45 + ROTATION_HYSTERESIS_MARGIN_DEG
+        ):
+            self._clear_challenger()
+            return
+        candidate = nearest_quadrant(median)
+        if candidate == self.challenger_quadrant:
+            self.challenger_count += 1
+        else:
+            self.challenger_quadrant = candidate
+            self.challenger_count = 1
+        if self.challenger_count >= ROTATION_PERSIST_SAMPLES:
+            self.committed_quadrant = candidate
+            self._clear_challenger()
+
+    def _clear_challenger(self):
+        self.challenger_quadrant = None
+        self.challenger_count = 0
+
+    def _smoothed(self, raw_deg):
+        # Unwrap against the previous sample before pushing into the window:
+        # the 0/360 seam sits at the CENTER of the "normal" quadrant, not at
+        # a boundary, so a genuine crossing of it (e.g. 358 -> 2) must not
+        # corrupt a naive mod-360 median the way it would (that median would
+        # land near 180, the opposite side of the circle from every sample).
+        if self.window:
+            last = self.window[-1]
+            delta = ((raw_deg - (last % 360)) + 180) % 360 - 180
+            unwrapped = last + delta
+        else:
+            unwrapped = raw_deg
+        self.window.append(unwrapped)
+        return statistics.median(self.window) % 360
+
+    def transform(self):
+        if self.committed_quadrant is None:
+            return None
+        return TRANSFORM_BY_QUADRANT[self.committed_quadrant]
+
+    def reset(self):
+        self.window.clear()
+        self.committed_quadrant = None
+        self._clear_challenger()
+        self.last_applied = None
+
+
+def internal_output_name():
+    # Read-only swaymsg call - safe from decide_once()/print_once(), which
+    # never call this; only act_rotation() (poll_once()'s acting path) does.
+    result = subprocess.run(
+        ["swaymsg", "-t", "get_outputs"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        outputs = json.loads(result.stdout)
+    except ValueError:
+        return None
+    for output in outputs:
+        name = output.get("name", "")
+        if INTERNAL_OUTPUT_RE.match(name):
+            return name
+    return None
+
+
+def rotate_output(transform):
+    # The ONLY swaymsg call rotation is allowed to make - never
+    # gatherd-tablet-mode, never its state file. That is the entire reason
+    # `gatherd-tablet-mode off` can always restore the ORIGINAL resting
+    # transform regardless of anything rotation did while folded: it never
+    # sees rotation happen at all.
+    name = internal_output_name()
+    if name is None:
+        return
+    subprocess.run(
+        ["swaymsg", "output", name, "transform", transform],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
+def act_rotation(tracker, active):
+    if not active:
+        # Drop last_applied (not just skip) rather than leave it stale: the
+        # next activation must always issue at least one swaymsg call, even
+        # if the tracker's committed quadrant happens to match what
+        # gatherd-tablet-mode's `on` just set the display to.
+        tracker.last_applied = None
+        return
+    transform = tracker.transform()
+    if transform is None or transform == tracker.last_applied:
+        return
+    rotate_output(transform)
+    tracker.last_applied = transform
+
+
 def lid_is_open():
     # An unreadable lid file (missing node, permissions, EC hiccup) must
     # resolve to "not open" - refusing to fold is always the safe default,
@@ -251,25 +492,35 @@ def act(action):
         deactivate()
 
 
-def sample(history):
+def sample(history, rotation_tracker):
     """Read both sensors once and fold a valid reading into history. Returns
-    True if the sample was degenerate (and therefore skipped: appending it
-    would let a single blind reading corrupt the whole rolling median)."""
+    True if the hinge sample was degenerate (and therefore skipped: appending
+    it would let a single blind reading corrupt the whole rolling median).
+
+    The SAME lid reading also feeds rotation_tracker, unconditionally - even
+    when the hinge sample is degenerate. The two degenerate conditions are
+    independent (see the module header): a portrait score-reading pose is
+    exactly where hinge detection goes blind, and exactly where rotation
+    matters most, so hinge degeneracy must not also silence rotation.
+    rotation_tracker.update() is pure computation, no I/O - it does not
+    disturb the "degenerate pose never calls gatherd-tablet-mode at all"
+    property below."""
     lid = read_vector(lid_device())
     base = read_vector(base_device())
+    rotation_tracker.update(lid)
     if is_degenerate(lid) or is_degenerate(base):
         return True
     history.append(abs(hinge_theta(lid, base)))
     return False
 
 
-def decide_once(history):
+def decide_once(history, rotation_tracker):
     """One read-decide cycle, with NO act: read-decide-act split into its
     read-decide half so --print can report a decision without taking it.
     Returns (median_abs_theta, action); median_abs_theta is None when this
     sample was degenerate and no decision was made at all - the daemon holds
     whatever state it was already in."""
-    if sample(history):
+    if sample(history, rotation_tracker):
         return None, "hold"
     median_abs_theta = statistics.median(history)
     action = decide(
@@ -278,12 +529,13 @@ def decide_once(history):
     return median_abs_theta, action
 
 
-def poll_once(history):
+def poll_once(history, rotation_tracker):
     """One read-decide-act cycle. Only the main loop may call this - it is
     the sole path that is allowed to act. See decide_once for the read-only
     half that --print uses instead."""
-    median_abs_theta, action = decide_once(history)
+    median_abs_theta, action = decide_once(history, rotation_tracker)
     act(action)
+    act_rotation(rotation_tracker, tablet_mode_active())
     return median_abs_theta, action
 
 
@@ -293,9 +545,12 @@ def print_once():
     loop, against a live session. Must call decide_once, never poll_once:
     poll_once acts, and this ran against the live hardware once under the
     belief that --print was inert, rotating the display and disabling the
-    keyboard on every invocation."""
+    keyboard on every invocation. Output format is unchanged by rotation -
+    decide_once() updates the rotation tracker but act_rotation() (the only
+    thing that touches swaymsg for rotation) is never called here."""
     history = deque(maxlen=window_size())
-    median_abs_theta, action = decide_once(history)
+    rotation_tracker = RotationTracker()
+    median_abs_theta, action = decide_once(history, rotation_tracker)
     if median_abs_theta is None:
         print("theta=degenerate action=hold")
     else:
@@ -304,8 +559,9 @@ def print_once():
 
 def loop():
     history = deque(maxlen=window_size())
+    rotation_tracker = RotationTracker()
     while True:
-        poll_once(history)
+        poll_once(history, rotation_tracker)
         time.sleep(poll_interval())
 
 

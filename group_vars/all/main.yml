@@ -302,12 +302,15 @@ tablet_mode_supported: "{{ has_touchscreen | default(false) and has_acceleromete
 # if the fold puts the wrong edge at the top.
 tablet_mode_transform: normal
 # Hinge-fold trigger (phase 2): gatherd-hinge-daemon's enter/exit hysteresis
-# band, in degrees of phi (see the daemon's own header for the geometry).
+# band, in degrees of |theta| away from folded (theta is the hinge angle
+# itself - see the daemon's own header for the geometry, and the design spec
+# for why a signed angle alone cannot tell a shut lid from a folded tablet).
 # Calibrated on a moving train, where measured jitter was 8.1 degrees, so this
 # band is deliberately generous pending a re-measurement somewhere stationary.
-# Flat reads phi=178 and folded reads phi=273; 240/200 sits well clear of both.
-tablet_mode_hinge_enter_deg: 240
-tablet_mode_hinge_exit_deg: 200
+# Typing reads theta=108 and flat reads theta=178, both well clear of the
+# band; fully folded reads theta~=-2, well inside it.
+tablet_mode_fold_enter_deg: 30
+tablet_mode_fold_exit_deg: 50
 music_stand_root: "{{ target_home }}/Documents/forscore"
 # music_stand_viewer, music_stand_app_id and music_stand_viewer_flag must
 # all three change together: the app_id is what

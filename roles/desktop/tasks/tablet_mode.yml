@@ -17,6 +17,18 @@
     dest: "{{ target_home }}/.config/gatherd/tablet-mode.conf"
     mode: '0644'
 
+# Phase 2 (fold-to-trigger): only on machines with the second, base-sensor
+# accelerometer gatherd-hinge-daemon needs to compute a hinge angle at all.
+# gatherd-bind-hinge-sensor.service (roles/system) instantiates that sensor at
+# boot; a single-accelerometer machine gets phase 1 (manual trigger) only.
+- name: Install the hinge-fold daemon
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-hinge-daemon"
+    dest: "{{ target_home }}/.local/bin/gatherd-hinge-daemon"
+    mode: '0755'
+    remote_src: true
+  when: has_dual_accelerometer
+
 # `binding`, not `keys`: Jinja2 resolves item.keys to the dict's built-in
 # keys() method rather than the value, which fails silently and confusingly.
 - name: Bind tablet mode and music stand in sway

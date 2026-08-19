@@ -319,6 +319,27 @@
   # idempotent state.
   changed_when: false
 
+# Gated on has_dual_accelerometer in addition to tablet_mode_supported: a
+# single-accelerometer machine has no second sensor for this unit to bind, so
+# it gets phase 1 tablet mode (manual trigger) and nothing more.
+- name: Install the hinge-sensor systemd unit
+  ansible.builtin.file:
+    src: "{{ setup_dir }}/services/system/gatherd-hinge-sensor.service"
+    dest: /etc/systemd/system/gatherd-hinge-sensor.service
+    state: link
+  when: tablet_mode_supported and has_dual_accelerometer
+  notify: Reload systemd
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the hinge-sensor service
+  ansible.builtin.systemd:
+    name: gatherd-hinge-sensor.service
+    enabled: true
+    state: started
+  when: tablet_mode_supported and has_dual_accelerometer
+
 # Enabled only, never started here: it is ordered Before=gatherd.service and runs
 # at the NEXT boot's pre-gatherd window. Starting it now (from inside
 # gatherd.service) would pop the console prompt mid-run. postinstall enables it

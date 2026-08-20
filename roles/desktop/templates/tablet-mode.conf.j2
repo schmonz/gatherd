@@ -5,6 +5,10 @@ viewer={{ music_stand_viewer }}
 viewer_flag={{ music_stand_viewer_flag }}
 # Space-separated KEY=VALUE assignments, applied via env(1) at launch.
 viewer_env={{ music_stand_viewer_env }}
+# Which window to fullscreen while folded. Same app_id the idle-inhibit
+# for_window rule matches; see music_stand_app_id in group_vars for why it is
+# the interpreter's name rather than the application's.
+viewer_app_id={{ music_stand_app_id }}
 fold_enter_deg={{ tablet_mode_fold_enter_deg }}
 fold_exit_deg={{ tablet_mode_fold_exit_deg }}
 poll_interval={{ tablet_mode_hinge_poll_interval }}

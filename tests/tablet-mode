@@ -943,6 +943,54 @@ else
 fi
 gatherd-tablet-mode off >/dev/null 2>&1 || true
 
+# ── the score fills the screen while folded ──────────────────────────────────
+# papers got this free from presentation mode, which is inherently fullscreen.
+# koreader opens as an ordinary window, and in the normal flow the score is
+# opened BEFORE the fold, so nothing at launch time can arrange it: entering
+# tablet mode has to fullscreen whatever is already there, and leaving has to
+# give it back.
+
+printf 'transform=180\nviewer_app_id=luajit\n' \
+    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+reset_log
+assert_ok 'on succeeds with a viewer app_id configured' gatherd-tablet-mode on
+if log_has '[app_id="luajit"] fullscreen enable'; then
+    ok 'entering tablet mode fullscreens the viewer'
+else
+    bad 'entering tablet mode fullscreens the viewer'
+fi
+reset_log
+assert_ok 'off succeeds with a viewer app_id configured' gatherd-tablet-mode off
+if log_has '[app_id="luajit"] fullscreen disable'; then
+    ok 'leaving tablet mode gives the viewer its window back'
+else
+    bad 'leaving tablet mode gives the viewer its window back'
+fi
+
+# Input safety outranks cosmetics: the fullscreen call must come AFTER the
+# keyboard is handed back, so a compositor that refuses it cannot strand
+# anyone.
+_input_line=$(log_line 'input type:keyboard events enabled')
+_fs_line=$(log_line 'fullscreen disable')
+if [ -n "$_input_line" ] && [ -n "$_fs_line" ] && [ "$_input_line" -lt "$_fs_line" ]; then
+    ok 'off re-enables input before touching the viewer window'
+else
+    bad 'off re-enables input before touching the viewer window'
+fi
+
+# No app_id configured (any viewer whose window we cannot name) issues nothing
+# rather than a malformed criteria match.
+printf 'transform=180\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+reset_log
+assert_ok 'on succeeds with no viewer app_id' gatherd-tablet-mode on
+if log_has 'fullscreen'; then
+    bad 'no configured app_id means no fullscreen call at all'
+else
+    ok 'no configured app_id means no fullscreen call at all'
+fi
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+
 # ── gatherd-power-button ──────────────────────────────────────────────────────
 
 mkdir -p "$WORK/home/.config/sway/scripts"

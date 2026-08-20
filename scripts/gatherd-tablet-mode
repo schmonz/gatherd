@@ -19,6 +19,7 @@ rotation_off_file="$state_dir/rotation-off"
 config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
 
 transform=normal
+viewer_app_id=""
 # shellcheck source=/dev/null
 [ -r "$config" ] && . "$config"
 transform="${GATHERD_TABLET_TRANSFORM:-$transform}"
@@ -121,6 +122,22 @@ view_ids() {
     swaymsg -t get_tree | jq -r '.. | objects | select(.app_id != null) | .id'
 }
 
+# The score fills the screen while folded, and goes back to being a window
+# when unfolded. papers got this free from presentation mode, which is
+# inherently fullscreen; koreader opens as an ordinary window, and the score is
+# opened BEFORE the fold in the normal flow, so nothing at launch time can
+# arrange it. Matching the configured app_id rather than the focused window: on
+# a folded machine the human cannot change focus, and whatever they left
+# focused before folding is not necessarily the score.
+#
+# Never fatal. A compositor that will not fullscreen a window is a cosmetic
+# problem; failing here would abort the rest of turn_on, which disables the
+# keyboard, or the rest of turn_off, which gives it back.
+set_viewer_fullscreen() {
+    [ -n "$viewer_app_id" ] || return 0
+    swaymsg "[app_id=\"$viewer_app_id\"] fullscreen $1" >/dev/null 2>&1 || true
+}
+
 set_inhibitors() {
     for _id in $(view_ids); do
         swaymsg "[con_id=$_id]" inhibit_idle "$1" >/dev/null
@@ -147,6 +164,7 @@ turn_on() {
     swaymsg output "$_output" transform "$transform" >/dev/null
     disable_builtin_input || true
     set_inhibitors open
+    set_viewer_fullscreen enable
 }
 
 turn_off() {
@@ -176,6 +194,7 @@ turn_off() {
     # this point, and a compositor error here must never stop the rotation
     # restore or state cleanup that follow it from running.
     set_inhibitors none || true
+    set_viewer_fullscreen disable
 
     # Only rotate to a value sway itself would accept. Do NOT fall back to
     # "normal" when the recorded value is missing or bogus (e.g. the literal

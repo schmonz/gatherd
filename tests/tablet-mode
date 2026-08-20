@@ -1193,12 +1193,17 @@ fake_bin() {
     chmod +x "$FAKEBIN/$1"
 }
 
-FAKETM_STATE="$WORK/faketm-state"
+# The REAL path gatherd-tablet-mode uses, not a private one: the daemon now
+# reads this file directly instead of shelling out to `gatherd-tablet-mode
+# status` (20 fork+execs a second, measured at 2.1% of a core). A fake keeping
+# its state somewhere else would no longer be a fake of anything.
+FAKETM_STATE="$XDG_RUNTIME_DIR/gatherd/tablet-mode"
 FAKETM_LOG="$WORK/faketm.log"
 fake_bin gatherd-tablet-mode '
 printf "%s\n" "$*" >> "'"$FAKETM_LOG"'"
 case "$1" in
-    on)     touch "'"$FAKETM_STATE"'" ;;
+    on)     mkdir -p "$(dirname "'"$FAKETM_STATE"'")"
+            touch "'"$FAKETM_STATE"'" ;;
     off)    rm -f "'"$FAKETM_STATE"'" ;;
     status) [ -f "'"$FAKETM_STATE"'" ] ;;
     *)      exit 2 ;;

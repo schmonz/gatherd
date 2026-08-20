@@ -490,15 +490,26 @@ def lid_is_open():
     return "open" in contents
 
 
+def tablet_mode_state_file():
+    # Deliberately the same path gatherd-tablet-mode keeps its state in. That
+    # duplication is the point: see tablet_mode_active() below.
+    return os.path.join(state_dir(), "tablet-mode")
+
+
 def tablet_mode_active():
-    return (
-        subprocess.run(
-            [TABLET_MODE_CMD, "status"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ).returncode
-        == 0
-    )
+    # A stat, NOT `gatherd-tablet-mode status`. That subprocess is what the
+    # `status` verb does anyway - `is_on() { [ -f "$state_file" ]; }` - but it
+    # costs a fork+exec of /bin/sh that also sources a config file, and this is
+    # called twice per poll, ten times a second, forever. Measured at 2.1% of a
+    # core continuously, on a fanless machine, which the human noticed as
+    # battery drain before any of this was profiled.
+    #
+    # Deciding to duplicate the path rather than shell out is the same call
+    # already made for internal_output()'s connector heuristic: keep the two in
+    # sync if gatherd-tablet-mode ever moves its state file. Every path that
+    # CHANGES tablet mode still goes through that script - only this read does
+    # not.
+    return os.path.exists(tablet_mode_state_file())
 
 
 def activate():

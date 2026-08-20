@@ -467,6 +467,10 @@ printf -- '---\n' >> "\$WORK/fuzzel.in"
 _n=\$(cat "\$WORK/fuzzel.turn" 2>/dev/null || echo 1)
 printf '%s' \$((_n + 1)) > "\$WORK/fuzzel.turn"
 sed -n "\${_n}p" "\$WORK/fuzzel.answers"
+# \$WORK/fuzzel-fail simulates fuzzel exiting non-zero: cancelled with
+# Escape, or refusing to start because another instance holds its lock.
+[ -f "\$WORK/fuzzel-fail" ] && exit 1
+exit 0
 EOF
 chmod +x "$FAKEBIN/fuzzel"
 
@@ -1079,6 +1083,53 @@ if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1234:5678:AirTurn
 else
     bad 'the page-turner pedal is enabled after a recovery off'
 fi
+
+# ── the folded menu records what it showed and what came back ────────────────
+# Three explanations for a menu that came up with its prompt and no entries
+# were argued from first principles and then falsified by measurement. This is
+# the evidence that should have existed the first time.
+
+HINGE_PB_LOG="$XDG_STATE_HOME/gatherd/power-button.log"
+gatherd-tablet-mode on >/dev/null 2>&1
+rm -f "$HINGE_PB_LOG"
+reset_picker 'Cancel'
+assert_ok 'power button works with logging on' gatherd-power-button
+if grep -q 'open entries=4' "$HINGE_PB_LOG" 2>/dev/null; then
+    ok 'the number of entries handed to fuzzel is recorded'
+else
+    bad 'the number of entries handed to fuzzel is recorded'
+fi
+if grep -q 'kbd=\[' "$HINGE_PB_LOG" 2>/dev/null; then
+    ok 'the built-in keyboard state at menu time is recorded'
+else
+    bad 'the built-in keyboard state at menu time is recorded'
+fi
+if grep -q 'fuzzel_already_running=' "$HINGE_PB_LOG" 2>/dev/null; then
+    ok 'a fuzzel already holding the single-instance lock would be recorded'
+else
+    bad 'a fuzzel already holding the single-instance lock would be recorded'
+fi
+if grep -q 'close rc=0 selection=\[.*Cancel' "$HINGE_PB_LOG" 2>/dev/null; then
+    ok 'the selection that came back is recorded'
+else
+    bad 'the selection that came back is recorded'
+fi
+
+# The outcome most worth recording is the one where fuzzel gives nothing back.
+# `selection=$(...)` followed by `_rc=$?` would abort under `set -e` before
+# reaching the log, so this is the assertion that keeps the `if` form honest.
+rm -f "$HINGE_PB_LOG"
+touch "$WORK/fuzzel-fail"
+reset_picker ''
+assert_ok 'the power button survives fuzzel exiting non-zero' gatherd-power-button
+if grep -q 'close rc=1' "$HINGE_PB_LOG" 2>/dev/null; then
+    ok 'a fuzzel that returns nothing is still recorded'
+else
+    bad 'a fuzzel that returns nothing is still recorded'
+fi
+rm -f "$WORK/fuzzel-fail"
+assert_ok 'a failed menu changes nothing' gatherd-tablet-mode status
+gatherd-tablet-mode off >/dev/null 2>&1 || true
 
 # ── gatherd-power-button: cancel escape ───────────────────────────────────────
 # The tablet escape menu is the only control reachable once folded, so it must

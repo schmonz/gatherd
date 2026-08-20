@@ -177,6 +177,11 @@ assert_ok 'on again does not clobber the recorded transform' \
 
 reset_log
 assert_ok 'off succeeds' gatherd-tablet-mode off
+# The daemon reads this marker to know an exit was asked for rather than
+# inferred; the daemon-section fake models it, so the REAL script has to be
+# pinned here or the two could drift apart unnoticed.
+assert_ok 'off records that the exit was explicit' \
+    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed"
 assert_out 'off restores the recorded 90, not a hardcoded normal' '90' cat "$WORK/transform"
 assert_fail 'status exits non-zero after off' gatherd-tablet-mode status
 if log_has 'input type:keyboard events enabled'; then
@@ -430,9 +435,15 @@ export MUSIC_STAND_VIEWER
 # process from pick N writing after reset_picker N+1 truncates a shared log
 # is exactly the flake this avoided: giving every pick its own log file means
 # a late writer from an earlier pick can never land in the current one.
+# Lingers rather than exiting immediately: "Exit music stand" now stops the
+# viewer it started, and a fake that exited at once would leave nothing to
+# stop, so every assertion about stopping it would pass vacuously. NOT `exec
+# sleep` - that would replace this shell and with it the cmdline that
+# gatherd-music-stand re-checks before signalling anything.
 cat > "$FAKEBIN/fakeviewer" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >> "${VIEWER_LOG:-/dev/null}"
+sleep 5
 EOF
 chmod +x "$FAKEBIN/fakeviewer"
 
@@ -536,6 +547,77 @@ assert_out 'level 1 offers the most recent composer first' 'Medtner' \
 # dedupes rather than adding a third entry.
 assert_out 'the MRU holds both distinct picks without duplicates' '2' \
     sh -c 'wc -l < "$XDG_STATE_HOME/gatherd/music-stand-scores" | tr -d " "'
+
+# ── Exit music stand stops the viewer it started ─────────────────────────────
+# Reported from the piano: "Exit music stand" looked like it did nothing,
+# because the fullscreen PDF stayed exactly where it was. Stopping it is the
+# visible half of the entry doing anything at all.
+
+reset_picker 'Medtner' 'Two Skazki'
+assert_ok 'music-stand on for the viewer-stop case' gatherd-music-stand on
+assert_out 'the viewer opened before being stopped' "$SCORES/2 Skazki, Op. 48.pdf" \
+    viewer_log
+assert_ok 'on records the pid of the viewer it started' \
+    test -f "$XDG_STATE_HOME/gatherd/music-stand-viewer-pid"
+_viewer_pid=$(cat "$XDG_STATE_HOME/gatherd/music-stand-viewer-pid")
+assert_ok 'the recorded viewer is actually running' kill -0 "$_viewer_pid"
+
+assert_ok 'music-stand off succeeds' gatherd-music-stand off
+_i=0
+while kill -0 "$_viewer_pid" 2>/dev/null && [ "$_i" -lt 100 ]; do
+    _i=$((_i + 1))
+    sleep 0.02
+done
+if kill -0 "$_viewer_pid" 2>/dev/null; then
+    bad 'off stops the viewer it started'
+else
+    ok 'off stops the viewer it started'
+fi
+assert_fail 'off clears the recorded viewer pid' \
+    test -f "$XDG_STATE_HOME/gatherd/music-stand-viewer-pid"
+
+# A pid is a recycled number, not an identity. Nothing may be signalled
+# without re-checking that the pid is still the viewer this script launched -
+# a broad match has taken out unrelated processes on this machine before.
+sleep 30 &
+_bystander=$!
+mkdir -p "$XDG_STATE_HOME/gatherd"
+printf '%s\n' "$_bystander" > "$XDG_STATE_HOME/gatherd/music-stand-viewer-pid"
+assert_ok 'music-stand off survives a stale pid file' gatherd-music-stand off
+if kill -0 "$_bystander" 2>/dev/null; then
+    ok 'a recycled pid that is not the viewer is left alone'
+else
+    bad 'a recycled pid that is not the viewer is left alone'
+fi
+kill "$_bystander" 2>/dev/null || true
+
+# Picking another score replaces the viewer rather than stacking one behind
+# the fullscreen one - and an unreplaced viewer would also be untrackable,
+# since only the newest pid can be recorded.
+reset_picker 'Medtner' 'Two Skazki'
+assert_ok 'music-stand on for the replace case' gatherd-music-stand on
+assert_out 'the first score opened' "$SCORES/2 Skazki, Op. 48.pdf" viewer_log
+_first_pid=$(cat "$XDG_STATE_HOME/gatherd/music-stand-viewer-pid")
+reset_picker 'Alkan' 'Twelve Etudes'
+assert_ok 'picking another score succeeds' gatherd-music-stand on
+assert_out 'the second score opened' "$SCORES/12 Etudes, Op. 39.pdf" viewer_log
+_second_pid=$(cat "$XDG_STATE_HOME/gatherd/music-stand-viewer-pid")
+if [ "$_first_pid" = "$_second_pid" ]; then
+    bad 'picking another score records the new viewer, not the old one'
+else
+    ok 'picking another score records the new viewer, not the old one'
+fi
+_i=0
+while kill -0 "$_first_pid" 2>/dev/null && [ "$_i" -lt 100 ]; do
+    _i=$((_i + 1))
+    sleep 0.02
+done
+if kill -0 "$_first_pid" 2>/dev/null; then
+    bad 'picking another score stops the previous viewer'
+else
+    ok 'picking another score stops the previous viewer'
+fi
+gatherd-music-stand off >/dev/null 2>&1 || true
 
 # Cancelling must not rotate the screen or open anything. Read $VIEWER_LOG
 # directly rather than via viewer_log()'s poll: cancelling exits before the
@@ -795,12 +877,21 @@ assert_out 'pick another score opened the newly chosen viewer' \
 assert_ok 'pick another score never left tablet mode' gatherd-tablet-mode status
 assert_out 'pick another score did not open the power menu' '' cat "$WORK/powermenu.log"
 
-# Power… must still reach the real menu, one tap deeper.
+# The folded menu offers no way to power off. It is reached by touch with the
+# keyboard disabled, so an irreversible action sitting one mis-tap from `Exit
+# tablet mode` is a hazard, not a convenience; unfolding reaches the stock
+# power menu with a working keyboard.
 gatherd-tablet-mode on >/dev/null 2>&1
 : > "$WORK/powermenu.log"
 reset_picker 'Power…'
-assert_ok 'power button chains to the power menu' gatherd-power-button
-assert_out 'Power… reaches the real power menu' 'power_menu' cat "$WORK/powermenu.log"
+assert_ok 'power button survives a selection it no longer offers' gatherd-power-button
+assert_out 'the folded menu never reaches the power menu' '' cat "$WORK/powermenu.log"
+if grep -qi 'power' "$WORK/fuzzel.in"; then
+    bad 'the folded menu offers no power entry at all'
+else
+    ok 'the folded menu offers no power entry at all'
+fi
+assert_ok 'an unoffered selection leaves tablet mode untouched' gatherd-tablet-mode status
 gatherd-tablet-mode off >/dev/null 2>&1 || true
 
 # ── the lockout: state file gone, input still disabled ───────────────────────
@@ -945,8 +1036,15 @@ FAKETM_LOG="$WORK/faketm.log"
 fake_bin gatherd-tablet-mode '
 printf "%s\n" "$*" >> "'"$FAKETM_LOG"'"
 case "$1" in
-    on)     touch "'"$FAKETM_STATE"'" ;;
-    off)    rm -f "'"$FAKETM_STATE"'" ;;
+    # The suppression marker is modelled here, not just the on/off state: the
+    # daemon reads it directly, so a fake that skipped it would let the
+    # "explicit exit outranks a folded hinge" tests pass against a real script
+    # that had stopped writing it.
+    on)     touch "'"$FAKETM_STATE"'"
+            rm -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed" ;;
+    off)    rm -f "'"$FAKETM_STATE"'"
+            mkdir -p "$XDG_RUNTIME_DIR/gatherd"
+            : > "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed" ;;
     status) [ -f "'"$FAKETM_STATE"'" ] ;;
     *)      exit 2 ;;
 esac
@@ -991,13 +1089,28 @@ write_lid_state() {
 # formula, not the fixture, is right. Lid defaults to open on every reset -
 # tests that care about the closed lid set it explicitly.
 reset_daemon_state() {
-    rm -f "$FAKETM_STATE"
+    rm -f "$FAKETM_STATE" "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed"
     : > "$FAKETM_LOG"
     write_lid_state open
 }
 
 hinge_print() {
     gatherd-hinge-daemon --print
+}
+
+# The acting half of the same cycle. --print deliberately cannot clear the
+# suppression latch (that would make a diagnostic change behaviour), so
+# testing that unfolding re-arms entry needs the path that actually acts.
+hinge_poll_once() {
+    python3 - "$REPO/scripts/gatherd-hinge-daemon" <<'POLLONCE'
+import collections, importlib.machinery, importlib.util, sys
+path = sys.argv[1]
+loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
+spec = importlib.util.spec_from_loader("hinge_daemon", loader)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.poll_once(collections.deque(maxlen=mod.window_size()), mod.RotationTracker())
+POLLONCE
 }
 
 # ── the measured poses ────────────────────────────────────────────────────────
@@ -1157,6 +1270,51 @@ write_vector "$HINGE_BASE" 0 1024 0
 assert_out 'the degenerate pose reports no theta and no decision' \
     'theta=degenerate action=hold' hinge_print
 assert_out 'the degenerate pose never calls gatherd-tablet-mode at all' '' cat "$FAKETM_LOG"
+
+# ── an explicit exit outranks a hinge that is still folded ───────────────────
+# Reported from the piano: tapping "Exit music stand" on a folded machine had
+# "no clear effect". It had exactly one poll's worth of effect. The mode went
+# off and the daemon, seeing a folded hinge and tablet mode inactive, turned it
+# straight back on a tenth of a second later. Every entry in the escape menu
+# was futile for as long as the machine stayed folded.
+
+reset_daemon_state
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" 1024 100 -36
+assert_out 'folding still enters when nothing has been suppressed' \
+    'theta=2.0 action=enter' hinge_print
+
+gatherd-tablet-mode on >/dev/null 2>&1
+gatherd-tablet-mode off >/dev/null 2>&1
+assert_ok 'off records that the exit was explicit' \
+    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed"
+assert_out 'a still-folded hinge does not undo an explicit exit' \
+    'theta=2.0 action=hold' hinge_print
+
+# Unfolding is what re-arms it — and only on the acting path, so that a
+# diagnostic --print can never change what the daemon does next.
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" -317 100 976
+assert_out 'a --print at a typing angle does not itself re-arm entry' \
+    'theta=108.0 action=hold' hinge_print
+assert_ok 'the suppression survives a read-only --print' \
+    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed"
+hinge_poll_once
+assert_fail 'unfolding clears the suppression' \
+    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed"
+
+write_vector "$HINGE_BASE" 1024 100 -36
+assert_out 'folding again after unfolding enters normally' \
+    'theta=2.0 action=enter' hinge_print
+
+# An explicit `on` is an instruction too, so it clears the latch rather than
+# leaving a stale one to block the next fold.
+gatherd-tablet-mode off >/dev/null 2>&1
+gatherd-tablet-mode on >/dev/null 2>&1
+assert_fail 'an explicit on clears any pending suppression' \
+    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed"
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+reset_daemon_state
 
 # ── unfolding always exits, however tablet mode was entered ──────────────────
 # This replaces an ownership rule that let the daemon exit ONLY sessions it

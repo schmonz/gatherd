@@ -45,14 +45,17 @@ menu_font=""
 # tablet-mode.conf.j2, so this escape hatch stays tappable on any other
 # machine gatherd converges. Absent or empty, fuzzel just uses its own
 # default, unchanged from before this menu had a font override at all.
-set -- --dmenu --prompt 'tablet: ' --lines 5 --width 24
+set -- --dmenu --prompt 'tablet: ' --lines 4 --width 24
 [ -n "$menu_font" ] && set -- "$@" --font "$menu_font"
 
+# No power/shutdown entry. This menu is reached folded, by touch, with the
+# built-in keyboard disabled - the worst possible place to put an irreversible
+# action one mis-tap away from `Exit tablet mode`. Unfolding reaches the stock
+# power menu with a working keyboard, which is where shutting down belongs.
 selection=$(printf '%s\n' \
     '󰊓 Exit tablet mode' \
     '󰎈 Exit music stand' \
     '󰈙 Pick another score' \
-    '󰐥 Power…' \
     '󰅖 Cancel' \
     | fuzzel "$@") || exit 0
 
@@ -63,7 +66,6 @@ case "$selection" in
     # exit it. `gatherd-tablet-mode on` is a no-op when already active, so
     # re-running the picker never interrupts the fold.
     *'Pick another score'*) gatherd-music-stand on ;;
-    *'Power'*)              exec "$powermenu" ;;
     # Escape needs a keyboard, and the human's fuzzel.ini disables
     # exit-on-keyboard-focus-loss, so with the keyboard off in tablet mode
     # this is the only way out of the escape menu that changes nothing. No

@@ -24,6 +24,7 @@ viewer_flag="${MUSIC_STAND_VIEWER_FLAG:-$viewer_flag}"
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd"
 index="$state_dir/music-index.tsv"
 mru="$state_dir/music-stand-scores"
+viewer_pid_file="$state_dir/music-stand-viewer-pid"
 max_mru=20
 back='‹ Back'
 # Escape needs a keyboard and the human's fuzzel.ini disables
@@ -101,6 +102,23 @@ remember() {
         && mv "$mru.tmp" "$mru"
 }
 
+# Stop the viewer this script started, and ONLY that one. The pid is recorded
+# at launch and re-checked against /proc before anything is signalled, because
+# pids are recycled: a stale file must never take out whatever inherited the
+# number. Nothing here matches on process name or window class - a pattern
+# match has taken out unrelated windows on this machine before, so the rule is
+# that a destructive command names exactly one pid this script created.
+stop_viewer() {
+    [ -r "$viewer_pid_file" ] || return 0
+    _pid=$(cat "$viewer_pid_file" 2>/dev/null || true)
+    rm -f "$viewer_pid_file"
+    case "$_pid" in '' | *[!0-9]*) return 0 ;; esac
+    _cmd=$(tr '\0' ' ' < "/proc/$_pid/cmdline" 2>/dev/null || true)
+    case "$_cmd" in
+        *"$viewer"*) kill "$_pid" 2>/dev/null || true ;;
+    esac
+}
+
 turn_on() {
     refresh_index
     [ -s "$index" ] || { echo "gatherd-music-stand: no scores indexed" >&2; exit 1; }
@@ -144,16 +162,27 @@ turn_on() {
     # sway rule (`inhibit_idle visible`) as belt-and-braces alongside papers'
     # own presentation-mode idle inhibitor, since neither races the viewer's
     # startup the way fullscreen state did.
+    # Replace rather than stack: "Pick another score" from the folded menu is
+    # a request to read a different score, not to accumulate viewers behind
+    # the fullscreen one - and only the newest pid can be recorded below, so
+    # leaving the old one running would also leave it untrackable.
+    stop_viewer
     if [ -n "$viewer_flag" ]; then
         "$viewer" "$viewer_flag" "$root/$file" >/dev/null 2>&1 &
     else
         "$viewer" "$root/$file" >/dev/null 2>&1 &
     fi
+    _viewer_pid=$!
+    mkdir -p "$state_dir" 2>/dev/null || true
+    printf '%s\n' "$_viewer_pid" > "$viewer_pid_file" 2>/dev/null || true
 }
 
 turn_off() {
-    # The viewer is left running: closing a document the human may still want is
-    # not this script's business.
+    # "Exit music stand" means the music stand goes away, viewer included -
+    # leaving a fullscreen PDF up made the menu entry look like it had done
+    # nothing at all. `gatherd-tablet-mode off` alone is what "Exit tablet
+    # mode" is for, and that one deliberately leaves the viewer where it is.
+    stop_viewer
     gatherd-tablet-mode off
 }
 

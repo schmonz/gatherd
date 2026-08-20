@@ -343,6 +343,21 @@ task rather than a fork of the EndeavourOS script. The binding target becomes
 conditional: `gatherd-power-button` where the feature applies, `$powermenu`
 otherwise.
 
+**Tablet mode is not a setting.** It is the fold. It begins when the hinge
+folds and ends when the hinge unfolds, and nothing else turns it on or off.
+The power-button menu therefore offers no exit: an exit entry could only mean
+"undo the fold you are still holding", which the daemon corrects within a poll
+and which hands back a keyboard lying face-down on the stand. Unfolding is the
+exit, and it is a thing the hands already know how to do.
+
+Everything that went wrong at the piano came from an earlier design in which a
+manual toggle and the fold trigger coexisted: the ownership rule existed to
+stop them fighting and is what trapped a human with no way out; the futile
+exit ("Exit tablet mode" appearing to do nothing) was the two of them
+disagreeing once per poll; a suppression latch was a patch on that
+disagreement; and a live keyboard on a folded machine was a patch on the
+patch. All four are deleted by making the fold the only authority.
+
 **No keybinding enters or exits tablet mode.** `$mod+t` and `$mod+Shift+t`
 originally toggled tablet mode and music stand; both were removed after a real
 lockout at the piano. Folding is the only way in and unfolding is always the

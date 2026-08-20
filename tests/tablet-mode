@@ -184,11 +184,6 @@ assert_ok 'on again does not clobber the recorded transform' \
 
 reset_log
 assert_ok 'off succeeds' gatherd-tablet-mode off
-# The daemon reads this marker to know an exit was asked for rather than
-# inferred; the daemon-section fake models it, so the REAL script has to be
-# pinned here or the two could drift apart unnoticed.
-assert_ok 'off records that the exit was explicit' \
-    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed"
 assert_out 'off restores the recorded 90, not a hardcoded normal' '90' cat "$WORK/transform"
 assert_fail 'status exits non-zero after off' gatherd-tablet-mode status
 if log_has 'input type:keyboard events enabled'; then
@@ -912,13 +907,28 @@ assert_out 'laptop mode goes straight to the power menu' 'power_menu' \
     cat "$WORK/powermenu.log"
 assert_out 'laptop mode shows no tablet menu' '' cat "$WORK/fuzzel.in"
 
-# In tablet mode the button must offer a touch escape instead.
+# Folded, the button offers a touch menu instead of the stock power menu -
+# and that menu contains no exit at all. Folding is what starts tablet mode
+# and unfolding is what ends it, so there is nothing here to toggle: an "exit"
+# entry could only mean "undo the fold you are still holding", which the
+# daemon corrects within a poll and which hands back a keyboard lying
+# face-down on the stand.
 gatherd-tablet-mode on >/dev/null 2>&1
 : > "$WORK/powermenu.log"
-reset_picker 'Exit tablet mode'
+reset_picker 'Close score'
 assert_ok 'power button works in tablet mode' gatherd-power-button
-assert_fail 'exit tablet mode left tablet mode off' gatherd-tablet-mode status
+assert_ok 'the folded menu leaves tablet mode running' gatherd-tablet-mode status
 assert_out 'tablet mode did not open the power menu' '' cat "$WORK/powermenu.log"
+if grep -qi 'exit' "$WORK/fuzzel.in"; then
+    bad 'the folded menu offers no exit entry at all'
+else
+    ok 'the folded menu offers no exit entry at all'
+fi
+if grep -q 'Close score' "$WORK/fuzzel.in"; then
+    ok 'the folded menu offers Close score'
+else
+    bad 'the folded menu offers Close score'
+fi
 
 # Pick another score must reopen the composer/score picker without ever
 # leaving tablet mode: found in real use at the piano, where there was no
@@ -973,17 +983,17 @@ reset_picker 'Exit tablet mode'
 assert_ok 'power button works with the state file gone' gatherd-power-button
 assert_out 'a disabled keyboard still gets the tablet escape menu, not the stock one' \
     '' cat "$WORK/powermenu.log"
-if grep -q 'Exit tablet mode' "$WORK/fuzzel.in"; then
-    ok 'the escape menu still offers Exit tablet mode with no state file'
+if grep -q 'Pick another score' "$WORK/fuzzel.in"; then
+    ok 'the folded menu is still usable with no state file'
 else
-    bad 'the escape menu still offers Exit tablet mode with no state file'
+    bad 'the folded menu is still usable with no state file'
 fi
-if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1:1:AT_Translated_Set_2_keyboard")
-                                       | .libinput.send_events == "enabled"' >/dev/null; then
-    ok 'exiting from the desync case actually gives the keyboard back'
-else
-    bad 'exiting from the desync case actually gives the keyboard back'
-fi
+# Recovery from the desync itself belongs to the daemon, not to this menu:
+# folded with tablet mode inactive is precisely the "enter" decision, so the
+# next poll re-asserts the whole state. What the menu must not do is hand a
+# folded human the stock power menu, whose every entry assumes a keyboard.
+assert_out 'a disabled keyboard never reaches the stock power menu' \
+    '' cat "$WORK/powermenu.log"
 
 # `off` is a recovery command, not a state transition: it must repair a
 # session it has no record of ever starting. This is the assertion that the
@@ -1091,15 +1101,8 @@ FAKETM_LOG="$WORK/faketm.log"
 fake_bin gatherd-tablet-mode '
 printf "%s\n" "$*" >> "'"$FAKETM_LOG"'"
 case "$1" in
-    # The suppression marker is modelled here, not just the on/off state: the
-    # daemon reads it directly, so a fake that skipped it would let the
-    # "explicit exit outranks a folded hinge" tests pass against a real script
-    # that had stopped writing it.
-    on)     touch "'"$FAKETM_STATE"'"
-            rm -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed" ;;
-    off)    rm -f "'"$FAKETM_STATE"'"
-            mkdir -p "$XDG_RUNTIME_DIR/gatherd"
-            : > "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed" ;;
+    on)     touch "'"$FAKETM_STATE"'" ;;
+    off)    rm -f "'"$FAKETM_STATE"'" ;;
     status) [ -f "'"$FAKETM_STATE"'" ] ;;
     *)      exit 2 ;;
 esac
@@ -1144,7 +1147,7 @@ write_lid_state() {
 # formula, not the fixture, is right. Lid defaults to open on every reset -
 # tests that care about the closed lid set it explicitly.
 reset_daemon_state() {
-    rm -f "$FAKETM_STATE" "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed"
+    rm -f "$FAKETM_STATE"
     : > "$FAKETM_LOG"
     write_lid_state open
 }
@@ -1325,51 +1328,6 @@ write_vector "$HINGE_BASE" 0 1024 0
 assert_out 'the degenerate pose reports no theta and no decision' \
     'theta=degenerate action=hold' hinge_print
 assert_out 'the degenerate pose never calls gatherd-tablet-mode at all' '' cat "$FAKETM_LOG"
-
-# ── an explicit exit outranks a hinge that is still folded ───────────────────
-# Reported from the piano: tapping "Exit music stand" on a folded machine had
-# "no clear effect". It had exactly one poll's worth of effect. The mode went
-# off and the daemon, seeing a folded hinge and tablet mode inactive, turned it
-# straight back on a tenth of a second later. Every entry in the escape menu
-# was futile for as long as the machine stayed folded.
-
-reset_daemon_state
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" 1024 100 -36
-assert_out 'folding still enters when nothing has been suppressed' \
-    'theta=2.0 action=enter' hinge_print
-
-gatherd-tablet-mode on >/dev/null 2>&1
-gatherd-tablet-mode off >/dev/null 2>&1
-assert_ok 'off records that the exit was explicit' \
-    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed"
-assert_out 'a still-folded hinge does not undo an explicit exit' \
-    'theta=2.0 action=hold' hinge_print
-
-# Unfolding is what re-arms it — and only on the acting path, so that a
-# diagnostic --print can never change what the daemon does next.
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -317 100 976
-assert_out 'a --print at a typing angle does not itself re-arm entry' \
-    'theta=108.0 action=hold' hinge_print
-assert_ok 'the suppression survives a read-only --print' \
-    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed"
-hinge_poll_once
-assert_fail 'unfolding clears the suppression' \
-    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed"
-
-write_vector "$HINGE_BASE" 1024 100 -36
-assert_out 'folding again after unfolding enters normally' \
-    'theta=2.0 action=enter' hinge_print
-
-# An explicit `on` is an instruction too, so it clears the latch rather than
-# leaving a stale one to block the next fold.
-gatherd-tablet-mode off >/dev/null 2>&1
-gatherd-tablet-mode on >/dev/null 2>&1
-assert_fail 'an explicit on clears any pending suppression' \
-    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode-suppressed"
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-reset_daemon_state
 
 # ── unfolding always exits, however tablet mode was entered ──────────────────
 # This replaces an ownership rule that let the daemon exit ONLY sessions it

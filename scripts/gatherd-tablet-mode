@@ -11,14 +11,6 @@ set -eu
 
 state_dir="${XDG_RUNTIME_DIR:-/tmp}/gatherd"
 state_file="$state_dir/tablet-mode"
-# Written by `off`, cleared by gatherd-hinge-daemon once the hinge has actually
-# left the folded band. Without it every explicit exit is futile: the human
-# taps "Exit tablet mode" on a folded machine, this script un-rotates and gives
-# the keyboard back, and a tenth of a second later the daemon sees a folded
-# hinge with tablet mode inactive and turns it straight back on. The escape
-# hatch has to outrank the trigger that is still asserting itself, or it is not
-# an escape hatch.
-suppress_file="$state_dir/tablet-mode-suppressed"
 config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
 
 transform=normal
@@ -140,7 +132,6 @@ turn_on() {
         exit 1
     fi
     mkdir -p "$state_dir"
-    rm -f "$suppress_file"
     # Written before rotating, so `off` restores the real resting transform.
     # `// empty` matters: without it a missing .transform writes the literal
     # string "null", which turn_off must then treat as unusable rather than
@@ -201,10 +192,6 @@ turn_off() {
     fi
 
     rm -f "$state_file"
-    # Last, and best-effort: an exit that cannot record itself must still be
-    # an exit. Worst case the daemon re-enters, which is where we started.
-    mkdir -p "$state_dir" 2>/dev/null || true
-    : > "$suppress_file" 2>/dev/null || true
 }
 
 case "${1:-toggle}" in

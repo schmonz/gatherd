@@ -241,23 +241,6 @@ def state_dir():
     return os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "gatherd")
 
 
-def suppress_marker():
-    # Written by `gatherd-tablet-mode off`; cleared here once the hinge has
-    # genuinely left the folded band. See that script for why it exists.
-    return os.path.join(state_dir(), "tablet-mode-suppressed")
-
-
-def entry_suppressed():
-    return os.path.exists(suppress_marker())
-
-
-def clear_suppression():
-    try:
-        os.remove(suppress_marker())
-    except OSError:
-        pass
-
-
 def log_path():
     state_home = os.environ.get("XDG_STATE_HOME") or os.path.join(
         os.environ.get("HOME", ""), ".local", "state"
@@ -512,16 +495,7 @@ def deactivate():
     subprocess.run([TABLET_MODE_CMD, "off"], check=True)
 
 
-def decide(median_abs_theta, lid_open, active, suppressed):
-    # An explicit exit outranks the fold. While the human is still folded,
-    # `gatherd-tablet-mode off` and the fold trigger disagree, and re-entering
-    # would make every escape from the power-button menu a no-op - the mode
-    # would flicker off and back on within one poll. The human wins until the
-    # hinge itself says otherwise, which is what clearing the marker on an
-    # above-fold_exit reading below means.
-    if not active and suppressed:
-        return "hold"
-
+def decide(median_abs_theta, lid_open, active):
     # Hysteresis: never act between the two thresholds.
     #
     # Unfolding exits, ALWAYS - no matter what turned tablet mode on. There
@@ -587,9 +561,7 @@ def decide_once(history, rotation_tracker):
     if sample(history, rotation_tracker):
         return None, "hold"
     median_abs_theta = statistics.median(history)
-    action = decide(
-        median_abs_theta, lid_is_open(), tablet_mode_active(), entry_suppressed()
-    )
+    action = decide(median_abs_theta, lid_is_open(), tablet_mode_active())
     return median_abs_theta, action
 
 
@@ -598,10 +570,6 @@ def poll_once(history, rotation_tracker):
     the sole path that is allowed to act. See decide_once for the read-only
     half that --print uses instead."""
     median_abs_theta, action = decide_once(history, rotation_tracker)
-    # Only the acting path may clear it - decide_once() stays read-only so
-    # --print cannot change what the daemon will do next.
-    if median_abs_theta is not None and median_abs_theta > fold_exit_deg():
-        clear_suppression()
     act(action, median_abs_theta)
     act_rotation(rotation_tracker, tablet_mode_active())
     return median_abs_theta, action

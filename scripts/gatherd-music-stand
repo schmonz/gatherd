@@ -189,6 +189,11 @@ turn_off() {
 case "${1:-toggle}" in
     on)     turn_on ;;
     off)    turn_off ;;
+    # Shut the score without leaving tablet mode - the machine is still
+    # folded, and folded IS tablet mode. This is what the folded menu offers;
+    # `off` additionally ends tablet mode and is only reachable from a
+    # keyboard, where ending it makes sense because you have already unfolded.
+    close)  stop_viewer ;;
     toggle) if gatherd-tablet-mode status; then turn_off; else turn_on; fi ;;
-    *)      echo "usage: $0 on|off|toggle" >&2; exit 2 ;;
+    *)      echo "usage: $0 on|off|close|toggle" >&2; exit 2 ;;
 esac

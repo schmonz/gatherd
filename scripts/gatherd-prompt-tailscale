@@ -1,13 +1,40 @@
 #!/bin/sh
-# Sway autostart — runs every login. Opens the tailnet admin login page when not
-# yet connected, and idempotently asserts accept-dns + accept-routes so they no
-# longer need setting by hand. Relies on the operator pref (set to this user in
-# site.yml) so `tailscale set` needs no root; gatherd-set-tailscale-operator
-# re-asserts operator if it ever fails to stick. accept-dns=true is load-bearing
-# for the ~/trees NFS-over-MagicDNS mount (plans/TODO.md). Prefs are persistent
-# and `tailscale set` stores them even while logged out, so once set this is a
-# no-op and they take effect the moment SSO login completes.
-tailscale ip >/dev/null 2>&1 || xdg-open "https://login.tailscale.com/admin"
+# Sway autostart — runs every login. Opens the tailnet admin login page when the
+# node genuinely needs a human, and idempotently asserts accept-dns +
+# accept-routes so they no longer need setting by hand. Relies on the operator
+# pref (set to this user in site.yml) so `tailscale set` needs no root;
+# gatherd-set-tailscale-operator re-asserts operator if it ever fails to stick.
+# accept-dns=true is load-bearing for the ~/trees NFS-over-MagicDNS mount
+# (plans/TODO.md). Prefs are persistent and `tailscale set` stores them even
+# while logged out, so once set this is a no-op and they take effect the moment
+# SSO login completes.
+#
+# Ask the backend, not `tailscale ip`. An address cannot tell "logged out" from
+# "not up yet", and at login it is always the latter for a few seconds:
+# session-helpers fires this the instant sway starts, ~5s before tailscaled
+# finishes warming up and gets an address. Probing the address therefore opened
+# the admin page at every login of an already-connected machine. BackendState
+# distinguishes the two, and NeedsLogin is the only value that wants a human.
+backend_state() {
+	tailscale status --json 2>/dev/null |
+		sed -n 's/.*"BackendState"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+		head -1
+}
+
+# Bounded: NoState/Starting mean keep waiting, but never wait forever.
+i=0
+while [ "$i" -lt 60 ]; do
+	case "$(backend_state)" in
+	# Stopped is `tailscale down` — a deliberate choice, not a missing login.
+	Running | Stopped) break ;;
+	NeedsLogin)
+		xdg-open "https://login.tailscale.com/admin"
+		break
+		;;
+	esac
+	i=$((i + 1))
+	sleep 1
+done
 
 prefs=$(tailscale debug prefs 2>/dev/null)
 printf '%s' "$prefs" | grep -qE '"CorpDNS":\s*true' \

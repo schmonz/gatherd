@@ -85,19 +85,26 @@ JSON
 
 cat > "$FAKEBIN/swaymsg" <<EOF
 #!/bin/sh
+# NOTE: written from an UNQUOTED heredoc (it interpolates \$WORK), so no
+# backticks may appear anywhere below - they would be command substitution at
+# generation time, executed against the REAL sway, with their output injected
+# into this script. Use single quotes in comments here.
 WORK='$WORK'
 case "\$1" in
   -t)
     case "\$2" in
       get_outputs)
         printf '[{"name":"DSI-1","transform":"%s","rect":{"width":1371,"height":857}}]' "\$(cat "\$WORK/transform")" ;;
-      get_inputs) cat "\$WORK/inputs.json" ;;
+      # \$WORK/fail-get-inputs simulates the transient swaymsg/jq failure that
+      # makes builtin_keyboards() come back empty - the whole reason turn_on
+      # confirms rather than assumes.
+      get_inputs)
+        if [ -f "\$WORK/fail-get-inputs" ]; then printf '[]'; else cat "\$WORK/inputs.json"; fi ;;
       get_tree) cat "\$WORK/tree.json" ;;
     esac ;;
   output)
     printf '%s\n' "\$*" >> "\$WORK/swaymsg.log"
-    # Mirrors two real failures this suite must survive: `swaymsg output
-    # DSI-1 transform null` genuinely exits 2 on this hardware, and
+    # Mirrors two real failures this suite must survive: 'swaymsg output DSI-1 transform null' genuinely exits 2 on this hardware, and
     # \$WORK/fail-transform lets a test simulate any other compositor error
     # on an otherwise-valid transform.
     if [ "\$3" = transform ] && { [ "\$4" = null ] || [ -f "\$WORK/fail-transform" ]; }; then
@@ -118,7 +125,7 @@ case "\$1" in
           && mv "\$WORK/inputs.next" "\$WORK/inputs.json"
     fi ;;
   *)
-    # Catches `swaymsg '[con_id=N]' inhibit_idle <mode>`.
+    # Catches 'swaymsg [con_id=N] inhibit_idle <mode>'.
     printf '%s\n' "\$*" >> "\$WORK/swaymsg.log" ;;
 esac
 EOF
@@ -837,6 +844,54 @@ else
 fi
 gatherd-music-stand off >/dev/null 2>&1 || true
 printf 'transform=180\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+
+# ── entering confirms the keyboard is really silenced ────────────────────────
+# `for _id in $(builtin_keyboards)` runs zero times when the query returns
+# nothing, and $() swallows the failure, so turn_on could rotate the screen and
+# leave the keyboard live while looking entirely successful. A machine folded
+# onto its own keys then types into whatever is focused - which is how a folded
+# fuzzel menu came up with its prompt and every entry filtered away.
+
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+touch "$WORK/fail-get-inputs"
+: > "$WORK/tm-warn.err"
+gatherd-tablet-mode on 2>"$WORK/tm-warn.err" >/dev/null || true
+if [ -s "$WORK/tm-warn.err" ]; then
+    ok 'entering warns when it cannot confirm the keyboard is disabled'
+else
+    bad 'entering warns when it cannot confirm the keyboard is disabled'
+fi
+if grep -q 'could not confirm' "$WORK/tm-warn.err"; then
+    ok 'the warning says what is actually wrong'
+else
+    bad 'the warning says what is actually wrong'
+fi
+assert_ok 'the warning is also recorded where it can be read later' \
+    test -s "$XDG_STATE_HOME/gatherd/tablet-mode.log"
+# Non-fatal by design: an unreadable folded screen is worse than a live
+# keyboard the human has been warned about.
+assert_ok 'entering still succeeds despite the warning' gatherd-tablet-mode status
+rm -f "$WORK/fail-get-inputs"
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+
+# The healthy path must not warn, or the warning is noise nobody reads.
+: > "$WORK/tm-warn.err"
+gatherd-tablet-mode on 2>"$WORK/tm-warn.err" >/dev/null
+assert_out 'entering normally warns about nothing' '' cat "$WORK/tm-warn.err"
+if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1:1:AT_Translated_Set_2_keyboard")
+                                       | .libinput.send_events == "disabled"' >/dev/null; then
+    ok 'entering really does disable the built-in keyboard'
+else
+    bad 'entering really does disable the built-in keyboard'
+fi
+# The pedal is the whole reason the disable side cannot just sweep by type.
+if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1234:5678:AirTurn_PEDpro")
+                                       | .libinput.send_events == "enabled"' >/dev/null; then
+    ok 'entering leaves the page-turner pedal alone'
+else
+    bad 'entering leaves the page-turner pedal alone'
+fi
+gatherd-tablet-mode off >/dev/null 2>&1 || true
 
 # ── gatherd-power-button ──────────────────────────────────────────────────────
 

@@ -59,6 +59,51 @@ enable_all_input() {
     swaymsg input type:touchpad events enabled >/dev/null || true
 }
 
+# Positive confirmation that the built-in keyboards are actually silenced.
+# `for _id in $(builtin_keyboards)` runs its body ZERO times when the query
+# comes back empty, and a swaymsg or jq failure inside a command substitution
+# is invisible to `set -e` - so the loop could no-op while turn_on carried on
+# and rotated the screen. The result is a tablet mode that looks fully on but
+# left the keyboard live, and a machine folded onto its own keys then types
+# into whatever is focused. That is how a fuzzel menu came up showing its
+# prompt and no entries at all: dmenu filters as you type, and the folded
+# keyboard had filtered every entry away.
+#
+# `length > 0` is the half that matters: "all of an empty list are disabled"
+# is vacuously true, which is exactly the answer that would hide this bug.
+builtin_keyboards_silenced() {
+    swaymsg -t get_inputs 2>/dev/null \
+        | jq -e '[.[] | select(.type == "keyboard")
+                      | select(.identifier | startswith("1:1:"))
+                      | .libinput.send_events // empty]
+                 | length > 0 and all(. == "disabled")' >/dev/null 2>&1
+}
+
+warn() {
+    echo "gatherd-tablet-mode: $1" >&2
+    _log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd"
+    mkdir -p "$_log_dir" 2>/dev/null || return 0
+    printf '%s %s\n' "$(date +%Y-%m-%dT%H:%M:%S)" "$1" \
+        >> "$_log_dir/tablet-mode.log" 2>/dev/null || true
+}
+
+# Retry rather than trust: the failure this guards against is transient by
+# nature. Non-fatal after the last attempt - refusing to enter tablet mode
+# would leave the human with an unreadable folded screen, which is worse than
+# a live keyboard they have been warned about.
+disable_builtin_input() {
+    _try=1
+    while [ "$_try" -le 3 ]; do
+        set_builtin_events disabled
+        if builtin_keyboards_silenced; then
+            return 0
+        fi
+        _try=$((_try + 1))
+    done
+    warn "WARNING could not confirm the built-in keyboard is disabled - a folded machine may type against whatever it is resting on"
+    return 1
+}
+
 set_builtin_events() {
     for _id in $(builtin_keyboards); do
         swaymsg input "$_id" events "$1" >/dev/null
@@ -104,7 +149,7 @@ turn_on() {
         | jq -r --arg o "$_output" 'first(.[] | select(.name == $o) | .transform) // empty' \
         > "$state_file"
     swaymsg output "$_output" transform "$transform" >/dev/null
-    set_builtin_events disabled
+    disable_builtin_input || true
     set_inhibitors open
 }
 

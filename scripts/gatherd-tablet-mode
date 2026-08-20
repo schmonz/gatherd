@@ -11,6 +11,11 @@ set -eu
 
 state_dir="${XDG_RUNTIME_DIR:-/tmp}/gatherd"
 state_file="$state_dir/tablet-mode"
+# Auto-rotation is a preference, unlike tablet mode itself, which is just the
+# fold. Read by gatherd-hinge-daemon, toggled from the folded menu. Lives in
+# XDG_RUNTIME_DIR, so it lasts a session and resets on reboot: a setting you
+# flipped once at the piano should not silently outlive the reason for it.
+rotation_off_file="$state_dir/rotation-off"
 config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
 
 transform=normal
@@ -194,10 +199,21 @@ turn_off() {
     rm -f "$state_file"
 }
 
+rotation_is_on() { [ ! -f "$rotation_off_file" ]; }
+
 case "${1:-toggle}" in
     on)     turn_on ;;
     off)    turn_off ;;
     toggle) if is_on; then turn_off; else turn_on; fi ;;
     status) is_on ;;
-    *)      echo "usage: $0 on|off|toggle|status" >&2; exit 2 ;;
+    rotation-status) rotation_is_on ;;
+    rotation-on)     rm -f "$rotation_off_file" ;;
+    rotation-off)    mkdir -p "$state_dir"; : > "$rotation_off_file" ;;
+    rotation-toggle) if rotation_is_on; then
+                         mkdir -p "$state_dir"; : > "$rotation_off_file"
+                     else
+                         rm -f "$rotation_off_file"
+                     fi ;;
+    *)      echo "usage: $0 on|off|toggle|status|rotation-{status,on,off,toggle}" >&2
+            exit 2 ;;
 esac

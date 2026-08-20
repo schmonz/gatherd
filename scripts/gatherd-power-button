@@ -45,7 +45,7 @@ menu_font=""
 # tablet-mode.conf.j2, so this escape hatch stays tappable on any other
 # machine gatherd converges. Absent or empty, fuzzel just uses its own
 # default, unchanged from before this menu had a font override at all.
-set -- --dmenu --prompt 'tablet: ' --lines 3 --width 24
+set -- --dmenu --prompt 'tablet: ' --lines 4 --width 24
 [ -n "$menu_font" ] && set -- "$@" --font "$menu_font"
 
 # Nothing here exits tablet mode, and nothing here powers the machine off.
@@ -54,14 +54,26 @@ set -- --dmenu --prompt 'tablet: ' --lines 3 --width 24
 # are still holding" - which the daemon would correct within a poll, and which
 # would hand back a keyboard that is lying face-down on the stand. Unfolding
 # is the exit, and it is a thing your hands already know how to do.
+# The auto-rotate entry states what is true now, not what tapping it does.
+# Reading it as an instruction ("Auto-rotate off" = "turn it off") and as a
+# status ("it is off") would give opposite meanings, so it is labelled the way
+# a checkbox is: the label is the state, and tapping changes it.
+if gatherd-tablet-mode rotation-status; then
+    rotation_entry='󰑦 Auto-rotate: on'
+else
+    rotation_entry='󰑧 Auto-rotate: off'
+fi
+
 selection=$(printf '%s\n' \
     '󰈙 Pick another score' \
     '󰎈 Close score' \
+    "$rotation_entry" \
     '󰅖 Cancel' \
     | fuzzel "$@") || exit 0
 
 case "$selection" in
     *'Close score'*)        gatherd-music-stand close ;;
+    *'Auto-rotate'*)        gatherd-tablet-mode rotation-toggle ;;
     # `on`, not `toggle`: tablet mode is already active here, so toggle would
     # exit it. `gatherd-tablet-mode on` is a no-op when already active, so
     # re-running the picker never interrupts the fold.

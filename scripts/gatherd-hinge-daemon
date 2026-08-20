@@ -449,7 +449,21 @@ def rotate_output(transform):
     )
 
 
+def rotation_enabled():
+    # A human preference, toggled from the folded menu via
+    # `gatherd-tablet-mode rotation-toggle`. Checked here rather than baked
+    # into the tracker so that turning rotation back on picks up the current
+    # pose immediately, instead of resuming from whatever was committed
+    # before it was turned off.
+    return not os.path.exists(os.path.join(state_dir(), "rotation-off"))
+
+
 def act_rotation(tracker, active):
+    if active and not rotation_enabled():
+        # Deliberately leaves last_applied alone: the display stays wherever
+        # it was when rotation was switched off, and re-enabling reissues from
+        # the tracker's current quadrant.
+        return
     if not active:
         # Drop last_applied (not just skip) rather than leave it stale: the
         # next activation must always issue at least one swaymsg call, even

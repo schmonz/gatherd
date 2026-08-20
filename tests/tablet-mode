@@ -959,6 +959,45 @@ fi
 assert_ok 'an unoffered selection leaves tablet mode untouched' gatherd-tablet-mode status
 gatherd-tablet-mode off >/dev/null 2>&1 || true
 
+# ── auto-rotation is a preference; tablet mode is not ────────────────────────
+# The one thing in the folded menu that IS a setting. Tablet mode is the fold
+# and cannot be chosen; whether the display follows the tablet in the hands is
+# a matter of taste, and gets a toggle.
+
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+gatherd-tablet-mode rotation-on
+assert_ok 'auto-rotation is on by default' gatherd-tablet-mode rotation-status
+assert_ok 'rotation-toggle succeeds' gatherd-tablet-mode rotation-toggle
+assert_fail 'toggling once turns auto-rotation off' gatherd-tablet-mode rotation-status
+assert_ok 'toggling again succeeds' gatherd-tablet-mode rotation-toggle
+assert_ok 'toggling twice returns to on' gatherd-tablet-mode rotation-status
+assert_ok 'rotation-off is idempotent' gatherd-tablet-mode rotation-off
+assert_ok 'rotation-off is still idempotent' gatherd-tablet-mode rotation-off
+assert_fail 'rotation stays off after repeated rotation-off' gatherd-tablet-mode rotation-status
+
+# The label states the current state rather than the action, so it reads like
+# a checkbox instead of an instruction that means the opposite.
+gatherd-tablet-mode on >/dev/null 2>&1
+reset_picker 'Cancel'
+assert_ok 'power button works with rotation off' gatherd-power-button
+if grep -q 'Auto-rotate: off' "$WORK/fuzzel.in"; then
+    ok 'the menu shows auto-rotation as off when it is off'
+else
+    bad 'the menu shows auto-rotation as off when it is off'
+fi
+gatherd-tablet-mode rotation-on
+reset_picker 'Auto-rotate: on'
+assert_ok 'power button toggles auto-rotation' gatherd-power-button
+if grep -q 'Auto-rotate: on' "$WORK/fuzzel.in"; then
+    ok 'the menu shows auto-rotation as on when it is on'
+else
+    bad 'the menu shows auto-rotation as on when it is on'
+fi
+assert_fail 'tapping the entry turned auto-rotation off' gatherd-tablet-mode rotation-status
+assert_ok 'toggling auto-rotation never leaves tablet mode' gatherd-tablet-mode status
+gatherd-tablet-mode rotation-on
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+
 # ── the lockout: state file gone, input still disabled ───────────────────────
 # The failure this whole section exists to prevent, reproduced from the real
 # incident. Tablet mode was somehow off on paper while the built-in keyboard
@@ -1707,6 +1746,24 @@ poll_rotation_once
 assert_out 'rotation applies transform 90 for the landscape pose, proving it is actually acting' \
     '90' cat "$WORK/transform"
 
+# The toggle has to stop the daemon rotating, not merely relabel a menu entry.
+gatherd-tablet-mode rotation-off
+printf 'sentinel' > "$WORK/transform"
+reset_log
+write_vector "$HINGE_LID" -1023 54 0
+poll_rotation_once
+assert_out 'rotation off issues no transform at all' 'sentinel' cat "$WORK/transform"
+if log_has 'output DSI-1 transform'; then
+    bad 'rotation off makes no swaymsg call'
+else
+    ok 'rotation off makes no swaymsg call'
+fi
+gatherd-tablet-mode rotation-on
+poll_rotation_once
+assert_out 'turning rotation back on resumes from the current pose' \
+    '90' cat "$WORK/transform"
+
+printf '90' > "$WORK/transform"
 assert_out 'the recorded resting transform is untouched by rotation while folded' \
     '90' cat "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
 

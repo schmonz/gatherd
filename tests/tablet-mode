@@ -439,13 +439,20 @@ export MUSIC_STAND_VIEWER
 # a late writer from an earlier pick can never land in the current one.
 # Lingers rather than exiting immediately: "Exit music stand" now stops the
 # viewer it started, and a fake that exited at once would leave nothing to
-# stop, so every assertion about stopping it would pass vacuously. NOT `exec
-# sleep` - that would replace this shell and with it the cmdline that
-# gatherd-music-stand re-checks before signalling anything.
+# stop, so every assertion about stopping it would pass vacuously.
+#
+# The sleep is far LONGER than the ~2s the stop assertions poll for, and that
+# margin is the point: it has to be impossible for a viewer to exit on its own
+# inside the window where the test is asking "did stop_viewer kill it?". A
+# short sleep would turn a genuine failure to kill into a pass. Widen this,
+# never the poll budget.
+#
+# NOT `exec sleep` - that would replace this shell and with it the cmdline
+# that gatherd-music-stand re-checks before signalling anything.
 cat > "$FAKEBIN/fakeviewer" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >> "${VIEWER_LOG:-/dev/null}"
-sleep 5
+sleep 60
 EOF
 chmod +x "$FAKEBIN/fakeviewer"
 

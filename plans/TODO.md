@@ -321,28 +321,55 @@
   on a live machine, `find ~/.local/share/JetBrains/Toolbox` (and check the
   keyring) before vs after signing into the JetBrains account, diff, and key
   detection on whatever appears only when authed. Don't reintroduce a blocklist.
-- **Slow shutdown** (~54s measured, reboot trigger → final unmount; was framed
-  as "Tailscale 2 min + umount.nfs4 a minute or two"). Traced via persistent
-  journal + verbose autofs logging. Three contributors, in order of cost:
-  - **tmux pane scope — ~30s (dominant).** The tmux server registers each pane
-    as its own systemd user scope; one pane held `user@1000.service` open ~30s
-    while every other user unit stopped in ~0.4s. Nothing to do with NFS/Tailscale.
-    *Unknown*: why ~30s (default user `TimeoutStopSec` is 90s, so either that
-    scope sets its own ~30s timeout — i.e. an interactive process ignoring
-    SIGTERM, easily bounded lower — or it did ~30s of real/NFS-blocked cleanup).
-    Confirm on a future shutdown whether the scope is SIGKILLed at the timeout.
-    Per-pane-scope registration is NOT in `~/.tmux.conf`; find its source first.
-    Note: the Claude Code session runs in a tmux pane, so it may be a contributor.
-  - **NFS umount — ~10s.** Verbose autofs shows `/net` + `/misc` unmount
-    instantly; the whole cost is the `code` nfs4 session/TCP teardown to the
-    server over Tailscale. Candidate fix: a shutdown-time force-unmount (mirror
-    `gatherd-unmount-nfs`), or investigate NFSv4 lease/delegation return.
+- **Slow shutdown — dominant cost solved 2026-08-20; two sub-items left.**
+  The old note here measured "~54s, reboot trigger → final unmount" and stopped
+  at the last journal line — which is exactly where the real problem started.
+  About 120s more happened after journald stops writing. Captured with a
+  throwaway `/usr/lib/systemd/system-shutdown/` hook dumping the kernel ring
+  buffer, plus a sampler watching autofs's cgroup.
+
+  **Root cause: NFSv4 delegation return during deferred superblock teardown.**
+  `umount(2)` detaches the mount in 19ms, but the teardown is deferred to
+  task_work on the return to userspace and still runs inside `umount.nfs4`:
+
+      exit_to_user_mode_loop -> task_work_run -> cleanup_mnt
+        -> deactivate_locked_super -> nfs_kill_super -> generic_shutdown_super
+        -> evict_inodes -> nfs4_evict_inode -> nfs_inode_evict_delegation
+        -> nfs4_proc_delegreturn -> rpc_wait_bit_killable
+
+  Each inode holding an NFSv4 delegation costs one synchronous DELEGRETURN at
+  the server's RTT — 162ms over Tailscale/WAN — so the cost scales with how much
+  of the tree the session touched. A freshly mounted share unmounts in 0.5s; a
+  workday's does not, which is why no synthetic reproduction worked. This is
+  also why the earlier guess (nfs4 "session/TCP teardown") was wrong, and why
+  NFSv3 never did it: v3 is stateless and has no delegations.
+
+  `soft,timeo=15,retrans=3` does not help — those bound each RPC, not a sequence
+  of them — and `rpc_wait_bit_killable` ignores SIGTERM (killable is not
+  interruptible), which is why the helper also ate systemd's full 90s grace.
+  Once tailscaled stops, DELEGRETURN can never complete and it wedges forever.
+  It happens on ordinary autofs expires too; nothing waits on those, so it is
+  invisible there.
+
+  This is NFSv4 working as designed over a link it was never meant for, so it is
+  bounded, not cured: `KillMode=mixed` + `TimeoutStopSec=3` on autofs.service
+  (roles/system/tasks/nfs_client.yml). Shutdown ~140s -> ~6-8s, with the
+  unlogged window 120.1s -> 0.09s. The actual cure is the Syncthing migration
+  below. Killing the helper is safe: `umount(2)` has already returned and the
+  mount is gone from mountinfo before it wedges.
+
+  Still open, neither on the critical path:
+  - **tmux pane scope — was ~30s (then dominant).** The tmux server registers
+    each pane as its own systemd user scope; one pane held `user@1000.service`
+    open ~30s while every other user unit stopped in ~0.4s. May have resolved
+    itself: shutdowns through 2026-08-20 show `session-1.scope` stopping in
+    ~1.5s. Re-measure before spending time on it.
   - **tailscaled — ~10s.** Correctly capped (`TimeoutStopUSec=10s` drop-in
     works), but wastes the full 10s retrying log uploads to `log.tailscale.com`
-    after the link is already down, then gets SIGKILLed. Candidate fix: suppress
-    the shutdown log-upload retries, or drop the stop timeout to ~5s.
-  - **Reframe**: "Tailscale 2 min" is no longer true (capped at 10s of wasted
-    log-flush). Biggest win is the tmux pane scope, not NFS or Tailscale.
+    after the link is already down, then gets SIGKILLed. Recent shutdowns show
+    ~1s, so this too may only bite when the link dies mid-flush. Candidate fix:
+    suppress the shutdown log-upload retries, or drop the stop timeout to ~5s.
+
 - **NFS over the WAN → migrate to Syncthing (decided 2026-06-01).** Relying on the
   autofs NFS-over-Tailscale mount for code edits is fragile by design: NFS is a LAN
   protocol, and roaming / sleep / captive-portal / Tailscale-bounce events wedge it.

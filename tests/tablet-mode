@@ -45,10 +45,10 @@ printf '90' > "$WORK/transform"
 
 cat > "$WORK/inputs.json" <<'JSON'
 [
-  {"identifier":"1:1:AT_Translated_Set_2_keyboard","type":"keyboard"},
+  {"identifier":"1:1:AT_Translated_Set_2_keyboard","type":"keyboard","libinput":{"send_events":"enabled"}},
   {"identifier":"0:1:Power_Button","type":"keyboard"},
-  {"identifier":"1234:5678:AirTurn_PEDpro","type":"keyboard"},
-  {"identifier":"2321:21128:XXXX0000:05_0911:5288_Touchpad","type":"touchpad"},
+  {"identifier":"1234:5678:AirTurn_PEDpro","type":"keyboard","libinput":{"send_events":"enabled"}},
+  {"identifier":"2321:21128:XXXX0000:05_0911:5288_Touchpad","type":"touchpad","libinput":{"send_events":"enabled"}},
   {"identifier":"1046:9110:Goodix_Capacitive_TouchScreen","type":"touch"}
 ]
 JSON
@@ -105,7 +105,18 @@ case "\$1" in
     fi
     printf '%s' "\$4" > "\$WORK/transform" ;;
   input)
-    printf '%s\n' "\$*" >> "\$WORK/swaymsg.log" ;;
+    printf '%s\n' "\$*" >> "\$WORK/swaymsg.log"
+    # Actually apply it. gatherd-power-button now decides from live input
+    # state rather than the state file, so a fake that only logged would let
+    # the lockout case pass untested.
+    if [ "\$3" = events ]; then
+        jq --arg sel "\$2" --arg state "\$4" '
+          map(if ((\$sel | startswith("type:")) and (.type == (\$sel | ltrimstr("type:"))))
+                 or (.identifier == \$sel)
+              then (.libinput.send_events = \$state) else . end)' \
+          "\$WORK/inputs.json" > "\$WORK/inputs.next" \
+          && mv "\$WORK/inputs.next" "\$WORK/inputs.json"
+    fi ;;
   *)
     # Catches `swaymsg '[con_id=N]' inhibit_idle <mode>`.
     printf '%s\n' "\$*" >> "\$WORK/swaymsg.log" ;;
@@ -168,7 +179,7 @@ reset_log
 assert_ok 'off succeeds' gatherd-tablet-mode off
 assert_out 'off restores the recorded 90, not a hardcoded normal' '90' cat "$WORK/transform"
 assert_fail 'status exits non-zero after off' gatherd-tablet-mode status
-if log_has 'input 1:1:AT_Translated_Set_2_keyboard events enabled'; then
+if log_has 'input type:keyboard events enabled'; then
     ok 'off re-enables the built-in keyboard'
 else
     bad 'off re-enables the built-in keyboard'
@@ -184,7 +195,7 @@ fi
 # inhibitor clearing and before the rotation restore, in that position. A
 # regression that moves input re-enable later (e.g. back to after the
 # rotation) must be caught here, not just by an "eventually happens" check.
-_input_line=$(log_line 'input 1:1:AT_Translated_Set_2_keyboard events enabled')
+_input_line=$(log_line 'input type:keyboard events enabled')
 _inhibit_line=$(log_line '[con_id=101] inhibit_idle none')
 _rotate_line=$(log_line 'output DSI-1 transform')
 if [ -n "$_input_line" ] && [ -n "$_inhibit_line" ] && [ "$_input_line" -lt "$_inhibit_line" ]; then
@@ -239,7 +250,7 @@ if log_has 'transform null'; then
 else
     ok 'off never issues a bogus "transform null"'
 fi
-if log_has 'input 1:1:AT_Translated_Set_2_keyboard events enabled'; then
+if log_has 'input type:keyboard events enabled'; then
     ok 'off re-enables the keyboard even with an invalid recorded transform'
 else
     bad 'off re-enables the keyboard even with an invalid recorded transform'
@@ -261,7 +272,7 @@ assert_ok 'on succeeds before the failed-rotation case' gatherd-tablet-mode on
 touch "$WORK/fail-transform"
 reset_log
 assert_ok 'off succeeds even when the compositor rejects the transform' gatherd-tablet-mode off
-if log_has 'input 1:1:AT_Translated_Set_2_keyboard events enabled'; then
+if log_has 'input type:keyboard events enabled'; then
     ok 'input is re-enabled even when the rotation call fails'
 else
     bad 'input is re-enabled even when the rotation call fails'
@@ -271,7 +282,7 @@ if log_has '[con_id=101] inhibit_idle none'; then
 else
     bad 'idle inhibitors are still cleared even when the rotation call fails'
 fi
-_input_line=$(log_line 'input 1:1:AT_Translated_Set_2_keyboard events enabled')
+_input_line=$(log_line 'input type:keyboard events enabled')
 _rotate_line=$(log_line 'output DSI-1 transform')
 if [ -n "$_input_line" ] && [ -n "$_rotate_line" ] && [ "$_input_line" -lt "$_rotate_line" ]; then
     ok 'input is re-enabled before the rotation is even attempted, failing or not'
@@ -792,6 +803,81 @@ assert_ok 'power button chains to the power menu' gatherd-power-button
 assert_out 'Power… reaches the real power menu' 'power_menu' cat "$WORK/powermenu.log"
 gatherd-tablet-mode off >/dev/null 2>&1 || true
 
+# ── the lockout: state file gone, input still disabled ───────────────────────
+# The failure this whole section exists to prevent, reproduced from the real
+# incident. Tablet mode was somehow off on paper while the built-in keyboard
+# was still disabled in fact. The power button trusted the paper, showed the
+# stock power menu (every entry of which assumes a working keyboard), and
+# `off` — which returned early when the state file was missing — could not
+# undo anything. There was no way out of the machine short of a hard reboot.
+
+gatherd-tablet-mode on >/dev/null 2>&1
+rm -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
+assert_fail 'the desync case really does look inactive on paper' \
+    gatherd-tablet-mode status
+if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1:1:AT_Translated_Set_2_keyboard")
+                                       | .libinput.send_events == "disabled"' >/dev/null; then
+    ok 'the desync case really does leave the built-in keyboard disabled'
+else
+    bad 'the desync case really does leave the built-in keyboard disabled'
+fi
+
+: > "$WORK/powermenu.log"
+reset_picker 'Exit tablet mode'
+assert_ok 'power button works with the state file gone' gatherd-power-button
+assert_out 'a disabled keyboard still gets the tablet escape menu, not the stock one' \
+    '' cat "$WORK/powermenu.log"
+if grep -q 'Exit tablet mode' "$WORK/fuzzel.in"; then
+    ok 'the escape menu still offers Exit tablet mode with no state file'
+else
+    bad 'the escape menu still offers Exit tablet mode with no state file'
+fi
+if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1:1:AT_Translated_Set_2_keyboard")
+                                       | .libinput.send_events == "enabled"' >/dev/null; then
+    ok 'exiting from the desync case actually gives the keyboard back'
+else
+    bad 'exiting from the desync case actually gives the keyboard back'
+fi
+
+# `off` is a recovery command, not a state transition: it must repair a
+# session it has no record of ever starting. This is the assertion that the
+# old `if ! is_on; then return 0; fi` early return failed.
+swaymsg input 1:1:AT_Translated_Set_2_keyboard events disabled >/dev/null
+swaymsg input type:touchpad events disabled >/dev/null
+rm -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
+reset_log
+assert_ok 'off succeeds with no state file at all' gatherd-tablet-mode off
+if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1:1:AT_Translated_Set_2_keyboard")
+                                       | .libinput.send_events == "enabled"' >/dev/null; then
+    ok 'off re-enables the keyboard even with no state file'
+else
+    bad 'off re-enables the keyboard even with no state file'
+fi
+if swaymsg -t get_inputs | jq -e '[.[] | select(.type == "touchpad")
+                                       | .libinput.send_events] | all(. == "enabled")' >/dev/null; then
+    ok 'off re-enables the touchpad even with no state file'
+else
+    bad 'off re-enables the touchpad even with no state file'
+fi
+# Nothing was recorded, so there is no resting transform to restore - and
+# guessing one would be worse than leaving the display alone (on this
+# hardware "normal" is portrait, so a guess rotates a correct screen wrong).
+if log_has 'output DSI-1 transform'; then
+    bad 'off with no state file leaves the display alone rather than guessing'
+else
+    ok 'off with no state file leaves the display alone rather than guessing'
+fi
+
+# An external keyboard must survive the sweep-by-type re-enable in the sense
+# that matters: it is never left disabled. (The pedal is only ever disabled by
+# a test, never by tablet mode - the i8042 heuristic is what protects it.)
+if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1234:5678:AirTurn_PEDpro")
+                                       | .libinput.send_events == "enabled"' >/dev/null; then
+    ok 'the page-turner pedal is enabled after a recovery off'
+else
+    bad 'the page-turner pedal is enabled after a recovery off'
+fi
+
 # ── gatherd-power-button: cancel escape ───────────────────────────────────────
 # The tablet escape menu is the only control reachable once folded, so it must
 # offer a way out that changes nothing — not even a rotation-restoring "exit
@@ -844,7 +930,7 @@ printf 'transform=180\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
 # ── gatherd-hinge-daemon ──────────────────────────────────────────────────────
 # Fakes gatherd-tablet-mode itself (rather than reusing the real script's
 # swaymsg fake) so these tests exercise only the daemon's decision logic —
-# geometry, the lid gate, hysteresis, the degenerate pose, and ownership —
+# geometry, the lid gate, hysteresis, the degenerate pose, and exiting —
 # without also depending on the compositor plumbing already covered above.
 
 # fake_bin NAME BODY — install a fake executable that shadows the real one.
@@ -905,7 +991,7 @@ write_lid_state() {
 # formula, not the fixture, is right. Lid defaults to open on every reset -
 # tests that care about the closed lid set it explicitly.
 reset_daemon_state() {
-    rm -f "$FAKETM_STATE" "$XDG_RUNTIME_DIR/gatherd/hinge-daemon-owns"
+    rm -f "$FAKETM_STATE"
     : > "$FAKETM_LOG"
     write_lid_state open
 }
@@ -996,9 +1082,8 @@ assert_fail 'still inactive after a mid-band reading' gatherd-tablet-mode status
 reset_daemon_state
 mkdir -p "$XDG_RUNTIME_DIR/gatherd"
 gatherd-tablet-mode on >/dev/null 2>&1
-: > "$XDG_RUNTIME_DIR/gatherd/hinge-daemon-owns"
 : > "$FAKETM_LOG"
-assert_out 'a mid-band theta does not exit from an owned-active state' \
+assert_out 'a mid-band theta does not exit from an active state' \
     'theta=40.0 action=hold' hinge_print
 assert_ok 'still active after a mid-band reading' gatherd-tablet-mode status
 # The log legitimately holds "status" calls (the daemon's own state check,
@@ -1008,6 +1093,58 @@ if grep -qx off "$FAKETM_LOG"; then
 else
     ok 'no off call was logged for the mid-band reading'
 fi
+
+# ── every mode change the daemon makes leaves a trace ────────────────────────
+# This daemon disables the human's keyboard and rotates their display without
+# being asked. When that went wrong in real use there was nothing to read
+# afterwards, so the cause of an actual lockout could not be established at
+# all. Logging is therefore part of the contract, not a debugging aid.
+
+hinge_act() {
+    python3 - "$REPO/scripts/gatherd-hinge-daemon" "$1" "$2" <<'HINGEACT'
+import importlib.machinery, importlib.util, sys
+path, action, theta = sys.argv[1], sys.argv[2], sys.argv[3]
+loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
+spec = importlib.util.spec_from_loader("hinge_daemon", loader)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.act(action, None if theta == "none" else float(theta))
+HINGEACT
+}
+
+HINGE_LOG="$XDG_STATE_HOME/gatherd/hinge-daemon.log"
+
+reset_daemon_state
+rm -f "$HINGE_LOG"
+hinge_act enter 12.5
+if grep -q 'enter theta=12.5' "$HINGE_LOG" 2>/dev/null; then
+    ok 'entering tablet mode is logged with the theta that caused it'
+else
+    bad 'entering tablet mode is logged with the theta that caused it'
+fi
+
+hinge_act exit 72.0
+if grep -q 'exit theta=72.0' "$HINGE_LOG" 2>/dev/null; then
+    ok 'exiting tablet mode is logged with the theta that caused it'
+else
+    bad 'exiting tablet mode is logged with the theta that caused it'
+fi
+assert_out 'both mode changes are kept, not overwritten' '2' \
+    sh -c 'grep -c . "$XDG_STATE_HOME/gatherd/hinge-daemon.log"'
+
+# "hold" is the overwhelmingly common outcome (ten times a second, forever).
+# Logging it would bury the two lines that matter in a hundred thousand.
+hinge_act hold 40.0
+assert_out 'a hold is not logged' '2' \
+    sh -c 'grep -c . "$XDG_STATE_HOME/gatherd/hinge-daemon.log"'
+
+# An unwritable log must never stop the daemon acting - least of all stop the
+# exit that hands the keyboard back.
+rm -f "$HINGE_LOG"
+mkdir -p "$HINGE_LOG"
+assert_ok 'an unwritable log does not stop the daemon exiting tablet mode' \
+    hinge_act exit 72.0
+rmdir "$HINGE_LOG"
 
 # ── the degenerate pose: hinge axis parallel to gravity ──────────────────────
 # Reading a score in portrait — x and z near zero on both sensors — carries
@@ -1021,28 +1158,23 @@ assert_out 'the degenerate pose reports no theta and no decision' \
     'theta=degenerate action=hold' hinge_print
 assert_out 'the degenerate pose never calls gatherd-tablet-mode at all' '' cat "$FAKETM_LOG"
 
-# ── the ownership rule ────────────────────────────────────────────────────────
-# The human's real workflow: trigger tablet mode manually, then fold to flat.
-# At that moment theta is well above fold_exit — the exact case that must not
-# flap the mode back off, because the daemon never turned this session on.
+# ── unfolding always exits, however tablet mode was entered ──────────────────
+# This replaces an ownership rule that let the daemon exit ONLY sessions it
+# had entered itself. That rule turned unfolding into a no-op for any other
+# session, leaving the edge power button as the single escape from a machine
+# with no keyboard — and when that button showed the wrong menu, there was no
+# way out at all short of a hard reboot. Unfolding is physical, obvious and
+# always available; it must always work.
 
 reset_daemon_state
 mkdir -p "$XDG_RUNTIME_DIR/gatherd"
 gatherd-tablet-mode on >/dev/null 2>&1
-# Deliberately no hinge-daemon-owns marker: this session was started manually.
+# Deliberately NOT entered by the daemon: nothing records who started this.
 : > "$FAKETM_LOG"
 write_vector "$HINGE_LID" 1024 100 0
 write_vector "$HINGE_BASE" -317 100 976
-assert_out 'a manually-started session at typing angle is left alone' \
-    'theta=108.0 action=hold' hinge_print
-assert_ok 'a manually-started tablet mode is still active afterward' gatherd-tablet-mode status
-# Same reasoning as the mid-band case above: "status" calls are expected;
-# only "off" would mean the ownership rule was violated.
-if grep -qx off "$FAKETM_LOG"; then
-    bad 'the daemon never issued an off call against a session it does not own'
-else
-    ok 'the daemon never issued an off call against a session it does not own'
-fi
+assert_out 'unfolding to a typing angle exits a session the daemon did not start' \
+    'theta=108.0 action=exit' hinge_print
 gatherd-tablet-mode off >/dev/null 2>&1 || true
 
 # ── thresholds are overridable ───────────────────────────────────────────────
@@ -1356,10 +1488,16 @@ mod.poll_once(history, tracker)
 PY
 }
 
-# Fixed base vector throughout: fold action is pinned to "hold" regardless
-# of its value here, since tablet mode is either inactive (blocks "enter")
-# or active-but-not-owned (blocks "exit") in every case below - see
-# decide()'s ownership rule, exercised earlier in this section.
+# Rotation in isolation: the fold trigger is pinned OFF for this whole block
+# by putting both thresholds out of reach, so a lid vector chosen for the
+# rotation it produces cannot also enter or exit tablet mode as a side effect.
+# This used to lean on the ownership rule to block "exit"; with that rule gone,
+# the pinning has to be explicit rather than a happy consequence of unrelated
+# state. decide()'s own thresholds are exercised on their own terms earlier in
+# this section.
+GATHERD_HINGE_ENTER=-1
+GATHERD_HINGE_EXIT=999
+export GATHERD_HINGE_ENTER GATHERD_HINGE_EXIT
 write_vector "$HINGE_BASE" -317 100 976
 
 reset_log

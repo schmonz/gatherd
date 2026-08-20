@@ -39,6 +39,18 @@ builtin_keyboards() {
         | sort -u
 }
 
+# The re-enable side deliberately does NOT use the i8042 heuristic below.
+# That heuristic exists to keep an external keyboard (a page-turner pedal)
+# alive while folded - a constraint that only applies to DISABLING. Re-enabling
+# by type is strictly safer: `enabled` is the default state, so sweeping every
+# keyboard and touchpad costs nothing, while the heuristic could return an
+# empty list (a transient swaymsg or jq failure inside a command substitution
+# is invisible to `set -e`) and silently give the human nothing back.
+enable_all_input() {
+    swaymsg input type:keyboard events enabled >/dev/null || true
+    swaymsg input type:touchpad events enabled >/dev/null || true
+}
+
 set_builtin_events() {
     for _id in $(builtin_keyboards); do
         swaymsg input "$_id" events "$1" >/dev/null
@@ -88,9 +100,17 @@ turn_on() {
 }
 
 turn_off() {
-    if ! is_on; then return 0; fi
+    # NO `is_on` early return. `off` is the recovery command: it must put the
+    # session back to a usable state whatever it finds, because the one case
+    # that matters most is precisely the one where state has gone out of sync
+    # - input disabled but the state file missing. Returning early there made
+    # `off` a silent no-op and left no way at all to get the keyboard back
+    # from the machine itself. Every step below is already idempotent.
     _output=$(internal_output)
-    _prior=$(cat "$state_file")
+    _prior=""
+    if [ -f "$state_file" ]; then
+        _prior=$(cat "$state_file")
+    fi
 
     # Re-enable input FIRST. This is the safety-critical half of turning
     # tablet mode off: once the keyboard is disabled, the power button is the
@@ -99,7 +119,7 @@ turn_off() {
     # never be reached and the human would be stranded with a dead keyboard
     # and touchpad and no way to get them back. Confirmed on this hardware:
     # `swaymsg output DSI-1 transform null` exits 2.
-    set_builtin_events enabled
+    enable_all_input
 
     # Clearing idle inhibitors happens second, and is non-fatal (|| true) for
     # the same reason the rotation restore below is: input is already safe by

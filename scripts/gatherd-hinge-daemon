@@ -241,11 +241,35 @@ def state_dir():
     return os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "gatherd")
 
 
-def owns_marker():
-    # Lives next to gatherd-tablet-mode's own state file, but is a separate
-    # file: its mere existence is the entire ownership record, and it must
-    # be independent of whatever gatherd-tablet-mode does with its own state.
-    return os.path.join(state_dir(), "hinge-daemon-owns")
+def log_path():
+    state_home = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.environ.get("HOME", ""), ".local", "state"
+    )
+    return os.path.join(state_home, "gatherd", "hinge-daemon.log")
+
+
+def log_action(action, median_abs_theta):
+    # This daemon disables the human's built-in keyboard and rotates their
+    # display without being asked, and used to leave no trace of having done
+    # either - which made a real lockout impossible to diagnose afterwards.
+    # Never fatal: a log that cannot be written must not stop the action, and
+    # least of all the exit that gives the keyboard back.
+    try:
+        path = log_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        theta = "degenerate" if median_abs_theta is None else f"{median_abs_theta:.1f}"
+        with open(path, "a") as handle:
+            handle.write(
+                "%s %s theta=%s lid=%s\n"
+                % (
+                    time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    action,
+                    theta,
+                    "open" if lid_is_open() else "closed",
+                )
+            )
+    except OSError:
+        pass
 
 
 def read_vector(device_dir):
@@ -463,30 +487,27 @@ def tablet_mode_active():
     )
 
 
-def owned_by_daemon():
-    return os.path.exists(owns_marker())
-
-
 def activate():
     subprocess.run([TABLET_MODE_CMD, "on"], check=True)
-    os.makedirs(state_dir(), exist_ok=True)
-    open(owns_marker(), "w").close()
 
 
 def deactivate():
     subprocess.run([TABLET_MODE_CMD, "off"], check=True)
-    try:
-        os.remove(owns_marker())
-    except FileNotFoundError:
-        pass
 
 
-def decide(median_abs_theta, lid_open, active, owned):
-    # Hysteresis (never act between the two thresholds) plus the ownership
-    # rule: this daemon may only turn OFF a session it itself turned ON. The
-    # human's real workflow is to trigger tablet mode manually, then fold -
-    # at that moment theta is a typing angle, far above enter, and without the
-    # `owned` guard this would instantly reverse that manual session.
+def decide(median_abs_theta, lid_open, active):
+    # Hysteresis: never act between the two thresholds.
+    #
+    # Unfolding exits, ALWAYS - no matter what turned tablet mode on. There
+    # used to be an ownership rule here (exit only a session this daemon
+    # itself entered), to protect the workflow of triggering tablet mode from
+    # the keyboard and then folding, which passes through a typing angle far
+    # above fold_exit. Those keybindings are gone: folding is now the only way
+    # in, so that workflow no longer exists and the guard protected nothing -
+    # while its failure mode was severe. It made unfolding a no-op for any
+    # session the daemon had not started, leaving the power button as the sole
+    # escape from a machine whose keyboard is disabled. A physical, obvious,
+    # always-available way out beats a clever one.
     #
     # The lid gate applies only to entering. Closing the lid reads the same
     # near-zero theta as folding does, so without `lid_open` a closing lid
@@ -495,15 +516,17 @@ def decide(median_abs_theta, lid_open, active, owned):
     # zero regardless of the lid switch.
     if not active and median_abs_theta < fold_enter_deg() and lid_open:
         return "enter"
-    if active and owned and median_abs_theta > fold_exit_deg():
+    if active and median_abs_theta > fold_exit_deg():
         return "exit"
     return "hold"
 
 
-def act(action):
+def act(action, median_abs_theta=None):
     if action == "enter":
+        log_action("enter", median_abs_theta)
         activate()
     elif action == "exit":
+        log_action("exit", median_abs_theta)
         deactivate()
 
 
@@ -538,9 +561,7 @@ def decide_once(history, rotation_tracker):
     if sample(history, rotation_tracker):
         return None, "hold"
     median_abs_theta = statistics.median(history)
-    action = decide(
-        median_abs_theta, lid_is_open(), tablet_mode_active(), owned_by_daemon()
-    )
+    action = decide(median_abs_theta, lid_is_open(), tablet_mode_active())
     return median_abs_theta, action
 
 
@@ -549,7 +570,7 @@ def poll_once(history, rotation_tracker):
     the sole path that is allowed to act. See decide_once for the read-only
     half that --print uses instead."""
     median_abs_theta, action = decide_once(history, rotation_tracker)
-    act(action)
+    act(action, median_abs_theta)
     act_rotation(rotation_tracker, tablet_mode_active())
     return median_abs_theta, action
 

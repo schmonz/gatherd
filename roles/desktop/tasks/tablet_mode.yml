@@ -29,18 +29,23 @@
     remote_src: true
   when: has_dual_accelerometer
 
+# Removed, not merely unbound: folding is the only way into tablet mode and
+# unfolding is always the way out, so a keystroke that enters it would create
+# exactly the case the hinge daemon can no longer get you out of - a session
+# begun at a typing angle, which unfolding cannot end because it never
+# started folded. `state: absent` rather than deleting this task outright, so
+# converging a machine that already carries the old bindings removes them.
+#
 # `binding`, not `keys`: Jinja2 resolves item.keys to the dict's built-in
 # keys() method rather than the value, which fails silently and confusingly.
-- name: Bind tablet mode and music stand in sway
+- name: Unbind the old tablet mode and music stand keystrokes in sway
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/default"
-    line: "bindsym {{ item.binding }} exec {{ target_home }}/.local/bin/{{ item.script }} toggle"
     regexp: "^\\s*bindsym\\s+{{ item.binding | regex_escape }}\\s"
+    state: absent
   loop:
     - binding: $mod+t
-      script: gatherd-tablet-mode
     - binding: $mod+Shift+t
-      script: gatherd-music-stand
 
 # NOT `fullscreen enable`: sway's own rule fires (event trace confirms
 # fullscreen_mode=1 moments after mapping) but papers immediately restores its

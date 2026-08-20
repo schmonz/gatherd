@@ -12,7 +12,26 @@ set -eu
 
 powermenu="$HOME/.config/sway/scripts/power_menu.sh"
 
-if ! gatherd-tablet-mode status; then
+# Ask sway what is actually true, rather than trusting the state file alone.
+# A disabled built-in keyboard IS the trap this menu exists to escape, and it
+# is observable directly; the state file is a record of intent that can go
+# stale. When the two disagree, the human is still stuck, so the escape menu
+# must still appear - offering the stock power menu (whose entries assume a
+# working keyboard) to someone who has none is how a wrong menu becomes a
+# lockout.
+builtin_input_disabled() {
+    # Positive evidence only: a device that reports no send_events at all
+    # (sway does not expose libinput detail for every input) means "unknown",
+    # not "disabled". Treating unknown as disabled would pop the tablet escape
+    # menu on an ordinary unfolded laptop.
+    swaymsg -t get_inputs 2>/dev/null \
+        | jq -e '[.[] | select(.type == "keyboard")
+                      | select(.identifier | startswith("1:1:"))
+                      | .libinput.send_events // empty] | any(. != "enabled")' \
+            >/dev/null 2>&1
+}
+
+if ! gatherd-tablet-mode status && ! builtin_input_disabled; then
     exec "$powermenu"
 fi
 

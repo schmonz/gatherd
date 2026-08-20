@@ -343,8 +343,20 @@ task rather than a fork of the EndeavourOS script. The binding target becomes
 conditional: `gatherd-power-button` where the feature applies, `$powermenu`
 otherwise.
 
-Keybindings for the unfolded case, both currently free: `$mod+t` toggles tablet
-mode, `$mod+Shift+t` toggles music stand.
+**No keybinding enters or exits tablet mode.** `$mod+t` and `$mod+Shift+t`
+originally toggled tablet mode and music stand; both were removed after a real
+lockout at the piano. Folding is the only way in and unfolding is always the
+way out, which makes the escape physical, obvious, and available even when the
+screen is showing something unexpected.
+
+The two halves of that are load-bearing together. While a keystroke could start
+tablet mode from a typing angle, the hinge daemon needed an ownership rule
+(exit only a session it entered itself) or it would have reversed such a
+session instantly — and that rule is exactly what made unfolding a no-op for
+manually-started sessions, leaving the edge power button as the single way out
+of a machine with no keyboard. Remove the keystrokes and the ownership rule has
+nothing left to protect, so it goes too. Score picking moves entirely to the
+power button's touch menu (`Pick another score`), which is reachable folded.
 
 ## Facts and gating
 

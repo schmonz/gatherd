@@ -6,6 +6,12 @@ viewer_flag={{ music_stand_viewer_flag }}
 fold_enter_deg={{ tablet_mode_fold_enter_deg }}
 fold_exit_deg={{ tablet_mode_fold_exit_deg }}
 poll_interval={{ tablet_mode_hinge_poll_interval }}
+# The rate while nothing is moving, and what counts as moving. A machine
+# sitting still cannot need a decision, so it is sampled slowly until it does.
+poll_interval_idle={{ tablet_mode_hinge_poll_interval_idle }}
+motion_theta_deg={{ tablet_mode_hinge_motion_theta_deg }}
+motion_rotation_deg={{ tablet_mode_hinge_motion_rotation_deg }}
+motion_hold_seconds={{ tablet_mode_hinge_motion_hold_seconds }}
 median_window={{ tablet_mode_hinge_median_window }}
 rotation_reference_deg={{ tablet_mode_rotation_reference_deg }}
 # A multiple of foot_font_size, not a constant: it derives from the panel's

@@ -342,6 +342,16 @@ tablet_mode_hinge_median_window: 5
 # in the landscape/laptop orientation by mistake, which is indistinguishable
 # from a good calibration except that every quadrant then comes out a
 # quarter turn anticlockwise.
+# Adaptive rate: sample slowly while stationary, snap to poll_interval on
+# motion. Motion thresholds are in degrees of deviation from the running
+# median, measured at rest on this hardware over 20s of sampling: raw |theta|
+# strays at most 7.77 degrees from its median (p99 6.62), raw rotation at most
+# 0.65. The defaults sit 2.6x and 15x above those ceilings, while a real fold
+# moves theta ~100 degrees and a real turn moves rotation 90.
+tablet_mode_hinge_poll_interval_idle: 0.5
+tablet_mode_hinge_motion_theta_deg: 20.0
+tablet_mode_hinge_motion_rotation_deg: 10.0
+tablet_mode_hinge_motion_hold_seconds: 3.0
 tablet_mode_rotation_reference_deg: 267.0
 music_stand_root: "{{ target_home }}/Documents/forscore"
 # music_stand_viewer, music_stand_app_id and music_stand_viewer_flag must

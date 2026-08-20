@@ -1367,6 +1367,93 @@ else
     ok 'no off call was logged for the mid-band reading'
 fi
 
+# ── adaptive rate: sample slowly while nothing moves ─────────────────────────
+# Measured cost before this existed: 2.36% of a core and 115 i2c interrupts a
+# second, forever, on a fanless machine whose accelerometers are usually
+# reporting the same numbers they reported a second ago.
+
+hinge_eval() {
+    python3 - "$REPO/scripts/gatherd-hinge-daemon" "$@" <<'HINGEEVAL'
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader("hd", sys.argv[1])
+spec = importlib.util.spec_from_loader("hd", loader)
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+print(eval(sys.argv[2], {"mod": mod}))
+HINGEEVAL
+}
+
+assert_out 'a still machine sleeps for the idle interval' '0.5' \
+    hinge_eval 'mod.next_delay(False, 100.0, 0.0)[0]'
+assert_out 'detected motion drops straight to the fast interval' '0.1' \
+    hinge_eval 'mod.next_delay(True, 100.0, 0.0)[0]'
+assert_out 'motion holds the fast rate for motion_hold_seconds afterwards' '0.1' \
+    hinge_eval 'mod.next_delay(False, 101.0, 103.0)[0]'
+assert_out 'once the hold expires the rate returns to idle' '0.5' \
+    hinge_eval 'mod.next_delay(False, 104.0, 103.0)[0]'
+assert_out 'motion while already fast extends the hold rather than resetting it' '106.0' \
+    hinge_eval 'mod.next_delay(True, 103.0, 104.0)[1]'
+
+# The thresholds have to sit above the measured noise floor, or the machine
+# never sleeps - the same mistake that made three earlier thresholds in this
+# project silently capture nothing.
+assert_out 'the theta motion threshold clears the measured 7.77-degree noise ceiling' 'True' \
+    hinge_eval 'mod.motion_theta_deg() > 7.77 * 2'
+assert_out 'the rotation motion threshold clears the measured 0.65-degree ceiling' 'True' \
+    hinge_eval 'mod.motion_rotation_deg() > 0.65 * 2'
+# ...and below what real motion produces, or it never wakes up.
+assert_out 'a fold-sized theta swing counts as motion' 'True' \
+    hinge_eval 'mod.motion_theta_deg() < 100'
+assert_out 'a quarter-turn counts as motion' 'True' \
+    hinge_eval 'mod.motion_rotation_deg() < 90'
+assert_out 'idle sampling is genuinely slower than active sampling' 'True' \
+    hinge_eval 'mod.idle_poll_interval() > mod.poll_interval()'
+
+# An unknown pose must NOT nap: with no full window there is no median to
+# compare against, so nothing can be ruled still.
+reset_daemon_state
+write_vector "$HINGE_LID" 1024 100 0
+write_vector "$HINGE_BASE" -317 100 976
+assert_out 'a cold start with no baseline yet reports motion, staying fast' 'True' \
+    hinge_eval 'mod.sample(__import__("collections").deque(maxlen=mod.window_size()), mod.RotationTracker())[1]'
+
+# Threshold values being sensible is not the same as detection working. Settle
+# a baseline, then move the hinge and confirm it is noticed on the very first
+# sample - and that resting noise on the same baseline is not.
+hinge_motion_probe() {
+    python3 - "$REPO/scripts/gatherd-hinge-daemon" "$1" "$2" <<'MOTIONPROBE'
+import collections, importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader("hd", sys.argv[1])
+spec = importlib.util.spec_from_loader("hd", loader)
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+
+lid_path, base_path = sys.argv[2], sys.argv[3]
+def write(path, x, y, z):
+    for axis, val in zip("xyz", (x, y, z)):
+        open(f"{path}/in_accel_{axis}_raw", "w").write(f"{int(val)}\n")
+
+history = collections.deque(maxlen=mod.window_size())
+tracker = mod.RotationTracker()
+# Settle: a typing angle, held still, until both windows are full.
+for _ in range(mod.window_size() + 2):
+    write(lid_path, 1024, 100, 0); write(base_path, -317, 100, 976)
+    mod.sample(history, tracker)
+# Resting jitter, well inside the measured noise floor.
+write(lid_path, 1022, 101, 3); write(base_path, -319, 99, 974)
+print("jitter", mod.sample(history, tracker)[1])
+# A fold: theta swings ~100 degrees.
+write(lid_path, 1024, 100, 0); write(base_path, 1024, 100, -36)
+print("fold", mod.sample(history, tracker)[1])
+MOTIONPROBE
+}
+
+reset_daemon_state
+MOTION_PROBE=$(hinge_motion_probe "$HINGE_LID" "$HINGE_BASE")
+if [ "$MOTION_PROBE" = "$(printf 'jitter False\nfold True')" ]; then
+    ok 'resting jitter is not motion, but folding is - on the first sample'
+else
+    bad "resting jitter is not motion, but folding is (got [$MOTION_PROBE])"
+fi
+
 # ── every mode change the daemon makes leaves a trace ────────────────────────
 # This daemon disables the human's keyboard and rotates their display without
 # being asked. When that went wrong in real use there was nothing to read

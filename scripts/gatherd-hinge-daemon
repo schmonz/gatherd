@@ -211,6 +211,48 @@ def rotation_reference_deg():
     )
 
 
+def idle_poll_interval():
+    # 0.5s. The machine is stationary the overwhelming majority of its life -
+    # shut in a bag, open on a desk, folded on a music stand being read from -
+    # and every one of those poses is one where nothing can possibly need
+    # deciding. Sampling five times slower there is a 5x cut in both cpu and
+    # i2c traffic for no loss: motion ALWAYS precedes both a fold and a turn,
+    # so the worst case is noticing the onset up to one idle interval late and
+    # then running at full rate for the rest of the gesture.
+    return threshold("GATHERD_HINGE_POLL_INTERVAL_IDLE", "poll_interval_idle", 0.5)
+
+
+def motion_theta_deg():
+    # 20 degrees. Measured at rest on this hardware: a raw |theta| deviates
+    # from its own running median by at most 7.77 degrees (p99 6.62, median
+    # 1.66) over 20s of sampling. 20 is 2.6x that ceiling, while a fold swings
+    # theta by ~100 degrees - so this fires on the first sample of real motion
+    # and never on a machine sitting still.
+    #
+    # Compared against the median rather than the previous sample on purpose:
+    # a median-vs-median test lags by half the window, which at the idle rate
+    # is over a second before anything notices the human picking the machine
+    # up.
+    return threshold("GATHERD_HINGE_MOTION_THETA", "motion_theta_deg", 20.0)
+
+
+def motion_rotation_deg():
+    # 10 degrees, against a measured ceiling of 0.65 at rest - the rotation
+    # signal is far quieter than the hinge one because it needs only the lid
+    # sensor, not the angle between two noisy ones. Kept as its own threshold
+    # because it is also the signal that still works in the portrait
+    # score-reading pose, where the hinge geometry goes degenerate and theta
+    # says nothing at all.
+    return threshold("GATHERD_HINGE_MOTION_ROTATION", "motion_rotation_deg", 10.0)
+
+
+def motion_hold_seconds():
+    # How long one detected movement keeps the fast rate. Covers the rest of a
+    # gesture plus the median window settling afterwards, so a fold that
+    # starts slowly is not sampled slowly through the part that matters.
+    return threshold("GATHERD_HINGE_MOTION_HOLD", "motion_hold_seconds", 3.0)
+
+
 def poll_interval():
     # 0.1s: measured at rest (see fold_enter_deg/fold_exit_deg's comment for
     # the shared fixture), theta's stdev is 2.95 degrees. A rolling median of
@@ -570,11 +612,31 @@ def sample(history, rotation_tracker):
     property below."""
     lid = read_vector(lid_device())
     base = read_vector(base_device())
+
+    # Motion is judged BEFORE either smoothed baseline absorbs this reading,
+    # against whichever signals are meaningful in the current pose. Neither
+    # being available (a full window is needed to have a median at all) counts
+    # as moving: an unknown pose must keep the fast rate rather than nap.
+    moving = False
+    known = False
+    if not is_flat(lid) and len(rotation_tracker.window) == rotation_tracker.window.maxlen:
+        known = True
+        median_rotation = statistics.median(rotation_tracker.window) % 360
+        raw_rotation = rotation_deg(lid[0], lid[1])
+        if abs((raw_rotation - median_rotation + 180) % 360 - 180) > motion_rotation_deg():
+            moving = True
+
     rotation_tracker.update(lid)
     if is_degenerate(lid) or is_degenerate(base):
-        return True
-    history.append(abs(hinge_theta(lid, base)))
-    return False
+        return True, moving or not known
+
+    raw_theta = abs(hinge_theta(lid, base))
+    if len(history) == history.maxlen:
+        known = True
+        if abs(raw_theta - statistics.median(history)) > motion_theta_deg():
+            moving = True
+    history.append(raw_theta)
+    return False, moving or not known
 
 
 def decide_once(history, rotation_tracker):
@@ -583,21 +645,22 @@ def decide_once(history, rotation_tracker):
     Returns (median_abs_theta, action); median_abs_theta is None when this
     sample was degenerate and no decision was made at all - the daemon holds
     whatever state it was already in."""
-    if sample(history, rotation_tracker):
-        return None, "hold"
+    degenerate, moving = sample(history, rotation_tracker)
+    if degenerate:
+        return None, "hold", moving
     median_abs_theta = statistics.median(history)
     action = decide(median_abs_theta, lid_is_open(), tablet_mode_active())
-    return median_abs_theta, action
+    return median_abs_theta, action, moving
 
 
 def poll_once(history, rotation_tracker):
     """One read-decide-act cycle. Only the main loop may call this - it is
     the sole path that is allowed to act. See decide_once for the read-only
     half that --print uses instead."""
-    median_abs_theta, action = decide_once(history, rotation_tracker)
+    median_abs_theta, action, moving = decide_once(history, rotation_tracker)
     act(action, median_abs_theta)
     act_rotation(rotation_tracker, tablet_mode_active())
-    return median_abs_theta, action
+    return median_abs_theta, action, moving
 
 
 def print_once():
@@ -611,19 +674,32 @@ def print_once():
     thing that touches swaymsg for rotation) is never called here."""
     history = deque(maxlen=window_size())
     rotation_tracker = RotationTracker()
-    median_abs_theta, action = decide_once(history, rotation_tracker)
+    median_abs_theta, action, _moving = decide_once(history, rotation_tracker)
     if median_abs_theta is None:
         print("theta=degenerate action=hold")
     else:
         print(f"theta={median_abs_theta:.1f} action={action}")
 
 
+def next_delay(moving, now, fast_until):
+    """How long to sleep, and until when the fast rate stays in force.
+
+    Split out as a pure function so the rate policy can be tested without
+    running the loop or waiting on a clock."""
+    if moving:
+        fast_until = now + motion_hold_seconds()
+    delay = poll_interval() if now < fast_until else idle_poll_interval()
+    return delay, fast_until
+
+
 def loop():
     history = deque(maxlen=window_size())
     rotation_tracker = RotationTracker()
+    fast_until = 0.0
     while True:
-        poll_once(history, rotation_tracker)
-        time.sleep(poll_interval())
+        _median, _action, moving = poll_once(history, rotation_tracker)
+        delay, fast_until = next_delay(moving, time.monotonic(), fast_until)
+        time.sleep(delay)
 
 
 def main(argv):

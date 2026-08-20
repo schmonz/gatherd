@@ -14,12 +14,14 @@ config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
 root="$HOME/Documents/forscore"
 viewer=papers
 viewer_flag=""
+viewer_env=""
 menu_font=""
 # shellcheck source=/dev/null
 [ -r "$config" ] && . "$config"
 root="${MUSIC_STAND_ROOT:-$root}"
 viewer="${MUSIC_STAND_VIEWER:-$viewer}"
 viewer_flag="${MUSIC_STAND_VIEWER_FLAG:-$viewer_flag}"
+viewer_env="${MUSIC_STAND_VIEWER_ENV:-$viewer_env}"
 
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd"
 index="$state_dir/music-index.tsv"
@@ -115,8 +117,30 @@ stop_viewer() {
     case "$_pid" in '' | *[!0-9]*) return 0 ;; esac
     _cmd=$(tr '\0' ' ' < "/proc/$_pid/cmdline" 2>/dev/null || true)
     case "$_cmd" in
-        *"$viewer"*) kill "$_pid" 2>/dev/null || true ;;
+        *"$viewer"*) ;;
+        *) return 0 ;;
     esac
+
+    # Signal the process GROUP, not the pid alone. koreader is a wrapper shell
+    # that runs the actual reader as a child in a restart loop and never
+    # execs, so killing the recorded pid would leave the score on screen with
+    # nothing left tracking it. turn_on launches under setsid exactly so that
+    # a group exists containing only what we started.
+    #
+    # Guarded on the pid still BEING its own group leader. That is what proves
+    # this is the group setsid made for us, rather than one a recycled pid was
+    # reparented into - a group kill aimed at strangers is a much worse
+    # mistake than a missed one, so the fallback is the narrower signal.
+    #
+    # Field 3 after the final ')': a process name can contain spaces and
+    # parentheses, so /proc/pid/stat cannot be split on whitespace from the
+    # left. After the comm field the columns are state, ppid, pgrp.
+    _pgid=$(sed 's/.*) //' "/proc/$_pid/stat" 2>/dev/null | awk '{print $3}' || true)
+    if [ -n "$_pgid" ] && [ "$_pgid" = "$_pid" ]; then
+        kill -- -"$_pid" 2>/dev/null || true
+    else
+        kill "$_pid" 2>/dev/null || true
+    fi
 }
 
 turn_on() {
@@ -167,10 +191,19 @@ turn_on() {
     # the fullscreen one - and only the newest pid can be recorded below, so
     # leaving the old one running would also leave it untrackable.
     stop_viewer
+    set --
     if [ -n "$viewer_flag" ]; then
-        "$viewer" "$viewer_flag" "$root/$file" >/dev/null 2>&1 &
+        set -- "$viewer_flag"
+    fi
+    set -- "$@" "$root/$file"
+    # setsid so the viewer heads its own process group - see stop_viewer.
+    if [ -n "$viewer_env" ]; then
+        # Deliberately unquoted: viewer_env is a space-separated list of
+        # KEY=VALUE assignments for env(1), and must word-split.
+        # shellcheck disable=SC2086
+        setsid env $viewer_env "$viewer" "$@" >/dev/null 2>&1 &
     else
-        "$viewer" "$root/$file" >/dev/null 2>&1 &
+        setsid "$viewer" "$@" >/dev/null 2>&1 &
     fi
     _viewer_pid=$!
     mkdir -p "$state_dir" 2>/dev/null || true

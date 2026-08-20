@@ -430,7 +430,8 @@ export MUSIC_STAND_ROOT
 # ── gatherd-music-stand ───────────────────────────────────────────────────────
 
 MUSIC_STAND_VIEWER=fakeviewer
-export MUSIC_STAND_VIEWER
+VIEWER_CHILD="$WORK/viewer-child.pid"
+export MUSIC_STAND_VIEWER VIEWER_CHILD
 # Reads $VIEWER_LOG rather than a fixed path, because a real viewer is
 # launched with `&` and reparented — reset_picker below cannot wait() on the
 # previous pick's process before starting the next one. A backgrounded
@@ -452,7 +453,14 @@ export MUSIC_STAND_VIEWER
 cat > "$FAKEBIN/fakeviewer" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >> "${VIEWER_LOG:-/dev/null}"
-sleep 60
+# Shaped like koreader.sh: the actual viewer is a CHILD of this wrapper, which
+# never execs it. Killing only the recorded pid would leave that child running
+# with the score still on screen and nothing tracking it - the exact bug the
+# process-group kill exists to prevent, and invisible to a fake that is a
+# single process.
+sleep 60 &
+echo $! > "${VIEWER_CHILD:-/dev/null}"
+wait
 EOF
 chmod +x "$FAKEBIN/fakeviewer"
 
@@ -588,6 +596,19 @@ else
 fi
 assert_fail 'off clears the recorded viewer pid' \
     test -f "$XDG_STATE_HOME/gatherd/music-stand-viewer-pid"
+# The wrapper dying is not enough: koreader's wrapper does not exec, so the
+# process actually showing the score is a child. If it survives, the human is
+# still looking at the score they asked to close.
+_viewer_child=$(cat "$VIEWER_CHILD" 2>/dev/null || echo 0)
+_i=0
+while kill -0 "$_viewer_child" 2>/dev/null && [ "$_i" -lt 100 ]; do
+    _i=$((_i + 1)); sleep 0.02
+done
+if [ "$_viewer_child" != 0 ] && ! kill -0 "$_viewer_child" 2>/dev/null; then
+    ok 'off stops the viewer CHILD as well, not just the wrapper'
+else
+    bad "off stops the viewer CHILD as well, not just the wrapper (pid $_viewer_child)"
+fi
 
 # A pid is a recycled number, not an identity. Nothing may be signalled
 # without re-checking that the pid is still the viewer this script launched -

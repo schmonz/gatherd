@@ -79,7 +79,9 @@ rest_packages:
   - fwupd
   # text editor
   - xed
-  # sheet music / PDF reading in tablet mode
+  # PDF reading generally. NOT the music-stand viewer any more - see
+  # music_stand_viewer below - but kept as the desktop default for opening a
+  # PDF with a keyboard and a mouse, which is what it is good at.
   - papers
   # lightweight fallback browser for low-end/constrained machines
   - netsurf
@@ -161,6 +163,10 @@ aur_packages:
   # update notifier
   - arch-update
   - xdg-terminal-exec
+  # sheet music at the piano: the music-stand viewer. Chosen over papers
+  # because it can turn pages BACKWARDS by touch (configurable tap zones),
+  # which papers structurally cannot - see music_stand_viewer below.
+  - koreader-bin
   # polkit agent that drives any prompt command (we point it at fuzzel)
   - cmd-polkit-git
 
@@ -373,15 +379,42 @@ music_stand_root: "{{ target_home }}/Documents/forscore"
 # flag by analogy with papers, both of which share Evince ancestry) — confirm
 # both with `swaymsg -t get_tree` and a live launch before relying on them,
 # since neither has been exercised on this hardware.
+#
+# koreader is what is actually used. It is the only one of the three that can
+# go BACKWARDS by touch: papers maps a primary click to next-page and offers
+# no zone logic at all, so a mis-tapped page could not be undone without a
+# keyboard, which tablet mode has disabled. koreader has configurable tap
+# zones (left = back) and, as a bonus, crops each page to its printed content
+# so the staves come out larger.
+#
+# Its three values are each surprising, and none follows from the package
+# name:
+#   app_id  luajit  - the window belongs to reader.lua, a CHILD of the
+#                     koreader wrapper script, and carries the interpreter's
+#                     app_id rather than the application's. Confirmed with
+#                     `swaymsg -t get_tree` against a live launch.
+#   flag    (none)  - page mode, tap zones and zoom are koreader's own
+#                     persistent settings, not per-launch flags.
+#   env             - SDL3 otherwise picks x11 and runs through XWayland,
+#                     where touch arrives as synthesised mouse events and the
+#                     display transform goes through a translation layer. The
+#                     whole point here is real wl_touch on a rotating panel.
 music_stand_viewer_app_ids:
   papers: org.gnome.Papers
   xreader: xreader
+  koreader: luajit
 music_stand_viewer_flags:
   papers: -s
   xreader: -s
-music_stand_viewer: papers
+  koreader: ""
+music_stand_viewer_envs:
+  papers: ""
+  xreader: ""
+  koreader: SDL_VIDEODRIVER=wayland
+music_stand_viewer: koreader
 music_stand_app_id: "{{ music_stand_viewer_app_ids[music_stand_viewer] }}"
 music_stand_viewer_flag: "{{ music_stand_viewer_flags[music_stand_viewer] }}"
+music_stand_viewer_env: "{{ music_stand_viewer_envs[music_stand_viewer] }}"
 
 # iCloud Drive sync. The folder list is data on purpose: widening coverage is a
 # list edit, not a code change. Downloads is excluded on the merits — 310 MB of

@@ -514,7 +514,13 @@ reset_picker 'Medtner' 'Two Skazki'
 assert_ok 'music-stand on succeeds' gatherd-music-stand on
 assert_out 'the viewer opened the chosen score' "$SCORES/2 Skazki, Op. 48.pdf" \
     viewer_log
-assert_ok 'music-stand turned tablet mode on' gatherd-tablet-mode status
+# Opening a score does NOT enter tablet mode, and must not: folding is what
+# makes tablet mode, and unfolding ends it. A music stand that turned it on
+# from a keyboard would be asserting the opposite of what the hinge says, and
+# the hinge daemon corrects that within a poll - which is exactly what
+# happened in real use, leaving a score half-launched and the screen flicking
+# back to landscape.
+assert_fail 'opening a score does not enter tablet mode' gatherd-tablet-mode status
 assert_out 'the pick was recorded in the MRU' \
     'Medtner	Two Skazki	2 Skazki, Op. 48.pdf' \
     cat "$XDG_STATE_HOME/gatherd/music-stand-scores"
@@ -609,6 +615,23 @@ if [ "$_viewer_child" != 0 ] && ! kill -0 "$_viewer_child" 2>/dev/null; then
 else
     bad "off stops the viewer CHILD as well, not just the wrapper (pid $_viewer_child)"
 fi
+
+# A stale file pointing at a pid that no longer exists at all. The earlier
+# version of this suite only ever tested a stale pid belonging to a LIVE
+# process, so /proc/<pid>/cmdline always existed - and the shell diagnostic
+# from a failed redirection went unnoticed until it printed over a human
+# opening a score.
+mkdir -p "$XDG_STATE_HOME/gatherd"
+printf '%s\n' 999999 > "$XDG_STATE_HOME/gatherd/music-stand-viewer-pid"
+: > "$WORK/deadpid.err"
+if gatherd-music-stand close 2>"$WORK/deadpid.err"; then
+    ok 'music-stand close survives a pid that no longer exists'
+else
+    bad 'music-stand close survives a pid that no longer exists'
+fi
+assert_out 'a vanished pid produces no output at all' '' cat "$WORK/deadpid.err"
+assert_fail 'the stale pid file is cleared' \
+    test -f "$XDG_STATE_HOME/gatherd/music-stand-viewer-pid"
 
 # A pid is a recycled number, not an identity. Nothing may be signalled
 # without re-checking that the pid is still the viewer this script launched -

@@ -115,7 +115,15 @@ stop_viewer() {
     _pid=$(cat "$viewer_pid_file" 2>/dev/null || true)
     rm -f "$viewer_pid_file"
     case "$_pid" in '' | *[!0-9]*) return 0 ;; esac
-    _cmd=$(tr '\0' ' ' < "/proc/$_pid/cmdline" 2>/dev/null || true)
+    # Tested for readability first: `< /proc/$pid/cmdline` is a REDIRECTION,
+    # and a redirection that cannot be opened is diagnosed by the shell itself,
+    # which `2>/dev/null` on the command cannot suppress. A pid that has since
+    # exited - the common case for a stale file - would otherwise print
+    # "No such file or directory" every time the human opened a score.
+    _cmd=""
+    if [ -r "/proc/$_pid/cmdline" ]; then
+        _cmd=$(tr '\0' ' ' < "/proc/$_pid/cmdline" 2>/dev/null || true)
+    fi
     case "$_cmd" in
         *"$viewer"*) ;;
         *) return 0 ;;
@@ -176,7 +184,6 @@ turn_on() {
         || { echo "gatherd-music-stand: viewer not found: $viewer" >&2; exit 1; }
 
     remember "$composer" "$title" "$file"
-    gatherd-tablet-mode on
     # sway's own `for_window ... fullscreen enable` rule fires but papers
     # restores its own persisted (non-fullscreen) window state moments later
     # and clobbers it — confirmed by event trace. Launching straight into the
@@ -210,23 +217,21 @@ turn_on() {
     printf '%s\n' "$_viewer_pid" > "$viewer_pid_file" 2>/dev/null || true
 }
 
+viewer_running() {
+    [ -r "$viewer_pid_file" ] || return 1
+    _running_pid=$(cat "$viewer_pid_file" 2>/dev/null || true)
+    case "$_running_pid" in '' | *[!0-9]*) return 1 ;; esac
+    kill -0 "$_running_pid" 2>/dev/null
+}
+
 turn_off() {
-    # "Exit music stand" means the music stand goes away, viewer included -
-    # leaving a fullscreen PDF up made the menu entry look like it had done
-    # nothing at all. `gatherd-tablet-mode off` alone is what "Exit tablet
-    # mode" is for, and that one deliberately leaves the viewer where it is.
     stop_viewer
-    gatherd-tablet-mode off
 }
 
 case "${1:-toggle}" in
     on)     turn_on ;;
     off)    turn_off ;;
-    # Shut the score without leaving tablet mode - the machine is still
-    # folded, and folded IS tablet mode. This is what the folded menu offers;
-    # `off` additionally ends tablet mode and is only reachable from a
-    # keyboard, where ending it makes sense because you have already unfolded.
     close)  stop_viewer ;;
-    toggle) if gatherd-tablet-mode status; then turn_off; else turn_on; fi ;;
+    toggle) if viewer_running; then turn_off; else turn_on; fi ;;
     *)      echo "usage: $0 on|off|close|toggle" >&2; exit 2 ;;
 esac

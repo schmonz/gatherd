@@ -1,12 +1,13 @@
 #!/bin/sh
-# Unit tests for gatherd-tablet-mode.
+# Unit tests for the sheet-music picker (gatherd-music-index, gatherd-music-stand).
 #
-# Fakes swaymsg so the decision logic — record-then-restore of the real resting
-# transform, and disabling ONLY built-in input — is exercised without a running
-# compositor. Those two are the parts that must not be discovered to be wrong
-# while the machine is folded on a music stand.
+# The fold detection, rotation, input suppression and escape menu they sit on
+# top of moved to their own repo (chuwi-minibook-tablet-mode) and are tested
+# there. This suite fakes minibook-tablet-mode itself, rather than exercising
+# the real mechanism: only its `status` and `fullscreen-viewer` verbs, and the
+# config file's music-stand keys, are gatherd's concern here.
 #
-# Usage: tests/tablet-mode
+# Usage: tests/music-stand
 
 set -eu
 
@@ -24,7 +25,7 @@ export PATH
 
 XDG_RUNTIME_DIR="$WORK/run"
 XDG_CONFIG_HOME="$WORK/config"
-mkdir -p "$XDG_RUNTIME_DIR" "$XDG_CONFIG_HOME"
+mkdir -p "$XDG_RUNTIME_DIR" "$XDG_CONFIG_HOME" "$XDG_CONFIG_HOME/minibook-tablet-mode"
 export XDG_RUNTIME_DIR XDG_CONFIG_HOME
 
 ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
@@ -38,274 +39,43 @@ assert_out() {
 assert_ok()   { _d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$_d"; else bad "$_d (expected success)"; fi; }
 assert_fail() { _d=$1; shift; if "$@" >/dev/null 2>&1; then bad "$_d (expected failure)"; else ok "$_d"; fi; }
 
-# The resting transform is 90, not normal: wlroots applies the DRM
-# panel-orientation quirk on this rotated panel. Seeding the fake with 90 is
-# what makes the restore test meaningful.
-printf '90' > "$WORK/transform"
-
-cat > "$WORK/inputs.json" <<'JSON'
-[
-  {"identifier":"1:1:AT_Translated_Set_2_keyboard","type":"keyboard","libinput":{"send_events":"enabled"}},
-  {"identifier":"0:1:Power_Button","type":"keyboard"},
-  {"identifier":"1234:5678:AirTurn_PEDpro","type":"keyboard","libinput":{"send_events":"enabled"}},
-  {"identifier":"2321:21128:XXXX0000:05_0911:5288_Touchpad","type":"touchpad","libinput":{"send_events":"enabled"}},
-  {"identifier":"1046:9110:Goodix_Capacitive_TouchScreen","type":"touch"}
-]
-JSON
-
-# Two views (app_id set) nested under output/workspace containers (app_id
-# null), matching the real `get_tree` shape: outputs and workspaces are
-# containers, not views, and must never be targeted by inhibit_idle.
-cat > "$WORK/tree.json" <<'JSON'
-{
-  "type": "root",
-  "id": 1,
-  "app_id": null,
-  "nodes": [
-    {
-      "type": "output",
-      "id": 2,
-      "app_id": null,
-      "nodes": [
-        {
-          "type": "workspace",
-          "id": 3,
-          "app_id": null,
-          "nodes": [
-            {"type": "con", "id": 101, "app_id": "org.gnome.Papers"},
-            {"type": "con", "id": 102, "app_id": "foot"},
-            {"type": "con", "id": 103, "app_id": "luajit"}
-          ],
-          "floating_nodes": []
-        }
-      ]
-    }
-  ]
-}
-JSON
-
-cat > "$FAKEBIN/swaymsg" <<EOF
+# A test double, not the real mechanism: minibook-tablet-mode lives upstream
+# now and has its own suite there. gatherd-music-stand only ever calls two of
+# its verbs - `status` (is a score being picked while already folded?) and
+# `fullscreen-viewer` (fill the screen with whatever just opened) - so that is
+# all this fakes. State lives where the real command keeps it
+# ($XDG_RUNTIME_DIR/minibook-tablet-mode/tablet-mode), which costs nothing and
+# means a test can drive `on`/`off` exactly like the real command's callers do.
+cat > "$FAKEBIN/minibook-tablet-mode" <<EOF
 #!/bin/sh
-# NOTE: written from an UNQUOTED heredoc (it interpolates \$WORK), so no
-# backticks may appear anywhere below - they would be command substitution at
-# generation time, executed against the REAL sway, with their output injected
-# into this script. Use single quotes in comments here.
 WORK='$WORK'
-# \$WORK/compositor-down simulates a compositor that is not answering. NEVER
-# remove this fake from PATH to simulate that: the real swaymsg is also on
-# PATH, and the suite would start driving the live session.
-if [ -f "\$WORK/compositor-down" ]; then exit 1; fi
-case "\$1" in
-  -t)
-    case "\$2" in
-      get_outputs)
-        printf '[{"name":"DSI-1","transform":"%s","rect":{"width":1371,"height":857}}]' "\$(cat "\$WORK/transform")" ;;
-      # \$WORK/fail-get-inputs simulates the transient swaymsg/jq failure that
-      # makes builtin_keyboards() come back empty - the whole reason turn_on
-      # confirms rather than assumes.
-      get_inputs)
-        if [ -f "\$WORK/fail-get-inputs" ]; then printf '[]'; else cat "\$WORK/inputs.json"; fi ;;
-      get_tree) cat "\$WORK/tree.json" ;;
-    esac ;;
-  output)
-    printf '%s\n' "\$*" >> "\$WORK/swaymsg.log"
-    # Mirrors two real failures this suite must survive: 'swaymsg output DSI-1 transform null' genuinely exits 2 on this hardware, and
-    # \$WORK/fail-transform lets a test simulate any other compositor error
-    # on an otherwise-valid transform.
-    if [ "\$3" = transform ] && { [ "\$4" = null ] || [ -f "\$WORK/fail-transform" ]; }; then
-        exit 2
-    fi
-    printf '%s' "\$4" > "\$WORK/transform" ;;
-  input)
-    printf '%s\n' "\$*" >> "\$WORK/swaymsg.log"
-    # Actually apply it. gatherd-power-button now decides from live input
-    # state rather than the state file, so a fake that only logged would let
-    # the lockout case pass untested.
-    if [ "\$3" = events ]; then
-        jq --arg sel "\$2" --arg state "\$4" '
-          map(if ((\$sel | startswith("type:")) and (.type == (\$sel | ltrimstr("type:"))))
-                 or (.identifier == \$sel)
-              then (.libinput.send_events = \$state) else . end)' \
-          "\$WORK/inputs.json" > "\$WORK/inputs.next" \
-          && mv "\$WORK/inputs.next" "\$WORK/inputs.json"
-    fi ;;
+state="\${XDG_RUNTIME_DIR:-/tmp}/minibook-tablet-mode/tablet-mode"
+config="\${XDG_CONFIG_HOME:-\$HOME/.config}/minibook-tablet-mode/config"
+case "\${1:-}" in
+  on)
+    mkdir -p "\$(dirname "\$state")"
+    : > "\$state" ;;
+  off)
+    rm -f "\$state" ;;
+  status)
+    [ -f "\$state" ] ;;
+  # The one side effect gatherd-music-stand's tests actually check: when
+  # folded, fullscreen whatever viewer_app_id names, logged the same way the
+  # real mechanism's own suite asserts it (see minibook-compositor
+  # set-fullscreen upstream) so log_has works unchanged here.
+  fullscreen-viewer)
+    [ -f "\$state" ] || exit 0
+    _app_id=\$(sed -n 's/^viewer_app_id=//p' "\$config" 2>/dev/null | tail -1)
+    [ -n "\$_app_id" ] && printf '[app_id="%s"] fullscreen enable\n' "\$_app_id" >> "\$WORK/swaymsg.log"
+    exit 0 ;;
   *)
-    # Catches 'swaymsg [con_id=N] inhibit_idle <mode>'.
-    printf '%s\n' "\$*" >> "\$WORK/swaymsg.log" ;;
+    exit 0 ;;
 esac
 EOF
-chmod +x "$FAKEBIN/swaymsg"
+chmod +x "$FAKEBIN/minibook-tablet-mode"
 
 log_has() { grep -qF "$1" "$WORK/swaymsg.log" 2>/dev/null; }
 reset_log() { : > "$WORK/swaymsg.log"; }
-log_line() { grep -n -F "$1" "$WORK/swaymsg.log" 2>/dev/null | head -1 | cut -d: -f1; }
-
-# ── status before anything ────────────────────────────────────────────────────
-
-assert_fail 'status exits non-zero when inactive' gatherd-tablet-mode status
-
-# ── on ────────────────────────────────────────────────────────────────────────
-
-reset_log
-assert_ok 'on succeeds' gatherd-tablet-mode on
-assert_out 'on rotates to portrait' 'normal' cat "$WORK/transform"
-assert_ok 'on records the resting transform' test "$(cat "$XDG_RUNTIME_DIR/gatherd/tablet-mode")" = 90
-assert_ok 'status exits zero when active' gatherd-tablet-mode status
-
-if log_has 'input 1:1:AT_Translated_Set_2_keyboard events disabled'; then
-    ok 'on disables the built-in keyboard'
-else
-    bad 'on disables the built-in keyboard'
-fi
-if log_has 'input type:touchpad events disabled'; then
-    ok 'on disables the touchpad'
-else
-    bad 'on disables the touchpad'
-fi
-if log_has 'AirTurn'; then
-    bad 'on leaves external keyboards alone'
-else
-    ok 'on leaves external keyboards alone'
-fi
-
-if log_has '[con_id=101] inhibit_idle open' && log_has '[con_id=102] inhibit_idle open'; then
-    ok 'on sets inhibit_idle open on every view in the tree'
-else
-    bad 'on sets inhibit_idle open on every view in the tree'
-fi
-if log_has '[con_id=2] inhibit_idle' || log_has '[con_id=3] inhibit_idle'; then
-    bad 'on does not target output/workspace containers, only views'
-else
-    ok 'on does not target output/workspace containers, only views'
-fi
-
-# ── on is idempotent ──────────────────────────────────────────────────────────
-
-assert_ok 'on again succeeds' gatherd-tablet-mode on
-assert_ok 'on again does not clobber the recorded transform' \
-    test "$(cat "$XDG_RUNTIME_DIR/gatherd/tablet-mode")" = 90
-
-# ── off ───────────────────────────────────────────────────────────────────────
-
-reset_log
-assert_ok 'off succeeds' gatherd-tablet-mode off
-assert_out 'off restores the recorded 90, not a hardcoded normal' '90' cat "$WORK/transform"
-assert_fail 'status exits non-zero after off' gatherd-tablet-mode status
-if log_has 'input type:keyboard events enabled'; then
-    ok 'off re-enables the built-in keyboard'
-else
-    bad 'off re-enables the built-in keyboard'
-fi
-
-if log_has '[con_id=101] inhibit_idle none' && log_has '[con_id=102] inhibit_idle none'; then
-    ok 'off sets inhibit_idle none on every view in the tree'
-else
-    bad 'off sets inhibit_idle none on every view in the tree'
-fi
-
-# Ordering, not just presence: input re-enable must be logged before the
-# inhibitor clearing and before the rotation restore, in that position. A
-# regression that moves input re-enable later (e.g. back to after the
-# rotation) must be caught here, not just by an "eventually happens" check.
-_input_line=$(log_line 'input type:keyboard events enabled')
-_inhibit_line=$(log_line '[con_id=101] inhibit_idle none')
-_rotate_line=$(log_line 'output DSI-1 transform')
-if [ -n "$_input_line" ] && [ -n "$_inhibit_line" ] && [ "$_input_line" -lt "$_inhibit_line" ]; then
-    ok 'off re-enables input before clearing idle inhibitors'
-else
-    bad 'off re-enables input before clearing idle inhibitors'
-fi
-if [ -n "$_input_line" ] && [ -n "$_rotate_line" ] && [ "$_input_line" -lt "$_rotate_line" ]; then
-    ok 'off re-enables input before restoring the rotation'
-else
-    bad 'off re-enables input before restoring the rotation'
-fi
-
-assert_ok 'off again is a no-op' gatherd-tablet-mode off
-
-# ── toggle ────────────────────────────────────────────────────────────────────
-
-assert_ok 'toggle turns on' gatherd-tablet-mode toggle
-assert_out 'toggle rotated to portrait' 'normal' cat "$WORK/transform"
-assert_ok 'toggle turns off' gatherd-tablet-mode toggle
-assert_out 'toggle restored landscape' '90' cat "$WORK/transform"
-
-# ── config file ───────────────────────────────────────────────────────────────
-
-mkdir -p "$XDG_CONFIG_HOME/gatherd"
-printf 'transform=180\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-assert_ok 'on with config succeeds' gatherd-tablet-mode on
-assert_out 'config file sets the transform' '180' cat "$WORK/transform"
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# ── bad usage ─────────────────────────────────────────────────────────────────
-
-assert_fail 'unknown subcommand fails' gatherd-tablet-mode wibble
-
-# ── off: invalid or lost state must not strand input ─────────────────────────
-# turn_off is the safety-critical half — once the keyboard is disabled, it is
-# the only way back. These prove it degrades safely even when the recorded
-# transform can't be trusted, or the compositor itself rejects the rotation.
-
-reset_log
-assert_ok 'on succeeds before the invalid-transform case' gatherd-tablet-mode on
-# Reproduces the historical bug: the record site's jq had no `// empty`
-# guard, so a missing .transform wrote the literal string "null".
-printf 'null' > "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
-_before_transform=$(cat "$WORK/transform")
-reset_log
-assert_ok 'off with an invalid recorded transform still succeeds' gatherd-tablet-mode off
-assert_out 'an invalid recorded transform is left untouched, not rotated' \
-    "$_before_transform" cat "$WORK/transform"
-if log_has 'transform null'; then
-    bad 'off never issues a bogus "transform null"'
-else
-    ok 'off never issues a bogus "transform null"'
-fi
-if log_has 'input type:keyboard events enabled'; then
-    ok 'off re-enables the keyboard even with an invalid recorded transform'
-else
-    bad 'off re-enables the keyboard even with an invalid recorded transform'
-fi
-if log_has 'input type:touchpad events enabled'; then
-    ok 'off re-enables the touchpad even with an invalid recorded transform'
-else
-    bad 'off re-enables the touchpad even with an invalid recorded transform'
-fi
-assert_fail 'off clears the state file even with an invalid recorded transform' \
-    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
-
-# Ordering: input must be restored even when the rotation call itself fails
-# (confirmed on hardware: `swaymsg output DSI-1 transform null` exits 2). This
-# is the assertion that catches a regression back to rotate-then-restore.
-printf '90' > "$WORK/transform"
-reset_log
-assert_ok 'on succeeds before the failed-rotation case' gatherd-tablet-mode on
-touch "$WORK/fail-transform"
-reset_log
-assert_ok 'off succeeds even when the compositor rejects the transform' gatherd-tablet-mode off
-if log_has 'input type:keyboard events enabled'; then
-    ok 'input is re-enabled even when the rotation call fails'
-else
-    bad 'input is re-enabled even when the rotation call fails'
-fi
-if log_has '[con_id=101] inhibit_idle none'; then
-    ok 'idle inhibitors are still cleared even when the rotation call fails'
-else
-    bad 'idle inhibitors are still cleared even when the rotation call fails'
-fi
-_input_line=$(log_line 'input type:keyboard events enabled')
-_rotate_line=$(log_line 'output DSI-1 transform')
-if [ -n "$_input_line" ] && [ -n "$_rotate_line" ] && [ "$_input_line" -lt "$_rotate_line" ]; then
-    ok 'input is re-enabled before the rotation is even attempted, failing or not'
-else
-    bad 'input is re-enabled before the rotation is even attempted, failing or not'
-fi
-assert_fail 'the state file is cleared even when the rotation call fails' \
-    test -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
-rm -f "$WORK/fail-transform"
-printf '90' > "$WORK/transform"
-
 # ── gatherd-music-index ────────────────────────────────────────────────────
 
 SCORES="$WORK/scores"
@@ -525,14 +295,14 @@ assert_out 'the viewer opened the chosen score' "$SCORES/2 Skazki, Op. 48.pdf" \
 # the hinge daemon corrects that within a poll - which is exactly what
 # happened in real use, leaving a score half-launched and the screen flicking
 # back to landscape.
-assert_fail 'opening a score does not enter tablet mode' gatherd-tablet-mode status
+assert_fail 'opening a score does not enter tablet mode' minibook-tablet-mode status
 
 # ...but opening one while ALREADY folded must fullscreen it. Asserted here on
 # gatherd-music-stand rather than only on the verb it calls: deleting the call
 # passed every test until this one existed.
-_saved_conf=$(cat "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf" 2>/dev/null || true)
-printf 'viewer_app_id=luajit\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-gatherd-tablet-mode on >/dev/null 2>&1
+_saved_conf=$(cat "$XDG_CONFIG_HOME/minibook-tablet-mode/config" 2>/dev/null || true)
+printf 'viewer_app_id=luajit\n' > "$XDG_CONFIG_HOME/minibook-tablet-mode/config"
+minibook-tablet-mode on >/dev/null 2>&1
 reset_log
 reset_picker 'Medtner' 'Two Skazki'
 assert_ok 'music-stand on succeeds while already folded' gatherd-music-stand on
@@ -542,8 +312,8 @@ else
     bad 'a score opened while already folded is asked to fill the screen'
 fi
 gatherd-music-stand close >/dev/null 2>&1 || true
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-printf '%s' "$_saved_conf" > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+minibook-tablet-mode off >/dev/null 2>&1 || true
+printf '%s' "$_saved_conf" > "$XDG_CONFIG_HOME/minibook-tablet-mode/config"
 assert_out 'the pick was recorded in the MRU' \
     'Medtner	Two Skazki	2 Skazki, Op. 48.pdf' \
     cat "$XDG_STATE_HOME/gatherd/music-stand-scores"
@@ -566,7 +336,7 @@ else
 fi
 
 assert_ok 'music-stand off succeeds' gatherd-music-stand off
-assert_fail 'music-stand off left tablet mode off' gatherd-tablet-mode status
+assert_fail 'music-stand off left tablet mode off' minibook-tablet-mode status
 
 # MRU ordering: the most recently played composer must lead level 1.
 reset_picker 'Alkan' 'Twelve Etudes'
@@ -705,7 +475,7 @@ gatherd-music-stand off >/dev/null 2>&1 || true
 # writer racing this read the way there is after a completed pick.
 reset_picker ''
 assert_ok 'cancelling at level 1 exits cleanly' gatherd-music-stand on
-assert_fail 'cancelling left tablet mode off' gatherd-tablet-mode status
+assert_fail 'cancelling left tablet mode off' minibook-tablet-mode status
 assert_out 'cancelling opened nothing' '' cat "$VIEWER_LOG"
 
 # Back at level 2 returns to level 1 rather than opening a score.
@@ -733,7 +503,7 @@ reset_log
 reset_picker "$cancel" 'Medtner' 'Two Skazki'
 assert_ok 'cancel at level 1 exits cleanly' gatherd-music-stand on
 assert_out 'cancel at level 1 opened nothing' '' cat "$VIEWER_LOG"
-assert_fail 'cancel at level 1 left tablet mode off' gatherd-tablet-mode status
+assert_fail 'cancel at level 1 left tablet mode off' minibook-tablet-mode status
 assert_out 'cancel at level 1 touched no sway state' '' cat "$WORK/swaymsg.log"
 assert_out 'cancel at level 1 did not update the MRU' "$_mru_before_cancel1" \
     cat "$XDG_STATE_HOME/gatherd/music-stand-scores"
@@ -748,7 +518,7 @@ reset_log
 reset_picker 'Medtner' "$cancel"
 assert_ok 'cancel at level 2 exits cleanly' gatherd-music-stand on
 assert_out 'cancel at level 2 opened nothing' '' cat "$VIEWER_LOG"
-assert_fail 'cancel at level 2 left tablet mode off' gatherd-tablet-mode status
+assert_fail 'cancel at level 2 left tablet mode off' minibook-tablet-mode status
 assert_out 'cancel at level 2 touched no sway state' '' cat "$WORK/swaymsg.log"
 assert_out 'cancel at level 2 did not update the MRU' "$_mru_before_cancel2" \
     cat "$XDG_STATE_HOME/gatherd/music-stand-scores"
@@ -780,7 +550,7 @@ if gatherd-music-stand on 2>"$WORK/no-viewer.err"; then
 else
     ok 'a missing viewer does not report success'
 fi
-assert_fail 'a missing viewer does not enter tablet mode' gatherd-tablet-mode status
+assert_fail 'a missing viewer does not enter tablet mode' minibook-tablet-mode status
 if [ -s "$WORK/no-viewer.err" ]; then
     ok 'a missing viewer warns on stderr'
 else
@@ -828,14 +598,14 @@ assert_out 'a live MRU row still leads level 1' 'Bach' \
 # indexing (the index has not been refreshed yet). Picking it must not enter
 # tablet mode: doing so first would strand the human folded over the keyboard
 # with it disabled, facing a blank screen with no clue why.
-assert_fail 'tablet mode is inactive before the deleted-file pick' gatherd-tablet-mode status
+assert_fail 'tablet mode is inactive before the deleted-file pick' minibook-tablet-mode status
 reset_picker 'Bach' 'Present Work'
 if gatherd-music-stand on 2>"$WORK/deleted-file.err"; then
     bad 'picking a since-deleted file does not report success'
 else
     ok 'picking a since-deleted file does not report success'
 fi
-assert_fail 'picking a since-deleted file did not enter tablet mode' gatherd-tablet-mode status
+assert_fail 'picking a since-deleted file did not enter tablet mode' minibook-tablet-mode status
 if [ -s "$WORK/deleted-file.err" ]; then
     ok 'picking a since-deleted file warns on stderr'
 else
@@ -895,9 +665,9 @@ fi
 gatherd-music-stand off >/dev/null 2>&1 || true
 
 printf 'transform=180\nmenu_font=JetBrainsMono-Regular:size=22\n' \
-    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+    > "$XDG_CONFIG_HOME/minibook-tablet-mode/config"
 
-gatherd-tablet-mode off >/dev/null 2>&1 || true
+minibook-tablet-mode off >/dev/null 2>&1 || true
 reset_picker 'Medtner' 'Two Skazki'
 assert_ok 'music-stand on succeeds with tablet mode inactive' gatherd-music-stand on
 if grep -q -- '--font' "$WORK/fuzzel.args.log"; then
@@ -907,7 +677,7 @@ else
 fi
 gatherd-music-stand off >/dev/null 2>&1 || true
 
-gatherd-tablet-mode on >/dev/null 2>&1
+minibook-tablet-mode on >/dev/null 2>&1
 reset_picker 'Medtner' 'Two Skazki'
 assert_ok 'music-stand on succeeds with tablet mode active' gatherd-music-stand on
 if grep -q -- '--font JetBrainsMono-Regular:size=22' "$WORK/fuzzel.args.log"; then
@@ -916,1212 +686,8 @@ else
     bad 'pick passes --font through to fuzzel when tablet mode is active'
 fi
 gatherd-music-stand off >/dev/null 2>&1 || true
-printf 'transform=180\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+printf 'transform=180\n' > "$XDG_CONFIG_HOME/minibook-tablet-mode/config"
 
-# ── entering confirms the keyboard is really silenced ────────────────────────
-# `for _id in $(builtin_keyboards)` runs zero times when the query returns
-# nothing, and $() swallows the failure, so turn_on could rotate the screen and
-# leave the keyboard live while looking entirely successful. A machine folded
-# onto its own keys then types into whatever is focused - which is how a folded
-# fuzzel menu came up with its prompt and every entry filtered away.
-
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-touch "$WORK/fail-get-inputs"
-: > "$WORK/tm-warn.err"
-gatherd-tablet-mode on 2>"$WORK/tm-warn.err" >/dev/null || true
-if [ -s "$WORK/tm-warn.err" ]; then
-    ok 'entering warns when it cannot confirm the keyboard is disabled'
-else
-    bad 'entering warns when it cannot confirm the keyboard is disabled'
-fi
-if grep -q 'could not confirm' "$WORK/tm-warn.err"; then
-    ok 'the warning says what is actually wrong'
-else
-    bad 'the warning says what is actually wrong'
-fi
-assert_ok 'the warning is also recorded where it can be read later' \
-    test -s "$XDG_STATE_HOME/gatherd/tablet-mode.log"
-# Non-fatal by design: an unreadable folded screen is worse than a live
-# keyboard the human has been warned about.
-assert_ok 'entering still succeeds despite the warning' gatherd-tablet-mode status
-rm -f "$WORK/fail-get-inputs"
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# The healthy path must not warn, or the warning is noise nobody reads.
-: > "$WORK/tm-warn.err"
-gatherd-tablet-mode on 2>"$WORK/tm-warn.err" >/dev/null
-assert_out 'entering normally warns about nothing' '' cat "$WORK/tm-warn.err"
-if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1:1:AT_Translated_Set_2_keyboard")
-                                       | .libinput.send_events == "disabled"' >/dev/null; then
-    ok 'entering really does disable the built-in keyboard'
-else
-    bad 'entering really does disable the built-in keyboard'
-fi
-# The pedal is the whole reason the disable side cannot just sweep by type.
-if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1234:5678:AirTurn_PEDpro")
-                                       | .libinput.send_events == "enabled"' >/dev/null; then
-    ok 'entering leaves the page-turner pedal alone'
-else
-    bad 'entering leaves the page-turner pedal alone'
-fi
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# ── the score fills the screen while folded ──────────────────────────────────
-# papers got this free from presentation mode, which is inherently fullscreen.
-# koreader opens as an ordinary window, and in the normal flow the score is
-# opened BEFORE the fold, so nothing at launch time can arrange it: entering
-# tablet mode has to fullscreen whatever is already there, and leaving has to
-# give it back.
-
-printf 'transform=180\nviewer_app_id=luajit\n' \
-    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-reset_log
-assert_ok 'on succeeds with a viewer app_id configured' gatherd-tablet-mode on
-if log_has '[app_id="luajit"] fullscreen enable'; then
-    ok 'entering tablet mode fullscreens the viewer'
-else
-    bad 'entering tablet mode fullscreens the viewer'
-fi
-reset_log
-assert_ok 'off succeeds with a viewer app_id configured' gatherd-tablet-mode off
-if log_has '[app_id="luajit"] fullscreen disable'; then
-    ok 'leaving tablet mode gives the viewer its window back'
-else
-    bad 'leaving tablet mode gives the viewer its window back'
-fi
-
-# Input safety outranks cosmetics: the fullscreen call must come AFTER the
-# keyboard is handed back, so a compositor that refuses it cannot strand
-# anyone.
-_input_line=$(log_line 'input type:keyboard events enabled')
-_fs_line=$(log_line 'fullscreen disable')
-if [ -n "$_input_line" ] && [ -n "$_fs_line" ] && [ "$_input_line" -lt "$_fs_line" ]; then
-    ok 'off re-enables input before touching the viewer window'
-else
-    bad 'off re-enables input before touching the viewer window'
-fi
-
-# No app_id configured (any viewer whose window we cannot name) issues nothing
-# rather than a malformed criteria match.
-printf 'transform=180\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-reset_log
-assert_ok 'on succeeds with no viewer app_id' gatherd-tablet-mode on
-if log_has 'fullscreen'; then
-    bad 'no configured app_id means no fullscreen call at all'
-else
-    ok 'no configured app_id means no fullscreen call at all'
-fi
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# ── a score opened while ALREADY folded still fills the screen ───────────────
-# "Pick another score" from the folded menu launches a viewer into a tablet
-# mode that has been on for some time, so turn_on's fullscreen ran long before
-# this window existed. The launching script cannot do it inline either - it
-# returns as soon as the process is spawned, well before the window maps - so
-# there is a separate verb that waits for the window and then fullscreens it.
-
-printf 'transform=180\nviewer_app_id=luajit\n' \
-    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-reset_log
-assert_ok 'fullscreen-viewer is a no-op when not in tablet mode' \
-    gatherd-tablet-mode fullscreen-viewer
-if log_has 'fullscreen'; then
-    bad 'an unfolded machine leaves the score as an ordinary window'
-else
-    ok 'an unfolded machine leaves the score as an ordinary window'
-fi
-
-gatherd-tablet-mode on >/dev/null 2>&1
-reset_log
-assert_ok 'fullscreen-viewer succeeds while folded' gatherd-tablet-mode fullscreen-viewer
-if log_has '[app_id="luajit"] fullscreen enable'; then
-    ok 'a score opened while already folded is fullscreened'
-else
-    bad 'a score opened while already folded is fullscreened'
-fi
-
-# A viewer that never appears must not hang the caller or fail. The fixture
-# has no window with this app_id, so the wait runs out.
-printf 'transform=180\nviewer_app_id=no-such-viewer-window\n' \
-    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-reset_log
-assert_ok 'a viewer window that never appears is not an error' \
-    gatherd-tablet-mode fullscreen-viewer
-if log_has 'fullscreen'; then
-    bad 'no window means no fullscreen call'
-else
-    ok 'no window means no fullscreen call'
-fi
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# ── gatherd-compositor: the one file that knows sway exists ──────────────────
-# Everything else asks for what it wants and never says how, so that porting to
-# another compositor is one reimplementation rather than a hunt through four
-# scripts and a Python daemon. These assert the boundary holds, because a
-# single stray swaymsg elsewhere quietly undoes the whole point.
-
-for _script in gatherd-tablet-mode gatherd-power-button gatherd-music-stand \
-               gatherd-music-index gatherd-hinge-daemon; do
-    if grep -q 'swaymsg' "$REPO/scripts/$_script"; then
-        bad "$_script reaches the compositor only through gatherd-compositor"
-    else
-        ok "$_script reaches the compositor only through gatherd-compositor"
-    fi
-done
-
-assert_out 'the adapter finds the internal output' 'DSI-1' \
-    gatherd-compositor internal-output
-assert_out 'the adapter reads an output transform' '90' \
-    sh -c 'printf 90 > "$WORK/transform"; gatherd-compositor output-transform DSI-1'
-assert_ok 'a transform the compositor accepts is reported valid' \
-    gatherd-compositor valid-transform 270
-assert_fail 'a transform it would reject is reported invalid' \
-    gatherd-compositor valid-transform sideways
-assert_fail 'the literal string null is not a valid transform' \
-    gatherd-compositor valid-transform null
-assert_ok 'a window that exists is found' gatherd-compositor window-present luajit
-assert_fail 'a window that does not exist is not found' \
-    gatherd-compositor window-present no-such-app
-assert_fail 'an unknown verb is refused' gatherd-compositor no-such-verb
-assert_fail 'a verb given the wrong number of arguments is refused' \
-    gatherd-compositor set-transform DSI-1
-
-# Reads must be survivable when the compositor is not answering: callers are
-# midway through disabling somebody's keyboard.
-touch "$WORK/compositor-down"
-assert_out 'internal-output prints nothing when the compositor is unreachable' '' \
-    gatherd-compositor internal-output
-assert_ok 'silencing input is not an error when the compositor is unreachable' \
-    gatherd-compositor silence-builtin-input
-assert_ok 'restoring input is not an error when the compositor is unreachable' \
-    gatherd-compositor restore-all-input
-assert_fail 'an unreachable compositor reports no window present' \
-    gatherd-compositor window-present luajit
-rm -f "$WORK/compositor-down"
-
-# ── gatherd-power-button ──────────────────────────────────────────────────────
-
-mkdir -p "$WORK/home/.config/sway/scripts"
-HOME="$WORK/home"
-export HOME
-cat > "$HOME/.config/sway/scripts/power_menu.sh" <<EOF
-#!/bin/sh
-printf 'power_menu\n' >> '$WORK/powermenu.log'
-EOF
-chmod +x "$HOME/.config/sway/scripts/power_menu.sh"
-
-: > "$WORK/powermenu.log"
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-reset_picker ''
-assert_ok 'power button works in laptop mode' gatherd-power-button
-assert_out 'laptop mode goes straight to the power menu' 'power_menu' \
-    cat "$WORK/powermenu.log"
-assert_out 'laptop mode shows no tablet menu' '' cat "$WORK/fuzzel.in"
-
-# Folded, the button offers a touch menu instead of the stock power menu -
-# and that menu contains no exit at all. Folding is what starts tablet mode
-# and unfolding is what ends it, so there is nothing here to toggle: an "exit"
-# entry could only mean "undo the fold you are still holding", which the
-# daemon corrects within a poll and which hands back a keyboard lying
-# face-down on the stand.
-gatherd-tablet-mode on >/dev/null 2>&1
-: > "$WORK/powermenu.log"
-reset_picker 'Close score'
-assert_ok 'power button works in tablet mode' gatherd-power-button
-assert_ok 'the folded menu leaves tablet mode running' gatherd-tablet-mode status
-assert_out 'tablet mode did not open the power menu' '' cat "$WORK/powermenu.log"
-if grep -qi 'exit' "$WORK/fuzzel.in"; then
-    bad 'the folded menu offers no exit entry at all'
-else
-    ok 'the folded menu offers no exit entry at all'
-fi
-if grep -q 'Close score' "$WORK/fuzzel.in"; then
-    ok 'the folded menu offers Close score'
-else
-    bad 'the folded menu offers Close score'
-fi
-
-# Pick another score must reopen the composer/score picker without ever
-# leaving tablet mode: found in real use at the piano, where there was no
-# touch-reachable way to switch scores while folded.
-gatherd-tablet-mode on >/dev/null 2>&1
-: > "$WORK/powermenu.log"
-reset_picker 'Pick another score' 'Medtner' 'Two Skazki'
-assert_ok 'power button offers pick another score' gatherd-power-button
-assert_out 'pick another score opened the newly chosen viewer' \
-    "$SCORES/2 Skazki, Op. 48.pdf" viewer_log
-assert_ok 'pick another score never left tablet mode' gatherd-tablet-mode status
-assert_out 'pick another score did not open the power menu' '' cat "$WORK/powermenu.log"
-
-# The folded menu offers no way to power off. It is reached by touch with the
-# keyboard disabled, so an irreversible action sitting one mis-tap from `Exit
-# tablet mode` is a hazard, not a convenience; unfolding reaches the stock
-# power menu with a working keyboard.
-gatherd-tablet-mode on >/dev/null 2>&1
-: > "$WORK/powermenu.log"
-reset_picker 'Power…'
-assert_ok 'power button survives a selection it no longer offers' gatherd-power-button
-assert_out 'the folded menu never reaches the power menu' '' cat "$WORK/powermenu.log"
-if grep -qi 'power' "$WORK/fuzzel.in"; then
-    bad 'the folded menu offers no power entry at all'
-else
-    ok 'the folded menu offers no power entry at all'
-fi
-assert_ok 'an unoffered selection leaves tablet mode untouched' gatherd-tablet-mode status
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# ── auto-rotation is a preference; tablet mode is not ────────────────────────
-# The one thing in the folded menu that IS a setting. Tablet mode is the fold
-# and cannot be chosen; whether the display follows the tablet in the hands is
-# a matter of taste, and gets a toggle.
-
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-gatherd-tablet-mode rotation-on
-assert_ok 'auto-rotation is on by default' gatherd-tablet-mode rotation-status
-assert_ok 'rotation-toggle succeeds' gatherd-tablet-mode rotation-toggle
-assert_fail 'toggling once turns auto-rotation off' gatherd-tablet-mode rotation-status
-assert_ok 'toggling again succeeds' gatherd-tablet-mode rotation-toggle
-assert_ok 'toggling twice returns to on' gatherd-tablet-mode rotation-status
-assert_ok 'rotation-off is idempotent' gatherd-tablet-mode rotation-off
-assert_ok 'rotation-off is still idempotent' gatherd-tablet-mode rotation-off
-assert_fail 'rotation stays off after repeated rotation-off' gatherd-tablet-mode rotation-status
-
-# The label states the current state rather than the action, so it reads like
-# a checkbox instead of an instruction that means the opposite.
-gatherd-tablet-mode on >/dev/null 2>&1
-reset_picker 'Cancel'
-assert_ok 'power button works with rotation off' gatherd-power-button
-if grep -q 'Auto-rotate: off' "$WORK/fuzzel.in"; then
-    ok 'the menu shows auto-rotation as off when it is off'
-else
-    bad 'the menu shows auto-rotation as off when it is off'
-fi
-gatherd-tablet-mode rotation-on
-reset_picker 'Auto-rotate: on'
-assert_ok 'power button toggles auto-rotation' gatherd-power-button
-if grep -q 'Auto-rotate: on' "$WORK/fuzzel.in"; then
-    ok 'the menu shows auto-rotation as on when it is on'
-else
-    bad 'the menu shows auto-rotation as on when it is on'
-fi
-assert_fail 'tapping the entry turned auto-rotation off' gatherd-tablet-mode rotation-status
-assert_ok 'toggling auto-rotation never leaves tablet mode' gatherd-tablet-mode status
-gatherd-tablet-mode rotation-on
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# ── the lockout: state file gone, input still disabled ───────────────────────
-# The failure this whole section exists to prevent, reproduced from the real
-# incident. Tablet mode was somehow off on paper while the built-in keyboard
-# was still disabled in fact. The power button trusted the paper, showed the
-# stock power menu (every entry of which assumes a working keyboard), and
-# `off` — which returned early when the state file was missing — could not
-# undo anything. There was no way out of the machine short of a hard reboot.
-
-gatherd-tablet-mode on >/dev/null 2>&1
-rm -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
-assert_fail 'the desync case really does look inactive on paper' \
-    gatherd-tablet-mode status
-if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1:1:AT_Translated_Set_2_keyboard")
-                                       | .libinput.send_events == "disabled"' >/dev/null; then
-    ok 'the desync case really does leave the built-in keyboard disabled'
-else
-    bad 'the desync case really does leave the built-in keyboard disabled'
-fi
-
-: > "$WORK/powermenu.log"
-reset_picker 'Exit tablet mode'
-assert_ok 'power button works with the state file gone' gatherd-power-button
-assert_out 'a disabled keyboard still gets the tablet escape menu, not the stock one' \
-    '' cat "$WORK/powermenu.log"
-if grep -q 'Pick another score' "$WORK/fuzzel.in"; then
-    ok 'the folded menu is still usable with no state file'
-else
-    bad 'the folded menu is still usable with no state file'
-fi
-# Recovery from the desync itself belongs to the daemon, not to this menu:
-# folded with tablet mode inactive is precisely the "enter" decision, so the
-# next poll re-asserts the whole state. What the menu must not do is hand a
-# folded human the stock power menu, whose every entry assumes a keyboard.
-assert_out 'a disabled keyboard never reaches the stock power menu' \
-    '' cat "$WORK/powermenu.log"
-
-# `off` is a recovery command, not a state transition: it must repair a
-# session it has no record of ever starting. This is the assertion that the
-# old `if ! is_on; then return 0; fi` early return failed.
-swaymsg input 1:1:AT_Translated_Set_2_keyboard events disabled >/dev/null
-swaymsg input type:touchpad events disabled >/dev/null
-rm -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
-reset_log
-assert_ok 'off succeeds with no state file at all' gatherd-tablet-mode off
-if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1:1:AT_Translated_Set_2_keyboard")
-                                       | .libinput.send_events == "enabled"' >/dev/null; then
-    ok 'off re-enables the keyboard even with no state file'
-else
-    bad 'off re-enables the keyboard even with no state file'
-fi
-if swaymsg -t get_inputs | jq -e '[.[] | select(.type == "touchpad")
-                                       | .libinput.send_events] | all(. == "enabled")' >/dev/null; then
-    ok 'off re-enables the touchpad even with no state file'
-else
-    bad 'off re-enables the touchpad even with no state file'
-fi
-# Nothing was recorded, so there is no resting transform to restore - and
-# guessing one would be worse than leaving the display alone (on this
-# hardware "normal" is portrait, so a guess rotates a correct screen wrong).
-if log_has 'output DSI-1 transform'; then
-    bad 'off with no state file leaves the display alone rather than guessing'
-else
-    ok 'off with no state file leaves the display alone rather than guessing'
-fi
-
-# An external keyboard must survive the sweep-by-type re-enable in the sense
-# that matters: it is never left disabled. (The pedal is only ever disabled by
-# a test, never by tablet mode - the i8042 heuristic is what protects it.)
-if swaymsg -t get_inputs | jq -e '.[] | select(.identifier == "1234:5678:AirTurn_PEDpro")
-                                       | .libinput.send_events == "enabled"' >/dev/null; then
-    ok 'the page-turner pedal is enabled after a recovery off'
-else
-    bad 'the page-turner pedal is enabled after a recovery off'
-fi
-
-# ── the folded menu records what it showed and what came back ────────────────
-# Three explanations for a menu that came up with its prompt and no entries
-# were argued from first principles and then falsified by measurement. This is
-# the evidence that should have existed the first time.
-
-HINGE_PB_LOG="$XDG_STATE_HOME/gatherd/power-button.log"
-gatherd-tablet-mode on >/dev/null 2>&1
-rm -f "$HINGE_PB_LOG"
-reset_picker 'Cancel'
-assert_ok 'power button works with logging on' gatherd-power-button
-if grep -q 'open entries=4' "$HINGE_PB_LOG" 2>/dev/null; then
-    ok 'the number of entries handed to fuzzel is recorded'
-else
-    bad 'the number of entries handed to fuzzel is recorded'
-fi
-if grep -q 'kbd=\[' "$HINGE_PB_LOG" 2>/dev/null; then
-    ok 'the built-in keyboard state at menu time is recorded'
-else
-    bad 'the built-in keyboard state at menu time is recorded'
-fi
-if grep -q 'fuzzel_already_running=' "$HINGE_PB_LOG" 2>/dev/null; then
-    ok 'a fuzzel already holding the single-instance lock would be recorded'
-else
-    bad 'a fuzzel already holding the single-instance lock would be recorded'
-fi
-if grep -q 'close rc=0 selection=\[.*Cancel' "$HINGE_PB_LOG" 2>/dev/null; then
-    ok 'the selection that came back is recorded'
-else
-    bad 'the selection that came back is recorded'
-fi
-
-# The outcome most worth recording is the one where fuzzel gives nothing back.
-# `selection=$(...)` followed by `_rc=$?` would abort under `set -e` before
-# reaching the log, so this is the assertion that keeps the `if` form honest.
-rm -f "$HINGE_PB_LOG"
-touch "$WORK/fuzzel-fail"
-reset_picker ''
-assert_ok 'the power button survives fuzzel exiting non-zero' gatherd-power-button
-if grep -q 'close rc=1' "$HINGE_PB_LOG" 2>/dev/null; then
-    ok 'a fuzzel that returns nothing is still recorded'
-else
-    bad 'a fuzzel that returns nothing is still recorded'
-fi
-rm -f "$WORK/fuzzel-fail"
-assert_ok 'a failed menu changes nothing' gatherd-tablet-mode status
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# ── gatherd-power-button: cancel escape ───────────────────────────────────────
-# The tablet escape menu is the only control reachable once folded, so it must
-# offer a way out that changes nothing — not even a rotation-restoring "exit
-# tablet mode".
-
-gatherd-tablet-mode on >/dev/null 2>&1
-: > "$WORK/powermenu.log"
-reset_log
-reset_picker "$cancel"
-assert_ok 'power button offers cancel' gatherd-power-button
-assert_ok 'cancelling the escape menu left tablet mode on' gatherd-tablet-mode status
-assert_out 'cancelling the escape menu did not open the power menu' '' cat "$WORK/powermenu.log"
-assert_out 'cancelling the escape menu opened nothing' '' cat "$VIEWER_LOG"
-assert_out 'cancelling the escape menu touched no sway state' '' cat "$WORK/swaymsg.log"
-if grep -qF "$cancel" "$WORK/fuzzel.in"; then
-    ok 'tablet escape menu offers a cancel entry'
-else
-    bad 'tablet escape menu offers a cancel entry'
-fi
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# ── gatherd-power-button: touch target font ───────────────────────────────────
-# The escape menu is the only control reachable while folded, so it must be
-# tappable too. Confirmed comfortable at size 22 (foot_font_size=10) by hand
-# at the machine; see menu_font's derivation in tablet-mode.conf.j2.
-
-gatherd-tablet-mode on >/dev/null 2>&1
-reset_picker 'Power…'
-assert_ok 'power button escape menu works with no menu_font configured' gatherd-power-button
-if grep -q -- '--font' "$WORK/fuzzel.args.log"; then
-    bad 'power button escape menu omits --font when menu_font is unset'
-else
-    ok 'power button escape menu omits --font when menu_font is unset'
-fi
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-printf 'transform=180\nmenu_font=JetBrainsMono-Regular:size=22\n' \
-    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-gatherd-tablet-mode on >/dev/null 2>&1
-reset_picker 'Power…'
-assert_ok 'power button escape menu works with menu_font configured' gatherd-power-button
-if grep -q -- '--font JetBrainsMono-Regular:size=22' "$WORK/fuzzel.args.log"; then
-    ok 'power button passes --font through to fuzzel when menu_font is configured'
-else
-    bad 'power button passes --font through to fuzzel when menu_font is configured'
-fi
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-printf 'transform=180\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-
-# ── gatherd-hinge-daemon ──────────────────────────────────────────────────────
-# Fakes gatherd-tablet-mode itself (rather than reusing the real script's
-# swaymsg fake) so these tests exercise only the daemon's decision logic —
-# geometry, the lid gate, hysteresis, the degenerate pose, and exiting —
-# without also depending on the compositor plumbing already covered above.
-
-# fake_bin NAME BODY — install a fake executable that shadows the real one.
-# Matches tests/icloud's helper; tests/tablet-mode had not needed it until now.
-fake_bin() {
-    printf '#!/bin/sh\n%s\n' "$2" > "$FAKEBIN/$1"
-    chmod +x "$FAKEBIN/$1"
-}
-
-# The REAL path gatherd-tablet-mode uses, not a private one: the daemon now
-# reads this file directly instead of shelling out to `gatherd-tablet-mode
-# status` (20 fork+execs a second, measured at 2.1% of a core). A fake keeping
-# its state somewhere else would no longer be a fake of anything.
-FAKETM_STATE="$XDG_RUNTIME_DIR/gatherd/tablet-mode"
-FAKETM_LOG="$WORK/faketm.log"
-fake_bin gatherd-tablet-mode '
-printf "%s\n" "$*" >> "'"$FAKETM_LOG"'"
-case "$1" in
-    on)     mkdir -p "$(dirname "'"$FAKETM_STATE"'")"
-            touch "'"$FAKETM_STATE"'" ;;
-    off)    rm -f "'"$FAKETM_STATE"'" ;;
-    status) [ -f "'"$FAKETM_STATE"'" ] ;;
-    *)      exit 2 ;;
-esac
-'
-# Every earlier section in this suite already invoked the real
-# gatherd-tablet-mode directly (not through a subprocess), so bash has this
-# command name hashed to $REPO/scripts/gatherd-tablet-mode. Prepending FAKEBIN
-# to $PATH does not by itself invalidate that cache — only `hash -r` does —
-# so without this, every direct call below silently keeps hitting the real
-# script while only gatherd-hinge-daemon's own subprocess calls (a fresh
-# process, with its own PATH search) would see the fake.
-hash -r
-
-HINGE_LID="$WORK/hinge-lid"
-HINGE_BASE="$WORK/hinge-base"
-HINGE_LID_STATE="$WORK/hinge-lid-state"
-GATHERD_HINGE_LID_DEVICE="$HINGE_LID"
-GATHERD_HINGE_BASE_DEVICE="$HINGE_BASE"
-GATHERD_HINGE_LID_STATE="$HINGE_LID_STATE"
-export GATHERD_HINGE_LID_DEVICE GATHERD_HINGE_BASE_DEVICE GATHERD_HINGE_LID_STATE
-unset GATHERD_HINGE_ENTER GATHERD_HINGE_EXIT
-
-# write_vector DIR X Y Z — plants raw sysfs-style accelerometer counts.
-write_vector() {
-    mkdir -p "$1"
-    printf '%s\n' "$2" > "$1/in_accel_x_raw"
-    printf '%s\n' "$3" > "$1/in_accel_y_raw"
-    printf '%s\n' "$4" > "$1/in_accel_z_raw"
-}
-
-# write_lid_state open|closed — mimics /proc/acpi/button/lid/LID0/state's format.
-write_lid_state() {
-    printf 'state:      %s\n' "$1" > "$HINGE_LID_STATE"
-}
-
-# Every fixture below shares the same lid vector and varies only the base
-# vector's rotation about the hinge (y) axis, so each row isolates exactly
-# the signed-angle geometry under test. Raw counts precomputed offline from
-# the atan2 formula the script implements (theta itself, no further
-# transform); each was checked to round-trip to its target theta to within
-# 0.02 degrees before being baked in here, so a passing assertion means the
-# formula, not the fixture, is right. Lid defaults to open on every reset -
-# tests that care about the closed lid set it explicitly.
-reset_daemon_state() {
-    rm -f "$FAKETM_STATE"
-    : > "$FAKETM_LOG"
-    write_lid_state open
-}
-
-hinge_print() {
-    gatherd-hinge-daemon --print
-}
-
-# The acting half of the same cycle. --print deliberately cannot clear the
-# suppression latch (that would make a diagnostic change behaviour), so
-# testing that unfolding re-arms entry needs the path that actually acts.
-hinge_poll_once() {
-    python3 - "$REPO/scripts/gatherd-hinge-daemon" <<'POLLONCE'
-import collections, importlib.machinery, importlib.util, sys
-path = sys.argv[1]
-loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
-spec = importlib.util.spec_from_loader("hinge_daemon", loader)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-mod.poll_once(collections.deque(maxlen=mod.window_size()), mod.RotationTracker())
-POLLONCE
-}
-
-# ── the measured poses ────────────────────────────────────────────────────────
-# theta is the hinge angle itself (atan2-wrapped to +-180), not "180 - theta":
-# typing reads ~108, flat reads ~178, a part-folded tent reads ~-92, and fully
-# folded reads ~-2. All four are exercised here so the corrected geometry, not
-# just the corrected threshold, is under test.
-
-reset_daemon_state
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -920 100 449
-assert_out 'a part-open tent reads theta near 154, well clear of the fold band' \
-    'theta=154.0 action=hold' hinge_print
-
-reset_daemon_state
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -317 100 976
-assert_out 'typing angle reads theta near 108 and does not enter' \
-    'theta=108.0 action=hold' hinge_print
-
-reset_daemon_state
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -1026 100 36
-assert_out 'flat reads theta near 178 and does not enter' \
-    'theta=178.0 action=hold' hinge_print
-
-reset_daemon_state
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -36 100 -1023
-assert_out 'a part-folded tent reads theta near 92 and does not enter' \
-    'theta=92.0 action=hold' hinge_print
-assert_fail 'the tent pose alone never turns tablet mode on' gatherd-tablet-mode status
-
-# ── the fully folded pose and the lid gate ───────────────────────────────────
-# theta near -2 is what a shut lid ALSO reads (atan2 wraps at +-180, not at
-# zero) - the lid switch is what tells the two apart. This is the fix itself.
-
-reset_daemon_state
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" 1023 100 -36
-assert_out 'folded (theta near -2) with the lid open reports the enter decision' \
-    'theta=2.0 action=enter' hinge_print
-# --print is diagnostic only: it must report the decision it would take and
-# then do nothing. This is the exact fixture that used to make --print
-# itself rotate the display and disable the keyboard. The log legitimately
-# holds a "status" call (decide()'s own read of the current state) - only
-# "on" would prove --print acted.
-if grep -qx on "$FAKETM_LOG"; then
-    bad '--print issues no gatherd-tablet-mode on/off command, even for a decision that would act'
-else
-    ok '--print issues no gatherd-tablet-mode on/off command, even for a decision that would act'
-fi
-assert_fail '--print alone never turns tablet mode on' gatherd-tablet-mode status
-
-reset_daemon_state
-write_lid_state closed
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" 1023 100 -36
-assert_out 'the same theta with the lid closed does not enter' \
-    'theta=2.0 action=hold' hinge_print
-assert_fail 'a closed lid never turns tablet mode on' gatherd-tablet-mode status
-
-reset_daemon_state
-rm -f "$HINGE_LID_STATE"
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" 1023 100 -36
-assert_out 'an unreadable lid file is treated as not open and does not enter' \
-    'theta=2.0 action=hold' hinge_print
-assert_fail 'an unreadable lid file never turns tablet mode on' gatherd-tablet-mode status
-
-# ── hysteresis: a theta between the thresholds changes nothing ──────────────
-# 40 sits between the default fold_exit (50) and fold_enter (30) thresholds.
-# Tested from both sides of the dead zone: falling from inactive must not
-# enter, and rising from an owned-active state must not exit either.
-
-reset_daemon_state
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" 784 100 658
-assert_out 'a mid-band theta does not enter from inactive' 'theta=40.0 action=hold' hinge_print
-assert_fail 'still inactive after a mid-band reading' gatherd-tablet-mode status
-
-reset_daemon_state
-mkdir -p "$XDG_RUNTIME_DIR/gatherd"
-gatherd-tablet-mode on >/dev/null 2>&1
-: > "$FAKETM_LOG"
-assert_out 'a mid-band theta does not exit from an active state' \
-    'theta=40.0 action=hold' hinge_print
-assert_ok 'still active after a mid-band reading' gatherd-tablet-mode status
-# The log legitimately holds "status" calls (the daemon's own state check,
-# plus this test's direct one above) — only "off" would prove the bug.
-if grep -qx off "$FAKETM_LOG"; then
-    bad 'no off call was logged for the mid-band reading'
-else
-    ok 'no off call was logged for the mid-band reading'
-fi
-
-# ── adaptive rate: sample slowly while nothing moves ─────────────────────────
-# Measured cost before this existed: 2.36% of a core and 115 i2c interrupts a
-# second, forever, on a fanless machine whose accelerometers are usually
-# reporting the same numbers they reported a second ago.
-
-hinge_eval() {
-    python3 - "$REPO/scripts/gatherd-hinge-daemon" "$@" <<'HINGEEVAL'
-import importlib.machinery, importlib.util, sys
-loader = importlib.machinery.SourceFileLoader("hd", sys.argv[1])
-spec = importlib.util.spec_from_loader("hd", loader)
-mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-print(eval(sys.argv[2], {"mod": mod}))
-HINGEEVAL
-}
-
-assert_out 'a still machine sleeps for the idle interval' '0.5' \
-    hinge_eval 'mod.next_delay(False, 100.0, 0.0)[0]'
-assert_out 'detected motion drops straight to the fast interval' '0.1' \
-    hinge_eval 'mod.next_delay(True, 100.0, 0.0)[0]'
-assert_out 'motion holds the fast rate for motion_hold_seconds afterwards' '0.1' \
-    hinge_eval 'mod.next_delay(False, 101.0, 103.0)[0]'
-assert_out 'once the hold expires the rate returns to idle' '0.5' \
-    hinge_eval 'mod.next_delay(False, 104.0, 103.0)[0]'
-assert_out 'motion while already fast extends the hold rather than resetting it' '106.0' \
-    hinge_eval 'mod.next_delay(True, 103.0, 104.0)[1]'
-
-# The thresholds have to sit above the measured noise floor, or the machine
-# never sleeps - the same mistake that made three earlier thresholds in this
-# project silently capture nothing.
-assert_out 'the theta motion threshold clears the measured 7.77-degree noise ceiling' 'True' \
-    hinge_eval 'mod.motion_theta_deg() > 7.77 * 2'
-assert_out 'the rotation motion threshold clears the measured 0.65-degree ceiling' 'True' \
-    hinge_eval 'mod.motion_rotation_deg() > 0.65 * 2'
-# ...and below what real motion produces, or it never wakes up.
-assert_out 'a fold-sized theta swing counts as motion' 'True' \
-    hinge_eval 'mod.motion_theta_deg() < 100'
-assert_out 'a quarter-turn counts as motion' 'True' \
-    hinge_eval 'mod.motion_rotation_deg() < 90'
-assert_out 'idle sampling is genuinely slower than active sampling' 'True' \
-    hinge_eval 'mod.idle_poll_interval() > mod.poll_interval()'
-
-# An unknown pose must NOT nap: with no full window there is no median to
-# compare against, so nothing can be ruled still.
-reset_daemon_state
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -317 100 976
-assert_out 'a cold start with no baseline yet reports motion, staying fast' 'True' \
-    hinge_eval 'mod.sample(__import__("collections").deque(maxlen=mod.window_size()), mod.RotationTracker())[1]'
-
-# Threshold values being sensible is not the same as detection working. Settle
-# a baseline, then move the hinge and confirm it is noticed on the very first
-# sample - and that resting noise on the same baseline is not.
-hinge_motion_probe() {
-    python3 - "$REPO/scripts/gatherd-hinge-daemon" "$1" "$2" <<'MOTIONPROBE'
-import collections, importlib.machinery, importlib.util, sys
-loader = importlib.machinery.SourceFileLoader("hd", sys.argv[1])
-spec = importlib.util.spec_from_loader("hd", loader)
-mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-
-lid_path, base_path = sys.argv[2], sys.argv[3]
-def write(path, x, y, z):
-    for axis, val in zip("xyz", (x, y, z)):
-        open(f"{path}/in_accel_{axis}_raw", "w").write(f"{int(val)}\n")
-
-history = collections.deque(maxlen=mod.window_size())
-tracker = mod.RotationTracker()
-# Settle: a typing angle, held still, until both windows are full.
-for _ in range(mod.window_size() + 2):
-    write(lid_path, 1024, 100, 0); write(base_path, -317, 100, 976)
-    mod.sample(history, tracker)
-# Resting jitter, well inside the measured noise floor.
-write(lid_path, 1022, 101, 3); write(base_path, -319, 99, 974)
-print("jitter", mod.sample(history, tracker)[1])
-# A fold: theta swings ~100 degrees.
-write(lid_path, 1024, 100, 0); write(base_path, 1024, 100, -36)
-print("fold", mod.sample(history, tracker)[1])
-MOTIONPROBE
-}
-
-reset_daemon_state
-MOTION_PROBE=$(hinge_motion_probe "$HINGE_LID" "$HINGE_BASE")
-if [ "$MOTION_PROBE" = "$(printf 'jitter False\nfold True')" ]; then
-    ok 'resting jitter is not motion, but folding is - on the first sample'
-else
-    bad "resting jitter is not motion, but folding is (got [$MOTION_PROBE])"
-fi
-
-# ── every mode change the daemon makes leaves a trace ────────────────────────
-# This daemon disables the human's keyboard and rotates their display without
-# being asked. When that went wrong in real use there was nothing to read
-# afterwards, so the cause of an actual lockout could not be established at
-# all. Logging is therefore part of the contract, not a debugging aid.
-
-hinge_act() {
-    python3 - "$REPO/scripts/gatherd-hinge-daemon" "$1" "$2" <<'HINGEACT'
-import importlib.machinery, importlib.util, sys
-path, action, theta = sys.argv[1], sys.argv[2], sys.argv[3]
-loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
-spec = importlib.util.spec_from_loader("hinge_daemon", loader)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-mod.act(action, None if theta == "none" else float(theta))
-HINGEACT
-}
-
-HINGE_LOG="$XDG_STATE_HOME/gatherd/hinge-daemon.log"
-
-reset_daemon_state
-rm -f "$HINGE_LOG"
-hinge_act enter 12.5
-if grep -q 'enter theta=12.5' "$HINGE_LOG" 2>/dev/null; then
-    ok 'entering tablet mode is logged with the theta that caused it'
-else
-    bad 'entering tablet mode is logged with the theta that caused it'
-fi
-
-hinge_act exit 72.0
-if grep -q 'exit theta=72.0' "$HINGE_LOG" 2>/dev/null; then
-    ok 'exiting tablet mode is logged with the theta that caused it'
-else
-    bad 'exiting tablet mode is logged with the theta that caused it'
-fi
-assert_out 'both mode changes are kept, not overwritten' '2' \
-    sh -c 'grep -c . "$XDG_STATE_HOME/gatherd/hinge-daemon.log"'
-
-# "hold" is the overwhelmingly common outcome (ten times a second, forever).
-# Logging it would bury the two lines that matter in a hundred thousand.
-hinge_act hold 40.0
-assert_out 'a hold is not logged' '2' \
-    sh -c 'grep -c . "$XDG_STATE_HOME/gatherd/hinge-daemon.log"'
-
-# An unwritable log must never stop the daemon acting - least of all stop the
-# exit that hands the keyboard back.
-rm -f "$HINGE_LOG"
-mkdir -p "$HINGE_LOG"
-assert_ok 'an unwritable log does not stop the daemon exiting tablet mode' \
-    hinge_act exit 72.0
-rmdir "$HINGE_LOG"
-
-# ── the degenerate pose: hinge axis parallel to gravity ──────────────────────
-# Reading a score in portrait — x and z near zero on both sensors — carries
-# no signal about the fold; the daemon must make no decision at all, not just
-# a conservative one, and must not even touch gatherd-tablet-mode.
-
-reset_daemon_state
-write_vector "$HINGE_LID" 0 1024 0
-write_vector "$HINGE_BASE" 0 1024 0
-assert_out 'the degenerate pose reports no theta and no decision' \
-    'theta=degenerate action=hold' hinge_print
-assert_out 'the degenerate pose never calls gatherd-tablet-mode at all' '' cat "$FAKETM_LOG"
-
-# ── unfolding always exits, however tablet mode was entered ──────────────────
-# This replaces an ownership rule that let the daemon exit ONLY sessions it
-# had entered itself. That rule turned unfolding into a no-op for any other
-# session, leaving the edge power button as the single escape from a machine
-# with no keyboard — and when that button showed the wrong menu, there was no
-# way out at all short of a hard reboot. Unfolding is physical, obvious and
-# always available; it must always work.
-
-reset_daemon_state
-mkdir -p "$XDG_RUNTIME_DIR/gatherd"
-gatherd-tablet-mode on >/dev/null 2>&1
-# Deliberately NOT entered by the daemon: nothing records who started this.
-: > "$FAKETM_LOG"
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -317 100 976
-assert_out 'unfolding to a typing angle exits a session the daemon did not start' \
-    'theta=108.0 action=exit' hinge_print
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# ── thresholds are overridable ───────────────────────────────────────────────
-# Required by spec: enter/exit must be tunable via environment variables
-# without editing code. Raising GATHERD_HINGE_ENTER above the tent pose's
-# theta proves the override is actually read, not just accepted and ignored.
-
-reset_daemon_state
-GATHERD_HINGE_ENTER=100
-export GATHERD_HINGE_ENTER
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -36 100 -1023
-assert_out 'a raised GATHERD_HINGE_ENTER makes the tent pose cross the threshold' \
-    'theta=92.0 action=enter' hinge_print
-unset GATHERD_HINGE_ENTER
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# ── thresholds are configurable via tablet-mode.conf ─────────────────────────
-# The daemon shares gatherd-tablet-mode's config file rather than inventing
-# its own. fold_enter_deg/fold_exit_deg must be read from it, an env var
-# override must still win over it, and a malformed file must not crash the
-# daemon - just fall back to the built-in defaults.
-
-reset_daemon_state
-printf 'transform=180\nfold_enter_deg=100\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -36 100 -1023
-assert_out 'a config-file fold_enter_deg makes the tent pose cross the threshold' \
-    'theta=92.0 action=enter' hinge_print
-
-reset_daemon_state
-GATHERD_HINGE_ENTER=10
-export GATHERD_HINGE_ENTER
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" -36 100 -1023
-assert_out 'GATHERD_HINGE_ENTER still overrides a config-file fold_enter_deg' \
-    'theta=92.0 action=hold' hinge_print
-unset GATHERD_HINGE_ENTER
-
-reset_daemon_state
-printf 'this is not a key=value config\nfold_enter_deg\n=200\n' \
-    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-write_vector "$HINGE_LID" 1024 100 0
-write_vector "$HINGE_BASE" 1023 100 -36
-assert_out 'a malformed config file falls back to the default enter threshold' \
-    'theta=2.0 action=enter' hinge_print
-
-rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# ── poll_interval and median_window are configurable via tablet-mode.conf ────
-# These are read exactly like fold_enter_deg/fold_exit_deg above (env
-# overrides config overrides built-in default, malformed input falls back
-# silently) - but neither is observable through --print's decision output,
-# so introspect the two accessor functions directly rather than through a
-# behavioral proxy.
-hinge_timing() {
-    python3 - "$REPO/scripts/gatherd-hinge-daemon" "$1" <<'PY'
-import importlib.machinery, importlib.util, sys
-path, which = sys.argv[1], sys.argv[2]
-loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
-spec = importlib.util.spec_from_loader("hinge_daemon", loader)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-print(mod.poll_interval() if which == "poll_interval" else mod.window_size())
-PY
-}
-
-reset_daemon_state
-printf 'transform=180\npoll_interval=0.25\nmedian_window=7\n' \
-    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-assert_out 'a config-file poll_interval is read' '0.25' hinge_timing poll_interval
-assert_out 'a config-file median_window is read' '7' hinge_timing window_size
-
-GATHERD_HINGE_POLL_INTERVAL=0.05
-GATHERD_HINGE_WINDOW=3
-export GATHERD_HINGE_POLL_INTERVAL GATHERD_HINGE_WINDOW
-assert_out 'GATHERD_HINGE_POLL_INTERVAL still overrides a config-file poll_interval' \
-    '0.05' hinge_timing poll_interval
-assert_out 'GATHERD_HINGE_WINDOW still overrides a config-file median_window' \
-    '3' hinge_timing window_size
-unset GATHERD_HINGE_POLL_INTERVAL GATHERD_HINGE_WINDOW
-
-rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-assert_out 'a missing config file falls back to the default poll_interval' \
-    '0.1' hinge_timing poll_interval
-assert_out 'a missing config file falls back to the default median_window' \
-    '5' hinge_timing window_size
-
-printf 'transform=180\npoll_interval=not-a-number\nmedian_window=not-a-number\n' \
-    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-assert_out 'a malformed poll_interval falls back to the default without crashing' \
-    '0.1' hinge_timing poll_interval
-assert_out 'a malformed median_window falls back to the default without crashing' \
-    '5' hinge_timing window_size
-
-rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-gatherd-tablet-mode off >/dev/null 2>&1 || true
-
-# ── auto-rotation ──────────────────────────────────────────────────────────
-# Follows the tablet in the human's hands while folded. Reuses the same lid
-# sensor already read for fold detection - no extra I2C - so the geometry,
-# hysteresis and flat-pose helpers below are exercised as pure functions via
-# the same importlib technique hinge_timing uses, rather than through
-# --print (a fresh process per call, unable to show hysteresis/persistence
-# across samples, and whose existing exact-string tests above must not gain
-# a rotation field).
-
-# rotation_probe: one ANGLE arg per sample, each an atan2(y,x) angle in
-# DEGREES - the same units the calibration table's middle column is in.
-# Prints the committed transform after each update() on a single tracker, so
-# several args can exercise persistence across samples. Samples are passed
-# as argv, not piped stdin: `python3 -` reads the SCRIPT itself from stdin
-# (that is what the heredoc below is), which consumes it entirely before
-# execution starts - a `for line in sys.stdin` inside the script would
-# always see EOF immediately.
-rotation_probe() {
-    python3 - "$REPO/scripts/gatherd-hinge-daemon" "$@" <<'PY'
-import importlib.machinery, importlib.util, math, sys
-path = sys.argv[1]
-loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
-spec = importlib.util.spec_from_loader("hinge_daemon", loader)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-tracker = mod.RotationTracker()
-for arg in sys.argv[2:]:
-    angle = math.radians(float(arg))
-    tracker.update((math.cos(angle), math.sin(angle), 0.0))
-    print(tracker.transform())
-PY
-}
-
-rotation_probe_one() { rotation_probe "$1"; }
-
-# rotation_probe_target: one ROTATION-degree value per arg (not atan2) - the
-# angle already run through rotation_deg()'s reference-angle subtraction.
-# Used for the pure hysteresis/persistence tests below, which care about
-# distance from a 45-degree boundary, not about the reference angle's exact
-# value. See rotation_probe's comment for why args, not piped stdin.
-rotation_probe_target() {
-    python3 - "$REPO/scripts/gatherd-hinge-daemon" "$@" <<'PY'
-import importlib.machinery, importlib.util, math, sys
-path = sys.argv[1]
-loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
-spec = importlib.util.spec_from_loader("hinge_daemon", loader)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-tracker = mod.RotationTracker()
-for arg in sys.argv[2:]:
-    target = float(arg)
-    angle = math.radians(mod.rotation_reference_deg() - target)
-    tracker.update((math.cos(angle), math.sin(angle), 0.0))
-    print(tracker.transform())
-PY
-}
-
-rotation_reference() {
-    python3 - "$REPO/scripts/gatherd-hinge-daemon" <<'PY'
-import importlib.machinery, importlib.util, sys
-path = sys.argv[1]
-loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
-spec = importlib.util.spec_from_loader("hinge_daemon", loader)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-print(mod.rotation_reference_deg())
-PY
-}
-
-# ── the measured captures (calibration table) ────────────────────────────────
-# Reference angle 267.0 - the atan2 reading in the PORTRAIT score-reading
-# pose, which is the pose that must map to transform `normal`. The four raw
-# captures below were all taken in the LANDSCAPE (open-laptop) orientation,
-# 90 degrees off portrait; calling capture 1 "the reading position" is what
-# put an earlier reference at 177.0 and every quadrant 90 degrees out.
-# Three of the four are directly measured; the remaining quadrant was never
-# captured (the human's sweep skipped one), so it is INFERRED from the linear
-# fit - included anyway because the mapping (rotation -> nearest-quadrant
-# transform) must still be right for it, and the daemon's own header should
-# say so, which is checked separately below.
-#
-# An open laptop rests in landscape, i.e. at transform 90 - which is exactly
-# what capture 1 yields here, and is the independent check that these labels
-# are now the right way round.
-
-assert_out 'the measured landscape/laptop pose (atan2=177.0) maps to transform 90' \
-    '90' rotation_probe_one 177.0
-assert_out 'the measured 180-turn (atan2=2.8) maps to transform 270' \
-    '270' rotation_probe_one 2.8
-assert_out 'the measured 270-turn (atan2=-94.1) maps to transform normal' \
-    'normal' rotation_probe_one -94.1
-assert_out 'the measured return-to-start (atan2=179.3) maps to transform 90' \
-    '90' rotation_probe_one 179.3
-assert_out 'the INFERRED quadrant (atan2=87.0, never captured) maps to transform 180' \
-    '180' rotation_probe_one 87.0
-
-# The portrait reading pose is the whole point of the reference: it is what
-# gatherd-tablet-mode sets on entry and what the human reads music at, so it
-# must come out as `normal` or auto-rotation fights the entry transform.
-assert_out 'the portrait reading pose (atan2=267.0, the reference itself) maps to transform normal' \
-    'normal' rotation_probe_one 267.0
-
-if grep -qi 'inferred' "$REPO/scripts/gatherd-hinge-daemon"; then
-    ok 'the daemon documents the uncaptured quadrant as inferred, not measured'
-else
-    bad 'the daemon documents the uncaptured quadrant as inferred, not measured'
-fi
-
-# ── the flat pose: gravity along the screen normal ───────────────────────────
-# x and y (the screen plane) vanish and "down" is undefined - the tracker
-# must hold whatever it last committed, not flip to some arbitrary angle.
-
-FLAT_SEQUENCE=$(python3 - "$REPO/scripts/gatherd-hinge-daemon" <<'PY'
-import importlib.machinery, importlib.util, math, sys
-path = sys.argv[1]
-loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
-spec = importlib.util.spec_from_loader("hinge_daemon", loader)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-tracker = mod.RotationTracker()
-angle = math.radians(177.0)
-tracker.update((math.cos(angle), math.sin(angle), 0.0))
-print(tracker.transform())
-tracker.update((0.0, 0.0, 1024.0))
-print(tracker.transform())
-PY
-)
-if [ "$FLAT_SEQUENCE" = "$(printf '90\n90')" ]; then
-    ok 'a flat pose holds the previously committed transform instead of flipping'
-else
-    bad "a flat pose holds the previously committed transform instead of flipping (got [$FLAT_SEQUENCE])"
-fi
-
-# ── hysteresis and persistence at the quadrant boundaries ────────────────────
-# 45 is the naive boundary between normal (0) and 90. A held-near-boundary
-# reading must not flap; a decisive, PERSISTENT excursion must still commit.
-# GATHERD_HINGE_WINDOW=1 isolates the margin/persistence logic on its own -
-# with the default window of 5, the median-over-samples smoothing already
-# damps these sequences, which would test that smoothing a second time
-# rather than the hysteresis mechanism this section is actually about.
-
-GATHERD_HINGE_WINDOW=1
-export GATHERD_HINGE_WINDOW
-
-BOUNDARY_SEQUENCE=$(rotation_probe_target 0 43 47 43 47 43)
-if [ "$(printf '%s' "$BOUNDARY_SEQUENCE" | sort -u)" = normal ]; then
-    ok 'oscillating near the 45-degree boundary never flips the transform'
-else
-    bad "oscillating near the 45-degree boundary never flips the transform (got [$BOUNDARY_SEQUENCE])"
-fi
-
-PERSIST_SEQUENCE=$(rotation_probe_target 0 70 70 70)
-assert_out 'a decisive excursion past the boundary holds until it persists, then commits' \
-    "$(printf 'normal\nnormal\nnormal\n90')" printf '%s' "$PERSIST_SEQUENCE"
-
-FLAP_RESIST_SEQUENCE=$(rotation_probe_target 0 70 200 70 200)
-if [ "$(printf '%s' "$FLAP_RESIST_SEQUENCE" | sort -u)" = normal ]; then
-    ok 'a challenger that keeps changing never accumulates enough persistence to commit'
-else
-    bad "a challenger that keeps changing never accumulates enough persistence to commit (got [$FLAP_RESIST_SEQUENCE])"
-fi
-
-unset GATHERD_HINGE_WINDOW
-
-# ── rotation_reference_deg is configurable via tablet-mode.conf ─────────────
-# Same tolerant read (env overrides config overrides built-in default,
-# malformed input falls back silently) as fold_enter_deg/poll_interval
-# above - required so re-calibrating on different hardware is a config edit,
-# never a code change.
-
-rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-assert_out 'a missing config file falls back to the default rotation reference' \
-    '267.0' rotation_reference
-
-printf 'transform=180\nrotation_reference_deg=90.5\n' \
-    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-assert_out 'a config-file rotation_reference_deg is read' '90.5' rotation_reference
-
-GATHERD_HINGE_ROTATION_REFERENCE=12.0
-export GATHERD_HINGE_ROTATION_REFERENCE
-assert_out 'GATHERD_HINGE_ROTATION_REFERENCE still overrides a config-file rotation_reference_deg' \
-    '12.0' rotation_reference
-unset GATHERD_HINGE_ROTATION_REFERENCE
-
-printf 'rotation_reference_deg=not-a-number\n' \
-    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-assert_out 'a malformed rotation_reference_deg falls back to the default without crashing' \
-    '267.0' rotation_reference
-
-rm -f "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
-
-# ── integration: rotation only ever calls swaymsg, gated on tablet mode ─────
-# Exercised against the REAL gatherd-tablet-mode (not the fake used above)
-# and the real swaymsg fake installed at the top of this file, so the
-# state-file property is proven against the actual record-then-restore
-# code, not a stand-in for it. Placed last in this section so nothing after
-# it needs the gatherd-tablet-mode fake restored.
-rm -f "$FAKEBIN/gatherd-tablet-mode"
-hash -r
-
-poll_rotation_once() {
-    python3 - "$REPO/scripts/gatherd-hinge-daemon" <<'PY'
-import collections, importlib.machinery, importlib.util, sys
-path = sys.argv[1]
-loader = importlib.machinery.SourceFileLoader("hinge_daemon", path)
-spec = importlib.util.spec_from_loader("hinge_daemon", loader)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-history = collections.deque(maxlen=mod.window_size())
-tracker = mod.RotationTracker()
-mod.poll_once(history, tracker)
-PY
-}
-
-# Rotation in isolation: the fold trigger is pinned OFF for this whole block
-# by putting both thresholds out of reach, so a lid vector chosen for the
-# rotation it produces cannot also enter or exit tablet mode as a side effect.
-# This used to lean on the ownership rule to block "exit"; with that rule gone,
-# the pinning has to be explicit rather than a happy consequence of unrelated
-# state. decide()'s own thresholds are exercised on their own terms earlier in
-# this section.
-GATHERD_HINGE_ENTER=-1
-GATHERD_HINGE_EXIT=999
-export GATHERD_HINGE_ENTER GATHERD_HINGE_EXIT
-write_vector "$HINGE_BASE" -317 100 976
-
-reset_log
-rm -f "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
-printf 'untouched' > "$WORK/transform"
-write_vector "$HINGE_LID" -1023 54 0
-poll_rotation_once
-assert_out 'rotation issues no swaymsg call while tablet mode is inactive' \
-    'untouched' cat "$WORK/transform"
-if log_has 'output DSI-1 transform'; then
-    bad 'rotation never rotates an unfolded (tablet-mode-inactive) laptop'
-else
-    ok 'rotation never rotates an unfolded (tablet-mode-inactive) laptop'
-fi
-
-printf '90' > "$WORK/transform"
-reset_log
-gatherd-tablet-mode on >/dev/null 2>&1
-assert_out 'the resting transform recorded at entry is 90' \
-    '90' cat "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
-
-# atan2(-1022, -54) = 267.0 - the reference itself, i.e. the portrait
-# score-reading pose. This is the assertion that an earlier reference of
-# 177.0 got wrong: it applied 270 here, leaving the display a quarter turn
-# anticlockwise of what the human was holding.
-write_vector "$HINGE_LID" -54 -1022 0
-poll_rotation_once
-assert_out 'rotation applies transform normal for the portrait reading pose' \
-    'normal' cat "$WORK/transform"
-
-# atan2(54, -1023) = 177.0 - the landscape/laptop pose, a quarter turn off
-# the one above, so this both proves rotation is actually acting and pins
-# the direction: landscape is transform 90, not 270.
-write_vector "$HINGE_LID" -1023 54 0
-poll_rotation_once
-assert_out 'rotation applies transform 90 for the landscape pose, proving it is actually acting' \
-    '90' cat "$WORK/transform"
-
-# The toggle has to stop the daemon rotating, not merely relabel a menu entry.
-gatherd-tablet-mode rotation-off
-printf 'sentinel' > "$WORK/transform"
-reset_log
-write_vector "$HINGE_LID" -1023 54 0
-poll_rotation_once
-assert_out 'rotation off issues no transform at all' 'sentinel' cat "$WORK/transform"
-if log_has 'output DSI-1 transform'; then
-    bad 'rotation off makes no swaymsg call'
-else
-    ok 'rotation off makes no swaymsg call'
-fi
-gatherd-tablet-mode rotation-on
-poll_rotation_once
-assert_out 'turning rotation back on resumes from the current pose' \
-    '90' cat "$WORK/transform"
-
-printf '90' > "$WORK/transform"
-assert_out 'the recorded resting transform is untouched by rotation while folded' \
-    '90' cat "$XDG_RUNTIME_DIR/gatherd/tablet-mode"
-
-gatherd-tablet-mode off >/dev/null 2>&1
-assert_out 'exiting restores the ORIGINAL resting transform, not the last rotation' \
-    '90' cat "$WORK/transform"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

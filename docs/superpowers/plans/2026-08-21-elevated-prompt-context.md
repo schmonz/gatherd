@@ -735,6 +735,14 @@ Expected: no new findings.
 ```bash
 yay -S --noconfirm wayprompt && command -v wayprompt && wayprompt --help | head -3
 ```
+
+> **Do not "fix" the button flag from `--help`.** wayprompt's own help text and
+> its man-page SYNOPSIS both print `--button-no-ok`, but the argument parser
+> accepts only `--button-not-ok` (`src/wayprompt-cli.zig:181`; the OPTIONS
+> section of `wayprompt.1` agrees). The help text is the typo. Task 2 already
+> uses the correct spelling. Verified against source, along with the exit codes
+> (`0` ok, `10` cancel, `20` not-ok — `wayprompt-cli.zig:112-128`) and the
+> two-line `user-action:` / `pin:` output format.
 Expected: the package builds and `--help` prints usage. **If the build fails**,
 stop and report it — the spec names bit-rot as the standing risk, and the
 fallback is fuzzel plus foot, which is a design change rather than a plan step.

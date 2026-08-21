@@ -1,148 +1,90 @@
 #!/bin/sh
-# Wayland-native askpass for sudo -A, ssh, and our prompt scripts. Replaces
-# seahorse's ssh-askpass so we don't install seahorse just to pop a password
-# box — fuzzel is already our launcher/prompt tool. --prompt-only skips the
-# stdin wait and the (empty) match list, so it behaves as a plain entry that
-# echoes the typed text on Enter and exits non-zero on Escape.
-
-prompt="${1:-Password:}"
-
-# ssh's first-contact (TOFU) host-key check reaches an askpass too, but it is a
-# multi-line security decision, not a password: ".. ED25519 key fingerprint is
-# SHA256:.. Are you sure you want to continue connecting (yes/no/[fingerprint])?".
-# fuzzel's one-line masked entry truncates the fingerprint and hides the typed
-# "yes", which is useless and alarming for the one prompt where reading the key
-# actually matters. Route confirmations to a real terminal instead, where the
-# whole prompt is legible. Only the host-key prompt contains "(yes/no"; every
-# password/passphrase/polkit/vault prompt does not, so the match is exact.
+# The one credential prompt: sudo -A, ssh, git, polkit and our own prompts all
+# arrive here, and all leave through wayprompt. One renderer is the point --
+# "the crimson box is what asks for my password" is only a useful instinct if
+# it is true of every prompt, including the ssh host-key decision, which used
+# to be a separately-styled foot window.
 #
-# OpenSSH shows confirmations with RP_ECHO (unmasked) and takes the answer —
-# yes/no or the fingerprint — from this program's stdout, treating a non-zero
-# exit or empty output as "abort". So we echo whatever the user types and exit
-# non-zero if they close the window without answering.
+# Contract, unchanged so callers need no edits: argv[1] is the prompt, argv[2]
+# is an optional pre-computed context line for callers that know more than a
+# /proc walk could recover, stdout is the secret, non-zero exit is a cancel.
+
+wayprompt="${GATHERD_WAYPROMPT:-wayprompt}"
+prompt="${1:-Password:}"
+context="${2:-}"
+
+log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd"
+
+note() {
+    mkdir -p "$log_dir" 2>/dev/null
+    printf '%s %s\n' "$(date '+%F %T')" "$1" >> "$log_dir/askpass.log" 2>/dev/null
+}
+
+# wayprompt is an AUR package, so it does not exist until REST has run. Cancel
+# cleanly rather than falling back: falling back to fuzzel would resurrect the
+# second look this design exists to delete, and falling back to
+# systemd-ask-password would owe the Artix/s6 port a second answer. Every
+# caller already reads a non-zero exit as a cancel and does the right thing
+# with it -- gatherd-prompt-vault leaves its loop, polkit denies, sudo aborts.
+if ! command -v "$wayprompt" >/dev/null 2>&1; then
+    note "wayprompt missing; cancelled prompt=$prompt"
+    exit 1
+fi
+
+# ssh's first-contact host-key check reaches an askpass too, but it is a
+# multi-line security decision rather than a password: "... ED25519 key
+# fingerprint is SHA256:... Are you sure you want to continue connecting
+# (yes/no/[fingerprint])?". Masking that hides the typed "yes" and truncates
+# the fingerprint -- useless for the one prompt where reading the key is the
+# whole point. Only the host-key prompt contains "(yes/no"; no password,
+# passphrase, polkit or vault prompt does, so the match is exact.
+#
+# OpenSSH takes the answer from our stdout and treats a non-zero exit or empty
+# output as "abort", so buttons map straight onto it.
 case "$prompt" in
 *'(yes/no'*)
-    answer=$(mktemp)
-    # foot -e blocks until the inner shell exits (same pattern as
-    # gatherd-show-slow-progress); the shell prints the full prompt, reads the
-    # reply, and stashes it for us. Positional args avoid interpolating the
-    # untrusted prompt text into the script body.
-    # Per-invocation --override styling (the user's foot config is untouched):
-    # mirror the credential palette — crimson background, near-white text, salmon
-    # accent — and reuse the "❯" prompt glyph, so this window reads as part of the
-    # same askpass family as the fuzzel password box, just rendered in a terminal
-    # because the fingerprint needs room to be read. Colors match the fuzzel box
-    # below (alpha dd ≈ 0.87; foot wants RGB). Set both colors-dark and
-    # colors-light to the same values: the password box does not switch with
-    # darkman, so this window shouldn't either. (Plain [colors] is deprecated in
-    # foot 1.27.)
-    #
-    # Deliberately no main.font override. The user's foot.ini is already
-    # JetBrains Mono at the size the playbook computed for this panel, so
-    # inheriting is right everywhere; the size=10 pinned here previously was too
-    # small on every panel whose computed size wasn't 10 — in the one window where
-    # a ~90-character fingerprint most needs to be legible.
-    # The fuzzel box's identity is as much its shape as its color: a compact
-    # dialog inside a heavy salmon border. A default foot window is neither —
-    # 700x500 of mostly-empty crimson with no border at all — so size it to its
-    # contents and draw the border with CSDs. csd.preferred=client is only a hint
-    # (sway would otherwise server-side-decorate this window and we'd get no
-    # border); csd.size=0 drops the titlebar so the border is all that's left.
-    # CSD colors are AARRGGBB, unlike the RRGGBB in the colors sections.
-    foot \
-        --app-id 'gatherd-hostkey-verify' \
+    "$wayprompt" \
         --title 'SSH host key verification' \
-        --override main.initial-window-size-chars=84x11 \
-        --override csd.preferred=client \
-        --override csd.size=0 \
-        --override csd.border-width=4 \
-        --override csd.border-color=ffff7f7f \
-        --override colors-dark.alpha=0.87 \
-        --override colors-dark.background=2b0508 \
-        --override colors-dark.foreground=e3e3ea \
-        --override colors-light.alpha=0.87 \
-        --override colors-light.background=2b0508 \
-        --override colors-light.foreground=e3e3ea \
-        --override main.pad=30x18 \
-        -e sh -c '
-        printf "\033[1;38;2;255;127;127mSSH host key verification\033[0m\n\n"
-        printf "%s\n\n" "$1"
-        printf "\033[38;2;255;127;127m❯\033[0m  Type yes, no, or the fingerprint, then press Enter: "
-        read -r reply
-        printf "%s" "$reply" > "$2"
-    ' sh "$prompt" "$answer"
-    reply=$(cat "$answer")
-    rm -f "$answer"
-    [ -n "$reply" ] || exit 1
-    printf '%s\n' "$reply"
-    exit 0
+        --description "$prompt" \
+        --button-ok 'Yes' \
+        --button-not-ok 'No' \
+        --button-cancel 'Abort' >/dev/null 2>&1
+    case $? in
+    0)  printf 'yes\n'; exit 0 ;;
+    20) printf 'no\n'; exit 0 ;;
+    *)  exit 1 ;;
+    esac
     ;;
 esac
 
-# sudo's default tty prompt is "[sudo] password for <user>:", which we keep
-# verbose on the terminal (no sudoers passprompt override truncating it). In the
-# fuzzel box that long form is noise, so collapse any sudo prompt to the bare tag
-# — the box just needs to name its source, the way [vault]/[polkit] do.
+# sudo's default prompt is "[sudo] password for <user>:", which we keep verbose
+# on the terminal (no sudoers passprompt override). In the box that long form
+# is noise, so collapse it to the bare tag the way [vault] and [polkit] read.
 case "$prompt" in
 '[sudo]'*) prompt='[sudo]' ;;
 esac
 
-# fuzzel --dmenu reads its menu list from stdin and blocks until EOF before it
-# draws. --password --prompt-only leaves that list empty but does NOT skip the
-# read, so an inherited never-closing stdin wedges fuzzel before the box appears.
-# That is exactly the polkit case: the cmd-polkit agent hands its JSON message
-# pipe to the handler as stdin, gatherd-polkit-agent shells out to us, and fuzzel
-# then waits forever on a pipe that never closes — no box, and polkit hangs until
-# it times out. Force stdin from /dev/null so the box always draws regardless of
-# how the caller left fd 0; the password is typed into fuzzel directly, never
-# read from stdin, so nothing else changes.
-#
-# Instrumentation (diagnosis only, behavior unchanged): a "no box" failure is a
-# heisenbug — the prime suspect is fuzzel's single-instance lock
-# ("/run/user/<uid>/fuzzel-wayland-<n>.lock: failed to acquire lock: fuzzel
-# already running?"), which makes a second prompt exit non-zero WITHOUT drawing
-# while another fuzzel (a launcher, or a concurrent gatherd prompt) is on screen.
-# We can't reproduce it on demand, so leave a trail: capture fuzzel's stderr and
-# any non-zero exit to a state-dir log. The stdout password channel is untouched
-# (fd 3 passthrough), and every log write is best-effort — a missing/unwritable
-# log dir must never stop the box from drawing.
-log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd"
-log="$log_dir/askpass.log"
-#
-# Styling: the credential house style. The launcher's indigo 08052b is
-# channel-swapped to crimson 2b0508 — the same colors, red-shifted — so this box
-# reads as kin to the fuzzel launcher while being impossible to mistake for it
-# when you are about to type a root password. The heavy opaque salmon border and
-# the narrower box (24 chars against the launcher's 50) finish the separation.
-#
-# Font and padding are deliberately NOT set. fuzzel.ini already carries the size
-# the playbook computed for this panel, so inheriting keeps this box in step with
-# the launcher on every machine for free. text/prompt/input are pinned even
-# though they match fuzzel.ini today: a credential prompt shouldn't depend on the
-# launcher's config to stay legible.
-#
-# --prompt-only REPLACES fuzzel.ini's prompt rather than prefixing it, so the "❯"
-# has to be spelled out here — without it the box shows a bare "[sudo] " and
-# loses the glyph that ties it to the host-key window above.
-exec 3>&1
-err=$(fuzzel --dmenu --password --prompt-only "❯  $prompt " \
-    --width=24 \
-    --background-color=2b0508dd \
-    --text-color=e3e3eaff \
-    --prompt-color=ff7f7fff \
-    --input-color=ff7f7fff \
-    --border-width=4 \
-    --border-color=ff7f7fff \
-    --border-radius=10 \
-    </dev/null 2>&1 1>&3)
+# Ask who is calling, unless the caller already told us. Never fatal: a prompt
+# that cannot be annotated must still be shown.
+[ -n "$context" ] || context=$(gatherd-prompt-context "$PPID" 2>/dev/null)
+[ -n "$context" ] || context='context unavailable'
+
+# Line 2 is "pin: <secret>", per wayprompt(1). Anchor the strip to the start of
+# that line: the stock wayprompt-ssh-askpass uses s/pin: // unanchored, which
+# corrupts any password containing that string. printf rather than echo, so a
+# secret starting with "-n" is not eaten.
+out=$("$wayprompt" \
+    --title 'gatherd' \
+    --description "$context" \
+    --prompt "$prompt" \
+    --button-ok 'OK' \
+    --button-cancel 'Cancel' \
+    --get-pin 2>/dev/null)
 rc=$?
-exec 3>&-
+
 if [ "$rc" -ne 0 ]; then
-    # mkdir as its own statement: a redirect to "$log" is opened before the
-    # command runs, so creating the dir must happen first or the first write
-    # silently fails. Both steps best-effort — never block the prompt.
-    mkdir -p "$log_dir" 2>/dev/null
-    printf '%s prompt=%s exit=%s err=%s\n' \
-        "$(date '+%F %T')" "$prompt" "$rc" "$err" >>"$log" 2>/dev/null
+    note "prompt=$prompt exit=$rc"
+    exit "$rc"
 fi
-exit "$rc"
+
+printf '%s\n' "$out" | sed -n '2s/^pin: //p'

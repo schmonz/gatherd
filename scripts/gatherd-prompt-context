@@ -1,0 +1,85 @@
+#!/bin/sh
+# Answer "what popped this password box?" for gatherd-askpass.
+#
+# sudo hands its askpass helper nothing -- no SUDO_COMMAND, no SUDO_UID, just
+# the invoking user's environment -- and polkit's agent API has no subject
+# parameter at all, so neither upstream will tell us who is asking. Reading
+# /proc behind their backs is the only route. That makes this a workaround for
+# an API gap rather than a load-bearing security control, and it is why this
+# lives in its own file: see the spec's "What a correct API would look like".
+#
+# Always exits 0. A prompt that cannot be annotated must still be shown.
+
+proc="${GATHERD_PROC:-/proc}"
+pid="${1:-}"
+
+# Field 4 of /proc/<pid>/stat is ppid, but field-splitting on spaces breaks
+# when comm contains one ("(Web Content)"). comm is the only parenthesised
+# field, so cutting past the last ")" is exact where awk '{print $4}' is not.
+ppid_of() {
+    sed 's/^.*) //' "$proc/$1/stat" 2>/dev/null | cut -d' ' -f2
+}
+
+comm_of() {
+    cat "$proc/$1/comm" 2>/dev/null
+}
+
+# Keep printable ASCII, drop everything else, and say so if anything went.
+# Allowlist rather than blocklist: enumerating what is safe cannot be
+# out-flanked by a byte nobody thought of. Metacharacters are deliberately
+# kept -- a reader needs to see "curl evil.sh | sh" as it really is; the
+# danger was only ever control bytes and escape sequences.
+sanitize() {
+    _raw=$1
+    _clean=$(printf '%s' "$_raw" | LC_ALL=C tr -cd '\40-\176')
+    if [ "${#_clean}" -gt 60 ]; then
+        _clean=$(printf '%s' "$_clean" | cut -c1-60)...
+    elif [ "${#_clean}" -ne "${#_raw}" ]; then
+        _clean="$_clean [elided]"
+    fi
+    printf '%s' "$_clean"
+}
+
+lines=''
+add() { lines="${lines:+$lines
+}$1"; }
+
+if [ -n "$pid" ] && [ -d "$proc/$pid" ]; then
+    # Trust this argv only if the parent really is sudo. A poor man's
+    # attestation: any process can set SUDO_ASKPASS and exec us directly with a
+    # fabricated "[sudo]" prompt, and without this check we would dress that up
+    # with a convincing fake command. sudo is setuid-root and does not rewrite
+    # its own argv, so once verified the string is worth showing.
+    case "$(readlink "$proc/$pid/exe" 2>/dev/null)" in
+    /usr/bin/sudo | /bin/sudo)
+        # Drop the -A we add ourselves in the sudo shell function; it is noise
+        # in every prompt the function produces. Nothing else is parsed out:
+        # sudo option parsing is subtle enough that guessing wrong would show a
+        # command that is not the one being run.
+        argv=$(tr '\0' ' ' < "$proc/$pid/cmdline" 2>/dev/null)
+        argv=${argv#sudo }
+        argv=${argv#-A }
+        argv=${argv% }
+        [ -n "$argv" ] && add "elevating: $(sanitize "$argv")"
+        ;;
+    esac
+
+    # Name the app, not the shell that happens to sit between it and sudo.
+    # Report only comm: a process can rewrite its own argv (that is what
+    # setproctitle does), so this line is materially less trustworthy than the
+    # one above and must not be dressed up with a full command line.
+    walk=$(ppid_of "$pid")
+    hops=0
+    while [ -n "$walk" ] && [ "$walk" -gt 1 ] 2>/dev/null && [ "$hops" -lt 12 ]; do
+        c=$(comm_of "$walk")
+        case "$c" in
+        sudo | bash | sh | zsh | dash | fish) ;;
+        '') break ;;
+        *) add "requested by $(sanitize "$c")"; break ;;
+        esac
+        walk=$(ppid_of "$walk")
+        hops=$((hops + 1))
+    done
+fi
+
+printf '%s\n' "${lines:-context unavailable}"

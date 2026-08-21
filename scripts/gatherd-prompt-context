@@ -32,12 +32,15 @@ comm_of() {
 sanitize() {
     _raw=$1
     _clean=$(printf '%s' "$_raw" | LC_ALL=C tr -cd '\40-\176')
+    # Track elision independently of truncation. A command can be both
+    # over-long and full of control bytes, and reporting only the truncation
+    # would hide precisely what this marker exists to disclose.
+    _mark=''
+    [ "${#_clean}" -ne "${#_raw}" ] && _mark=' [elided]'
     if [ "${#_clean}" -gt 60 ]; then
         _clean=$(printf '%s' "$_clean" | cut -c1-60)...
-    elif [ "${#_clean}" -ne "${#_raw}" ]; then
-        _clean="$_clean [elided]"
     fi
-    printf '%s' "$_clean"
+    printf '%s%s' "$_clean" "$_mark"
 }
 
 lines=''
@@ -45,24 +48,32 @@ add() { lines="${lines:+$lines
 }$1"; }
 
 if [ -n "$pid" ] && [ -d "$proc/$pid" ]; then
-    # Trust this argv only if the parent really is sudo. A poor man's
-    # attestation: any process can set SUDO_ASKPASS and exec us directly with a
-    # fabricated "[sudo]" prompt, and without this check we would dress that up
-    # with a convincing fake command. sudo is setuid-root and does not rewrite
-    # its own argv, so once verified the string is worth showing.
-    case "$(readlink "$proc/$pid/exe" 2>/dev/null)" in
-    /usr/bin/sudo | /bin/sudo)
-        # Drop the -A we add ourselves in the sudo shell function; it is noise
-        # in every prompt the function produces. Nothing else is parsed out:
-        # sudo option parsing is subtle enough that guessing wrong would show a
-        # command that is not the one being run.
+    # sudo is setuid-root, so the kernel clears its dumpable flag and
+    # /proc/<pid>/exe is unreadable to us -- readlink returns empty even though
+    # we are the same real user. Ownership of /proc/<pid> survives that: the
+    # kernel sets it from the process's euid, so uid 0 proves the process really
+    # did gain privilege. That is the check that matters, because any process
+    # can set SUDO_ASKPASS and exec us with a fabricated "[sudo]" prompt, and
+    # without it such a box would carry a convincing fake command. comm is
+    # spoofable via prctl(PR_SET_NAME), so it only picks which privileged tool
+    # this is -- it is never what establishes privilege.
+    if [ "$(stat -c %u "$proc/$pid" 2>/dev/null)" = "0" ] &&
+       [ "$(comm_of "$pid")" = "sudo" ]; then
+        # Drop argv[0] (a literal "sudo" or an absolute path, depending on how
+        # it was invoked) and the -A we add ourselves in the sudo shell
+        # function; it is noise in every prompt the function produces.
+        # Nothing else is parsed out: sudo option parsing is subtle enough
+        # that guessing wrong would show a command that is not the one being
+        # run.
         argv=$(tr '\0' ' ' < "$proc/$pid/cmdline" 2>/dev/null)
-        argv=${argv#sudo }
-        argv=${argv#-A }
         argv=${argv% }
+        case "$argv" in
+        *' '*) argv=${argv#* } ;;
+        *) argv='' ;;
+        esac
+        argv=${argv#-A }
         [ -n "$argv" ] && add "elevating: $(sanitize "$argv")"
-        ;;
-    esac
+    fi
 
     # Name the app, not the shell that happens to sit between it and sudo.
     # Report only comm: a process can rewrite its own argv (that is what

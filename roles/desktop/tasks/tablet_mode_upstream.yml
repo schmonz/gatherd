@@ -1,0 +1,42 @@
+---
+# The tablet-mode mechanism (fold detection, rotation, input suppression, the
+# escape menu) lives in chuwi-minibook-tablet-mode now, not in this repo. This
+# is REST, not CORE: cloning is a network operation, and CORE must converge
+# with no internet at all. roles/desktop/tasks/tablet_mode.yml (CORE) already
+# installed the config and menu this reads.
+- name: Clone the tablet-mode mechanism
+  ansible.builtin.git:
+    repo: "{{ tablet_mode_upstream_repo }}"
+    dest: "{{ tablet_mode_upstream_dir }}"
+    version: "{{ tablet_mode_upstream_version }}"
+    update: true
+  notify: Install the tablet-mode mechanism
+
+# install.sh installs this same rule to ~/.local/lib/udev/rules.d for a
+# --prefix ~/.local install, which is NOT one of the paths udev scans (unlike
+# the default /usr/local prefix) - it says so itself when it runs. Rather than
+# fighting install.sh over a non-default prefix, gatherd links the rule from
+# the pinned clone straight into /etc/udev/rules.d, which every udev does
+# scan. This replaces the old gatherd-hinge-sensor.service unit, which this
+# rule's own comment explains is no longer needed: it binds the base
+# accelerometer the moment its i2c adapter appears, regardless of init system.
+#
+# Root, unlike the task above: this whole file runs as target_user (the
+# desktop role's REST play), so escalate for just this one task rather than
+# moving it to the system role, where it would run in an EARLIER play than
+# the clone above and find nothing to link yet - system's REST play (root)
+# runs before desktop's REST play (this one) in site-async.yml, and CORE's
+# any_errors_fatal makes a dangling reference there unsafe regardless.
+#
+# Gated on has_dual_accelerometer in addition to tablet_mode_supported: a
+# single-accelerometer machine has no second sensor for this rule to bind, so
+# it gets phase 1 tablet mode (manual trigger) and nothing more.
+- name: Link the hinge-sensor udev rule
+  ansible.builtin.file:
+    src: "{{ tablet_mode_upstream_dir }}/udev/99-minibook-hinge-sensor.rules"
+    dest: /etc/udev/rules.d/99-minibook-hinge-sensor.rules
+    state: link
+  become: true
+  become_user: root
+  when: tablet_mode_supported and has_dual_accelerometer
+  notify: Reload udev rules for the hinge sensor

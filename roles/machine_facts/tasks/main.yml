@@ -209,9 +209,11 @@
 
 # Chuwi MiniBook X: firmware declares two MXC6655 accelerometer ACPI nodes
 # (one per body) but binds only one; the second must be instantiated by hand
-# at boot (gatherd-bind-hinge-sensor). Node count is the only way to tell a
-# dual-sensor convertible from a single-sensor one — neither is bound yet
-# when this probe runs, so has_accelerometer (IIO-based) can't distinguish them.
+# at boot (minibook-bind-hinge-sensor, or the udev rule that replaces it — see
+# roles/desktop/tasks/tablet_mode_upstream.yml). Node count is the only way to
+# tell a dual-sensor convertible from a single-sensor one — neither is bound
+# yet when this probe runs, so has_accelerometer (IIO-based) can't
+# distinguish them.
 - name: Check for a second MXC6655 ACPI accelerometer node  # noqa: risky-shell-pipe
   ansible.builtin.shell: |
     set -o pipefail

@@ -1,0 +1,15 @@
+---
+- name: Install the tablet-mode mechanism
+  ansible.builtin.command:
+    cmd: ./install.sh --prefix {{ target_home }}/.local
+    chdir: "{{ tablet_mode_upstream_dir }}"
+  changed_when: true
+
+- name: Reload udev rules for the hinge sensor
+  ansible.builtin.command: "{{ item }}"
+  become: true
+  become_user: root
+  loop:
+    - udevadm control --reload-rules
+    - udevadm trigger --action=add --subsystem-match=i2c
+  changed_when: false

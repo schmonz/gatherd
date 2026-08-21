@@ -1,0 +1,4 @@
+# Managed by gatherd. One label|command per line, split on the first pipe.
+{% for entry in tablet_mode_menu_entries %}
+{{ entry.label }}|{{ entry.command }}
+{% endfor %}

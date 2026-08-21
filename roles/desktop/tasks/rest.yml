@@ -1,4 +1,11 @@
 ---
+# Network operation (a git clone), so it lives here in REST rather than
+# alongside the rest of tablet mode's setup in tasks/core.yml. See
+# tablet_mode_upstream.yml for why.
+- name: Install the tablet-mode mechanism from upstream
+  ansible.builtin.import_tasks: tablet_mode_upstream.yml
+  when: tablet_mode_supported
+
 - name: Configure the credential prompt
   ansible.builtin.include_tasks: wayprompt.yml
 

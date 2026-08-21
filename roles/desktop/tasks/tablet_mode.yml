@@ -1,36 +1,35 @@
 ---
-- name: Install the tablet-mode scripts
+# The mechanism itself (fold detection, rotation, input suppression, the
+# compositor adapter, the escape menu) is no longer gatherd's: it lives in
+# chuwi-minibook-tablet-mode, cloned and installed by tablet_mode_upstream.yml
+# in REST (roles/desktop/tasks/rest.yml), never here — that clone is a network
+# operation, and CORE must converge with no internet at all. This file installs
+# only what stays gatherd's: the sheet-music picker, and the config/menu that
+# tell the mechanism what to run.
+- name: Install the music-stand scripts
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/{{ item }}"
     dest: "{{ target_home }}/.local/bin/{{ item }}"
     mode: '0755'
     remote_src: true
   loop:
-    # gatherd-compositor first in spirit if not in order: it is the only one of
-    # these that knows sway exists, and the others are useless without it.
-    - gatherd-compositor
-    - gatherd-tablet-mode
     - gatherd-music-index
     - gatherd-music-stand
-    - gatherd-power-button
 
 - name: Configure tablet mode
   ansible.builtin.template:
     src: tablet-mode.conf.j2
-    dest: "{{ target_home }}/.config/gatherd/tablet-mode.conf"
+    dest: "{{ target_home }}/.config/minibook-tablet-mode/config"
     mode: '0644'
 
-# Phase 2 (fold-to-trigger): only on machines with the second, base-sensor
-# accelerometer gatherd-hinge-daemon needs to compute a hinge angle at all.
-# gatherd-bind-hinge-sensor.service (roles/system) instantiates that sensor at
-# boot; a single-accelerometer machine gets phase 1 (manual trigger) only.
-- name: Install the hinge-fold daemon
-  ansible.builtin.copy:
-    src: "{{ setup_dir }}/scripts/gatherd-hinge-daemon"
-    dest: "{{ target_home }}/.local/bin/gatherd-hinge-daemon"
-    mode: '0755'
-    remote_src: true
-  when: has_dual_accelerometer
+# The folded menu's entries used to be hardcoded in the power-button script;
+# the mechanism now reads them from this file, one label|command per line, so
+# it has no idea a sheet-music reader exists. See tablet_mode_menu_entries.
+- name: Configure the folded menu
+  ansible.builtin.template:
+    src: tablet-mode-menu.j2
+    dest: "{{ target_home }}/.config/minibook-tablet-mode/menu"
+    mode: '0644'
 
 # Removed, not merely unbound: folding is the only way into tablet mode and
 # unfolding is always the way out, so a keystroke that enters it would create
@@ -60,7 +59,7 @@
 # so the moment papers wins the race above, the inhibitor disengages and the
 # screen blanks mid-piece — the one thing this feature exists to prevent.
 # `visible` inhibits for as long as the score is on screen, fullscreen or not,
-# which is the actual safety property wanted. gatherd-tablet-mode additionally
+# which is the actual safety property wanted. minibook-tablet-mode additionally
 # inhibits `open` on every view for the whole of tablet mode, not just this
 # one window; see docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
 - name: Keep the screen awake while the score is visible

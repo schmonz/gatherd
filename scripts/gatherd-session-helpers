@@ -87,9 +87,9 @@ run "/usr/lib/xdg-desktop-portal"
 run "wayvnc"
 run "$bin/gatherd-conky"
 # Only installed on has_dual_accelerometer machines (roles/desktop/tasks/
-# tablet_mode.yml); `run` on a missing binary just fails quietly like any
-# other cohort member would on hardware that lacks it.
-run "$bin/gatherd-hinge-daemon"
+# tablet_mode_upstream.yml); `run` on a missing binary just fails quietly like
+# any other cohort member would on hardware that lacks it.
+run "$bin/minibook-hinge-daemon"
 run "$bin/gatherd-prompt-captiveportal"
 run "$bin/gatherd-prompt-1password"
 run "$bin/gatherd-prompt-tailscale"

@@ -121,7 +121,7 @@
     path: "{{ target_home }}/.config/sway/config.d/default"
     line: >-
       bindsym XF86PowerOff exec
-      {{ (target_home ~ '/.local/bin/gatherd-power-button')
+      {{ (target_home ~ '/.local/bin/minibook-power-button')
          if tablet_mode_supported else '$powermenu' }}
     regexp: '^\s*bindsym\s+XF86PowerOff\b'
 

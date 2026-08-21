@@ -1,4 +1,8 @@
-# Managed by gatherd. Sourced by gatherd-tablet-mode and gatherd-music-stand.
+# Managed by gatherd. Sourced by minibook-tablet-mode, minibook-power-button
+# and gatherd-music-stand. root/viewer/viewer_flag/viewer_env below are
+# gatherd's own additions on top of the mechanism's own schema (transform
+# through menu_font) - the mechanism has no idea what a music stand is, and
+# just ignores keys it doesn't recognize.
 transform={{ tablet_mode_transform }}
 root={{ music_stand_root }}
 viewer={{ music_stand_viewer }}
@@ -28,6 +32,6 @@ rotation_reference_deg={{ tablet_mode_rotation_reference_deg }}
 # and the music-stand picker stay comfortably tappable on any other machine
 # gatherd converges, not just the one this multiple (22/10) was confirmed on
 # by hand. The whole fontconfig string lives here, not just a bare size, so
-# gatherd-power-button and gatherd-music-stand do no parsing and the family
+# minibook-power-button and gatherd-music-stand do no parsing and the family
 # can be overridden too.
 menu_font=JetBrainsMono-Regular:size={{ (22 * foot_font_size / 10) | round | int }}

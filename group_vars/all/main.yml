@@ -305,11 +305,28 @@ web_apps:
 # Tablet mode. Gated on capability rather than model: DMI is useless here, since
 # the MiniBook X reports chassis_type 10 (Notebook), not 31 (Convertible).
 tablet_mode_supported: "{{ has_touchscreen | default(false) and has_accelerometer | default(false) }}"
+# The fold detection, rotation, input suppression and escape menu are a
+# property of the hardware, not of this setup, and live in their own repo now
+# - see roles/desktop/tasks/tablet_mode_upstream.yml. Pinned rather than
+# tracking main so a repave two years from now reproduces what runs today;
+# upgrading is a one-line bump. Cloning is a network operation, so it happens
+# in REST (roles/desktop/tasks/rest.yml), never CORE, which must converge
+# with no internet at all.
+tablet_mode_upstream_repo: https://github.com/schmonz/chuwi-minibook-tablet-mode.git
+tablet_mode_upstream_version: 0.0.20260821.1
+tablet_mode_upstream_dir: "{{ target_home }}/.local/src/chuwi-minibook-tablet-mode"
+# What gatherd puts in the folded menu. The mechanism ships knowing none of
+# this; the sheet-music reader is ours.
+tablet_mode_menu_entries:
+  - label: "󰈙 Pick another score"
+    command: gatherd-music-stand on
+  - label: "󰎈 Close score"
+    command: gatherd-music-stand close
 # Portrait. NOT 90: where the panel is physically mounted rotated, wlroots
 # applies the DRM orientation quirk itself and 90 is upright landscape. Use 180
 # if the fold puts the wrong edge at the top.
 tablet_mode_transform: normal
-# Hinge-fold trigger (phase 2): gatherd-hinge-daemon's enter/exit hysteresis
+# Hinge-fold trigger (phase 2): minibook-hinge-daemon's enter/exit hysteresis
 # band, in degrees of |theta| away from folded (theta is the hinge angle
 # itself - see the daemon's own header for the geometry, and the design spec
 # for why a signed angle alone cannot tell a shut lid from a folded tablet).
@@ -337,7 +354,7 @@ tablet_mode_hinge_poll_interval: 0.1
 tablet_mode_hinge_median_window: 5
 # Auto-rotation (phase 3): follows the tablet's orientation in the hands
 # while tablet mode is active, reusing the same lid-sensor read above - see
-# gatherd-hinge-daemon's module header for the full geometry and the
+# minibook-hinge-daemon's module header for the full geometry and the
 # measured calibration table this value comes from. This is the atan2(y, x)
 # reading of the lid sensor's gravity vector, measured BY HAND on this
 # hardware, in the upright "normal" reading position. A config value, not a

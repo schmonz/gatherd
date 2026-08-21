@@ -10,7 +10,7 @@
 # See docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
 set -eu
 
-config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
+config="${XDG_CONFIG_HOME:-$HOME/.config}/minibook-tablet-mode/config"
 root="$HOME/Documents/forscore"
 viewer=papers
 viewer_flag=""
@@ -48,12 +48,12 @@ cancel='󰅖 Cancel'
 # flips tablet mode on, so a keyboard-invoked pick (human at the keyboard,
 # about to fold) sees tablet mode inactive and must stay keyboard-sized. Only
 # "Pick another score" from the power button's already-folded escape menu
-# (gatherd-power-button) sees tablet mode active, and that's the finger-tap
+# (minibook-power-button) sees tablet mode active, and that's the finger-tap
 # case this size is for. A size-22 menu at the keyboard was reported as
 # needlessly huge - this is that fix.
 pick() {
     set -- --dmenu --prompt "$1" --lines 12 --width 40
-    if gatherd-tablet-mode status >/dev/null 2>&1; then
+    if minibook-tablet-mode status >/dev/null 2>&1; then
         [ -n "$menu_font" ] && set -- "$@" --font "$menu_font"
     fi
     fuzzel "$@" || true
@@ -211,8 +211,8 @@ turn_on() {
     # since long before this window existed, so its fullscreen has already
     # happened and missed. Ask for it again now. A no-op when unfolded, which
     # is the case where the score is meant to be an ordinary window.
-    # gatherd-tablet-mode remains the only thing that talks to the compositor.
-    gatherd-tablet-mode fullscreen-viewer || true
+    # minibook-tablet-mode remains the only thing that talks to the compositor.
+    minibook-tablet-mode fullscreen-viewer || true
 }
 
 viewer_running() {

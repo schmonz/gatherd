@@ -7,7 +7,11 @@
 # has been dormant since 2024-08-25 -- nilp0inter/nowayprompt is an actively
 # maintained Rust port written for exactly this reason.
 pkgname=nowayprompt
-pkgver=0.1.0
+# pkgver encodes _commit below (0.1.0+<short sha>) rather than staying a bare
+# constant. roles/system/tasks/nowayprompt.yml compares the installed
+# pkgver-pkgrel against this file's, so bumping _commit without bumping pkgver
+# would otherwise never trigger a rebuild.
+pkgver=0.1.0+b2f89da
 pkgrel=1
 pkgdesc="Wayland-native pinentry/askpass prompt (Rust port of wayprompt)"
 arch=('x86_64')
@@ -23,7 +27,8 @@ makedepends=('cargo')
 # Pinned to a commit, not a tag: v0.1.0-v0.1.2 are inherited from the wayprompt
 # fork this project started from, and still point at the OLD ZIG SOURCE TREE
 # nowayprompt replaced. There is no tagged Rust release yet. Bump this pin
-# deliberately -- do not "helpfully" switch to a tag.
+# deliberately -- do not "helpfully" switch to a tag -- and bump pkgver's
+# short-sha suffix above to match.
 _commit=b2f89da513f28711ddf55ef9e88b65798a8b6d31
 source=("$pkgname-$_commit.tar.gz::https://github.com/nilp0inter/nowayprompt/archive/$_commit.tar.gz")
 sha256sums=('eb859c2666ec2b52455f047defcfab979b9c6352b882e82500892cb4a1e6d979')

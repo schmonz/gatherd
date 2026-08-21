@@ -1,0 +1,45 @@
+# Maintainer: gatherd (vendored, not submitted to the AUR)
+#
+# nowayprompt is not in the AUR, so this package is vendored here rather than
+# consumed via yay. See roles/system/tasks/nowayprompt.yml for why: wayprompt
+# (the tool this replaces) pins zig-wayland 0.2.0, whose generated bindings
+# reference a type this machine's libwayland 1.26.0 doesn't have, and upstream
+# has been dormant since 2024-08-25 -- nilp0inter/nowayprompt is an actively
+# maintained Rust port written for exactly this reason.
+pkgname=nowayprompt
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Wayland-native pinentry/askpass prompt (Rust port of wayprompt)"
+arch=('x86_64')
+url="https://github.com/nilp0inter/nowayprompt"
+license=('GPL-3.0-only')
+# Only C runtime dependency: xkbcommon's own Cargo.toml documents that the XKB
+# keymap handling dlopens libxkbcommon.so. Everything else -- the Wayland
+# client, the software rasterizer, text shaping -- is pure Rust; wayland-client
+# defaults to its "rs" socket backend, so there is no libwayland-client.so
+# dependency (the thing broken on this machine) at all.
+depends=('libxkbcommon')
+makedepends=('cargo')
+# Pinned to a commit, not a tag: v0.1.0-v0.1.2 are inherited from the wayprompt
+# fork this project started from, and still point at the OLD ZIG SOURCE TREE
+# nowayprompt replaced. There is no tagged Rust release yet. Bump this pin
+# deliberately -- do not "helpfully" switch to a tag.
+_commit=b2f89da513f28711ddf55ef9e88b65798a8b6d31
+source=("$pkgname-$_commit.tar.gz::https://github.com/nilp0inter/nowayprompt/archive/$_commit.tar.gz")
+sha256sums=('eb859c2666ec2b52455f047defcfab979b9c6352b882e82500892cb4a1e6d979')
+
+build() {
+    cd "nowayprompt-$_commit"
+    cargo build --release --locked
+}
+
+package() {
+    cd "nowayprompt-$_commit"
+    install -Dm755 target/release/nowayprompt "$pkgdir/usr/bin/nowayprompt"
+    ln -s nowayprompt "$pkgdir/usr/bin/pinentry-nowayprompt"
+    ln -s nowayprompt "$pkgdir/usr/bin/nowayprompt-ssh-askpass"
+    install -Dm644 man/nowayprompt.1 "$pkgdir/usr/share/man/man1/nowayprompt.1"
+    install -Dm644 man/pinentry-nowayprompt.1 "$pkgdir/usr/share/man/man1/pinentry-nowayprompt.1"
+    install -Dm644 man/nowayprompt-ssh-askpass.1 "$pkgdir/usr/share/man/man1/nowayprompt-ssh-askpass.1"
+    install -Dm644 man/nowayprompt.conf.5 "$pkgdir/usr/share/man/man5/nowayprompt.conf.5"
+}

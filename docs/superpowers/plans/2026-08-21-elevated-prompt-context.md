@@ -44,7 +44,7 @@
 | `roles/system/tasks/sudo.yml` | install prompt-context; point sudo at askpass | modify |
 | `roles/system/tasks/wayprompt.yml` | render `/etc/wayprompt/config.ini` | create |
 | `roles/system/tasks/sudo_function.yml` | `sudo` shell function in `/etc/bash.bashrc` | create |
-| `roles/aur/tasks/main.yml` | add `wayprompt` to `aur_packages` | modify |
+| `group_vars/all/main.yml` | add `wayprompt` to `aur_packages` | modify |
 | `scripts/gatherd-polkit-agent` | pass polkit's message + action id as `argv[2]` | modify |
 | `roles/desktop/tasks/core.yml` | drop the `gatherd-hostkey-verify` sway float rule | modify |
 | `scripts/gatherd-post-setup-notes` | rewrite the credential-prompt verify line | modify |
@@ -559,7 +559,7 @@ printf '%s\n' "$(printf '%s\n' "$out" | sed -n '2s/^pin: //p')"
 tests/askpass
 ```
 
-Expected: `14 passed, 0 failed`, exit 0.
+Expected: `15 passed, 0 failed`, exit 0.
 
 - [ ] **Step 5: Commit**
 
@@ -592,7 +592,7 @@ First point where the box is real. Verifies the two claims the spec could not:
 that the AUR package builds here, and that the styling lands.
 
 **Files:**
-- Modify: `roles/aur/tasks/main.yml`
+- Modify: `group_vars/all/main.yml`
 - Create: `roles/system/templates/wayprompt.ini.j2`
 - Create: `roles/system/tasks/wayprompt.yml`
 - Modify: `roles/system/tasks/sudo.yml`
@@ -605,10 +605,22 @@ that the AUR package builds here, and that the styling lands.
 
 - [ ] **Step 1: Add wayprompt to the AUR package list**
 
-Find `aur_packages` (referenced at `roles/aur/tasks/main.yml:85`) and add
-`wayprompt` to it. It goes in the regular list, **not** `slow.yml`: all of REST
-is post-login anyway, so `slow.yml` buys nothing, and the prompter gates every
-other credential interaction in the session.
+`aur_packages` is defined in `group_vars/all/main.yml:152` (the task file only
+references it at `roles/aur/tasks/main.yml:85`). Add a comment-grouped entry,
+matching the style of its neighbours:
+
+```yaml
+  # credential prompt
+  - wayprompt
+```
+
+It goes in the regular list, **not** `slow.yml`: all of REST is post-login
+anyway, so `slow.yml` buys nothing, and the prompter gates every other
+credential interaction in the session.
+
+Declaring it in a `*_packages` var is also what keeps
+`scripts/gatherd-check-package-tiers` passing — that script fails any package
+named inline in a task file, because the offline-cache builder cannot see it.
 
 - [ ] **Step 2: Write the config template**
 
@@ -728,7 +740,7 @@ Escape; nothing prints and the exit is non-zero.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add roles/aur/tasks/main.yml roles/system/templates/wayprompt.ini.j2 \
+git add group_vars/all/main.yml roles/system/templates/wayprompt.ini.j2 \
         roles/system/tasks/wayprompt.yml roles/system/tasks/sudo.yml \
         roles/system/tasks/rest.yml
 git commit -m "Install wayprompt and dress it in the house style

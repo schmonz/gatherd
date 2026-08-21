@@ -15,7 +15,19 @@ if [ "$1" = "--handle" ]; then
     # are ignored. We reply with the password or, on Escape, a cancel.
     while IFS= read -r msg; do
         [ "$(printf '%s' "$msg" | jq -r '.action')" = "request password" ] || continue
-        if password=$("$askpass" "[polkit]"); then
+        # polkit computes a human sentence ("Authentication is required to
+        # install software.") and an action id for every request, and this
+        # agent used to discard both in favour of a bare tag. They beat
+        # anything the /proc walk could recover here: polkit's agent API has no
+        # subject parameter, so ancestry names cmd-polkit rather than whatever
+        # actually asked. "polkit action" is null when cmd-polkit could not
+        # resolve the action, hence the guarded pick rather than a plain //.
+        ctx=$(printf '%s' "$msg" | jq -r '
+            [ ( [ .message, ."polkit action".message ]
+                | map(select(type == "string" and . != "")) | first // empty ),
+              ( ."polkit action".id // empty | select(. != "") )
+            ] | join("\n")')
+        if password=$("$askpass" "[polkit]" "$ctx"); then
             # jq -Rs JSON-encodes the raw password, preserving any character that
             # naive quoting would mangle; printf avoids appending a newline to it.
             # -c is load-bearing: cmd-polkit reads our stdout one physical line at

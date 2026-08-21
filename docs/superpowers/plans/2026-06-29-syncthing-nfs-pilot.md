@@ -26,7 +26,9 @@ Reopens the `plans/TODO.md` "decided 2026-06-01" Syncthing entry (see memory
 
 - **STOP / NO-GO if ANY of Mavericks, Windows, or NetBSD cannot interoperate** with the
   mesh (join, round-trip a file both directions, stay compatible). Fleet-wide is the
-  whole value; losing any platform → keep NFS.
+  whole value; losing any platform → keep NFS. *(2026-08-21: much likelier to pass than
+  when written — see the Mavericks note in Phase 1. The binding risk has moved to
+  Phase 4.)*
 - **STOP / NO-GO if** any weird platform mangles source trees (perms/symlinks/case/charset
   corruption), **or** live-`.git` is unworkable *and* the `.stignore`-the-`.git` model is
   unacceptable to your workflow.
@@ -74,13 +76,25 @@ cp -a ~/trees/<some-active-tree> ~/syncthing-pilot/<some-active-tree>
 Do this for **each** of Mavericks, Windows, NetBSD **before** any deeper testing. If any
 one fails, **STOP and record NO-GO** — do not continue.
 
-### Mavericks (highest risk: protocol floor)
+### Mavericks
 
-- [ ] Find the **last Syncthing release that runs on macOS 10.9** and install it. Record the version.
+**2026-08-21 — the protocol-floor premise is obsolete.** This plan was written assuming
+Mavericks would be stuck on whatever Syncthing release still shipped a 10.9 binary, and
+that this old version would pin the whole mesh to its protocol. ModernMavericks now
+provides golang on 10.9 plus latest-version tools built from it — Tailscale among them,
+which is a large Go program leaning on modern TLS and networking, so Syncthing (Go, and
+a smaller ask) should build current too. Ship a current build and there is no floor: every
+node runs a recent Syncthing and no protocol compatibility question arises. Verify rather
+than assume, but expect this to pass.
+
+- [ ] Build/install a **current** Syncthing from the ModernMavericks golang toolchain. Record the version.
 - [ ] Connect it to the hub by static Tailscale address; share the pilot folder (same Folder ID).
 - [ ] **Round-trip test:** create `mavericks.txt` on Mavericks → appears on the hub; edit a file on the hub → change reaches Mavericks.
-- [ ] **Record:** Mavericks Syncthing version ______; interoperates with hub's version? **PASS / FAIL** ______
-  - This version is the **mesh protocol floor** — every other node must run a build that still talks to it. Note it: ______
+- [ ] **Record:** Mavericks Syncthing version ______; matches the other nodes (no floor to honour)? **PASS / FAIL** ______
+  - Only if a current build turns out NOT to be possible does the old floor logic apply:
+    note the newest workable version, and every other node must stay compatible with it: ______
+  - If ModernMavericks is pkgsrc-flavoured, check whether the same `net/syncthing` package
+    serves NetBSD too — that would collapse two of the three install stories into one.
 
 ### Windows
 
@@ -118,6 +132,12 @@ one fails, **STOP and record NO-GO** — do not continue.
 ---
 
 ## Phase 4 — Cross-platform file semantics (per weird platform)
+
+**Now the top risk for Mavericks** (2026-08-21), with the protocol floor gone. HFS+ on 10.9
+is case-insensitive and normalizes filenames to NFD, while Linux stores NFC — a long-standing
+source of Syncthing churn (files that look perpetually renamed, conflict loops on
+case-colliding paths). Windows shares the case-insensitivity half. Nothing about a newer
+Syncthing build fixes either; test both deliberately.
 
 For **each** of Mavericks / Windows / NetBSD, round-trip a tree containing edge cases and record what breaks:
 

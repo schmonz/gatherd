@@ -11,7 +11,6 @@
 # Always exits 0. A prompt that cannot be annotated must still be shown.
 
 proc="${GATHERD_PROC:-/proc}"
-pid="${1:-}"
 
 # Field 4 of /proc/<pid>/stat is ppid, but field-splitting on spaces breaks
 # when comm contains one ("(Web Content)"). comm is the only parenthesised
@@ -42,6 +41,20 @@ sanitize() {
     fi
     printf '%s%s' "$_clean" "$_mark"
 }
+
+# A second entry point for gatherd-askpass's caller-supplied context: any
+# application can register a polkit action with attacker-chosen text, so that
+# path needs the same allowlist as the /proc walk. Sharing sanitize() rather
+# than duplicating it keeps one rule for what may reach the box, in one place.
+if [ "${1:-}" = '--sanitize' ]; then
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        sanitize "$_line"
+        printf '\n'
+    done
+    exit 0
+fi
+
+pid="${1:-}"
 
 lines=''
 add() { lines="${lines:+$lines

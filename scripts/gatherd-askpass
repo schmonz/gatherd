@@ -11,7 +11,6 @@
 
 wayprompt="${GATHERD_WAYPROMPT:-nowayprompt}"
 prompt="${1:-Password:}"
-context="${2:-}"
 
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd"
 
@@ -65,9 +64,21 @@ case "$prompt" in
 '[sudo]'*) prompt='[sudo]' ;;
 esac
 
-# Ask who is calling, unless the caller already told us. Never fatal: a prompt
-# that cannot be annotated must still be shown.
-[ -n "$context" ] || context=$(gatherd-prompt-context "$PPID" 2>/dev/null)
+# A caller that passes argv[2] is authoritative, even when it is empty --
+# gatherd-polkit-agent passes "" when cmd-polkit could not resolve the action.
+# Falling back to the /proc walk there would name cmd-polkit-agent, i.e. the
+# plumbing, which is the exact misattribution the polkit path exists to avoid.
+if [ "$#" -ge 2 ]; then
+    context=$2
+    # The /proc path is already sanitized by gatherd-prompt-context; this path
+    # is caller-supplied and unbounded, so it needs the same allowlist before
+    # it reaches the renderer. Run only here -- running it twice on the /proc
+    # branch could double an "[elided]" marker.
+    context=$(printf '%s\n' "$context" | gatherd-prompt-context --sanitize 2>/dev/null)
+else
+    context=$(gatherd-prompt-context "$PPID" 2>/dev/null)
+fi
+# Never fatal: a prompt that cannot be annotated must still be shown.
 [ -n "$context" ] || context='context unavailable'
 
 # Line 2 is "pin: <secret>", per nowayprompt(1). Anchor the strip to the start

@@ -48,6 +48,9 @@
 - name: Configure sudo's askpass and shared credential cache
   ansible.builtin.include_tasks: sudo.yml
 
+- name: Route interactive sudo through the graphical prompt
+  ansible.builtin.include_tasks: sudo_function.yml
+
 - name: Create /etc/1password directory
   ansible.builtin.file:
     path: /etc/1password

@@ -1,0 +1,30 @@
+---
+# /etc/bash.bashrc, not /etc/profile.d: a foot window spawns a NON-LOGIN
+# interactive bash, which reads bash.bashrc and never sources profile.d. This
+# is the same class of delivery-mechanism trap documented in user_path.yml,
+# where environment.d silently never reached the sway session.
+#
+# Guarded on WAYLAND_DISPLAY so a TTY or an inbound SSH session gets sudo's own
+# prompt. On a TTY the context is already on screen -- you typed the command,
+# and the prompt appears inline in the shell that ran it -- so nowayprompt's
+# box would add nothing there; the context line exists for prompts you did not
+# expect. But this guard is load-bearing, not merely that preference:
+# nowayprompt's CLI path (src/command.rs) only sets allow_tty_fallback true
+# inside run_pinentry(); the plain `nowayprompt` invocation used by
+# gatherd-askpass takes Config::default(), where it is false, and dies with
+# "frontend unavailable: no Wayland display" (exit 1) regardless of whether a
+# pty is attached. Without this guard, sudo on a TTY or over SSH would simply
+# fail rather than fall back to a tty prompt.
+- name: Route interactive sudo through the graphical prompt
+  ansible.builtin.blockinfile:
+    path: /etc/bash.bashrc
+    block: |
+      sudo() {
+          if [ -n "$WAYLAND_DISPLAY" ]; then
+              command sudo -A "$@"
+          else
+              command sudo "$@"
+          fi
+      }
+    marker: "# {mark} ANSIBLE MANAGED BLOCK: gatherd sudo prompt"
+  notify: Etckeeper commit

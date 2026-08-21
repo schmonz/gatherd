@@ -47,6 +47,16 @@
 
 ## Backlog (uncategorized)
 
+- **git's username prompt is masked like a password.** `askpass.log` recorded
+  `Username for 'https://github.com':` reaching `gatherd-askpass` on 2026-08-05,
+  where it is rendered by the masked password box. Not a secret, and invisible
+  while typing. wayprompt (see
+  `specs/2026-08-21-elevated-prompt-context-design.md`) has only `--get-pin` and
+  no unmasked text entry, so the prompt-context work does not fix this and
+  slightly worsens it — a username typed into a row of pin-squares shows nothing
+  legible. Needs either an unmasked path (TUI fallback, or a second renderer for
+  non-secret prompts) or a decision to leave it.
+
 - **PIA kills the Tailscale-backed NFS mount on a CGNAT network.** Connecting PIA
   makes `~/.autofs-mounts/code` (NFS over Tailscale from `ap-juicer`) return EIO,
   so any worktree living there becomes unreadable mid-session — `bash: <script>:

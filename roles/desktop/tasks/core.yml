@@ -670,13 +670,13 @@
     path: "{{ target_home }}/.config/sway/config.d/application_defaults"
     line: 'for_window [app_id="captive-browser"] floating enable, resize set width 70 ppt height 70 ppt'
 
-- name: Float the ssh host-key verification prompt
-  # gatherd-askpass opens this foot window (app_id set to match) for the SSH
-  # first-contact yes/no prompt; floating keeps the modal decision centered
-  # instead of tiling it into a random split.
+- name: Remove the obsolete ssh host-key float rule
+  # gatherd-askpass no longer opens a foot window for this; nowayprompt draws
+  # on layer-shell, which sway does not tile, so the rule now matches nothing.
   ansible.builtin.lineinfile:
     path: "{{ target_home }}/.config/sway/config.d/application_defaults"
-    line: 'for_window [app_id="gatherd-hostkey-verify"] floating enable'
+    regexp: '^for_window \[app_id="gatherd-hostkey-verify"\]'
+    state: absent
 
 - name: Preserve keyhint popup font sizes despite GTK text-scaling-factor
   # GDK_DPI_SCALE=1/text-scaling-factor cancels the gsettings scaling exactly,

@@ -561,8 +561,12 @@ if [ "$rc" -ne 0 ]; then
     exit "$rc"
 fi
 
-printf '%s\n' "$(printf '%s\n' "$out" | sed -n '2s/^pin: //p')"
+printf '%s\n' "$out" | sed -n '2s/^pin: //p'
 ```
+
+The outer `printf "%s\n" "$(...)"` an earlier draft wrapped around this was not
+merely redundant: on a run where line 2 is missing it turns "print nothing" into
+"print an empty line". The pipeline alone is both simpler and more truthful.
 
 - [ ] **Step 4: Run the test to verify it passes**
 

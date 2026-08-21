@@ -1,12 +1,12 @@
 ---
-- name: Create the wayprompt config directory
+- name: Create the nowayprompt config directory
   ansible.builtin.file:
-    path: "{{ target_home }}/.config/wayprompt"
+    path: "{{ target_home }}/.config/nowayprompt"
     state: directory
     mode: '0755'
 
 - name: Configure the credential prompt's house style
   ansible.builtin.template:
-    src: wayprompt.ini.j2
-    dest: "{{ target_home }}/.config/wayprompt/config.ini"
+    src: nowayprompt.ini.j2
+    dest: "{{ target_home }}/.config/nowayprompt/config.ini"
     mode: '0644'

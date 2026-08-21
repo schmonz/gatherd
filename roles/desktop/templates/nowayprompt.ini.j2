@@ -6,10 +6,10 @@
 # when you are about to type a root password. The heavy salmon border finishes
 # the separation.
 #
-# In ~/.config rather than /etc: wayprompt's getConfigPath() is an else-if
-# chain on environment variables (src/Config.zig), not a search over
-# locations -- it reads $XDG_CONFIG_HOME/wayprompt/config.ini, else
-# $HOME/.config/wayprompt/config.ini, else /etc/wayprompt/config.ini, and
+# In ~/.config rather than /etc: nowayprompt's config lookup is an else-if
+# chain on environment variables, not a search over locations -- it reads
+# $XDG_CONFIG_HOME/nowayprompt/config.ini, else
+# $HOME/.config/nowayprompt/config.ini, else /etc/nowayprompt/config.ini, and
 # stops at the first branch that matches. /etc is only reached when both
 # XDG_CONFIG_HOME and HOME are unset, which never happens in a desktop
 # session -- the man page's "checked in this order" implies a fallback

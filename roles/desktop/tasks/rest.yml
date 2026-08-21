@@ -7,7 +7,7 @@
   when: tablet_mode_supported
 
 - name: Configure the credential prompt
-  ansible.builtin.include_tasks: wayprompt.yml
+  ansible.builtin.include_tasks: nowayprompt.yml
 
 - name: Configure xed font size for 80-col two-up layout
   ansible.builtin.shell: |

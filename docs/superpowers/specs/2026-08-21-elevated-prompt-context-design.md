@@ -149,8 +149,23 @@ otherwise.**
 
 - **Line 1 (sudo's argv) is fairly trustworthy.** The parent of the askpass
   helper *is* sudo — a setuid-root binary that does not rewrite its own argv.
-  Hardened further by verifying `/proc/$PPID/exe` resolves to `/usr/bin/sudo`
-  before trusting its argv: a poor man's attestation costing one `readlink`.
+  Hardened by requiring that `/proc/$PPID` be owned by uid 0 before its argv is
+  shown as an elevation.
+
+  An earlier draft proposed checking that `/proc/$PPID/exe` resolves to
+  `/usr/bin/sudo`. **That check can never succeed**, measured from inside a real
+  `sudo -A` askpass helper on this machine: because sudo is setuid-root the
+  kernel clears its dumpable flag, `/proc/<sudo-pid>` becomes `root:user`, and
+  `readlink` on `exe` returns empty even for the same real user. Had it shipped,
+  the `elevating:` line would simply never have appeared. `cmdline` and `comm`
+  stay readable throughout.
+
+  Ownership is the better attestation anyway: the kernel sets it from the
+  process's euid, so uid 0 proves the process actually gained privilege, and an
+  unprivileged impostor cannot forge it. `comm` is spoofable via
+  `prctl(PR_SET_NAME)`, so it only picks *which* privileged tool this is — it is
+  never what establishes privilege. Measured: a real sudo parent is uid 0; the
+  askpass helper and the shell above it are both uid 1000.
 - **Line 2 (ancestor identity) is not.** `argv` lives in the process's own
   writable memory; rewriting it is precisely how `setproctitle` works. A
   malicious ancestor can name itself whatever it likes.
@@ -162,8 +177,9 @@ self-reported; and nothing binds what we read to *this* authentication request.
 **The spoofing risk we cannot fix:** any process can set `SUDO_ASKPASS` and
 exec `gatherd-askpass "[sudo]"` directly, producing a convincing crimson
 root-password box with no sudo involved. No `/proc` walk helps — it is inherent
-to the askpass contract. The `exe` check at least makes such a box show
-"context unavailable" rather than a plausible fake command.
+to the askpass contract. The ownership check at least makes such a box show
+"context unavailable" rather than a plausible fake command, since the impostor's
+`/proc` entry is owned by the user rather than by root.
 
 The honest ceiling is **recognize the unexpected, never authorize the
 expected.**

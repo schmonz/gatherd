@@ -61,6 +61,17 @@ The pure, testable unit. Nothing else in the plan can be tested honestly until
 this exists, and it is the piece the spec flags as most likely to need
 revisiting.
 
+> **Superseded during execution.** The reference code below verifies the parent
+> by reading `/proc/<pid>/exe`. That check can never succeed: sudo is
+> setuid-root, so the kernel clears its dumpable flag, `/proc/<sudo-pid>`
+> becomes `root:user`, and `readlink` on `exe` returns empty even for the same
+> real user — measured from inside a real `sudo -A` askpass helper. The shipped
+> version requires `/proc/<pid>` to be owned by uid 0 instead, which the kernel
+> sets from the process's euid and an unprivileged impostor cannot forge. The
+> reference `sanitize()` below also drops the `[elided]` marker whenever
+> truncation fires; the shipped version tracks the two independently. See the
+> spec's *Trust levels* and commit history for what actually landed.
+
 **Files:**
 - Create: `scripts/gatherd-prompt-context`
 - Test: `tests/prompt-context`
@@ -989,7 +1000,7 @@ In `section_verify`, replace the existing `li` beginning `'Credential prompts
 wear the crimson house style:` with:
 
 ```sh
-    li 'Credential prompts wear the crimson house style and say who asked. `sudo -k; sudo id -u` in a NEW terminal pops a crimson box with a salmon border reading `elevating: id -u` and `requested by foot`, in the font from `grep font-regular /etc/wayprompt/config.ini` — typing the password prints `0`, Escape prints nothing and exits non-zero. Context is advisory, not a control, and the box must say so when it has nothing: `/usr/local/bin/gatherd-askpass "[sudo]"` run directly (no sudo parent, so the `/proc/PPID/exe` check fails) shows `context unavailable` rather than a fabricated command. Elision is announced: `sudo -k; sudo sh -c "$(printf "printf x\\033[2J")"` shows a line ending `[elided]`. The TTY branch still works: `sudo -k; env -u WAYLAND_DISPLAY bash -c "sudo id -u"` gives sudo'"'"'s own tty prompt with no box, and so does `command sudo id -u`. The ssh host-key decision is the SAME box, not a separate foot window: `/usr/local/bin/gatherd-askpass "Are you sure you want to continue connecting (yes/no/[fingerprint])?"` opens an unmasked three-button prompt (`Yes`/`No`/`Abort`) with the whole prompt legible; `Yes` prints `yes`, `No` prints `no`, `Abort` prints nothing and exits non-zero. Finally `grep -c gatherd-hostkey-verify ~/.config/sway/config.d/application_defaults` prints `0`.'
+    li 'Credential prompts wear the crimson house style and say who asked. `sudo -k; sudo id -u` in a NEW terminal pops a crimson box with a salmon border reading `elevating: id -u` and `requested by foot`, in the font from `grep font-regular /etc/wayprompt/config.ini` — typing the password prints `0`, Escape prints nothing and exits non-zero. Context is advisory, not a control, and the box must say so when it has nothing: `/usr/local/bin/gatherd-askpass "[sudo]"` run directly (no privileged parent, so the `/proc/PPID` owner-uid check fails) shows `context unavailable` rather than a fabricated command. Elision is announced: `sudo -k; sudo sh -c "$(printf "printf x\\033[2J")"` shows a line ending `[elided]`. The TTY branch still works: `sudo -k; env -u WAYLAND_DISPLAY bash -c "sudo id -u"` gives sudo'"'"'s own tty prompt with no box, and so does `command sudo id -u`. The ssh host-key decision is the SAME box, not a separate foot window: `/usr/local/bin/gatherd-askpass "Are you sure you want to continue connecting (yes/no/[fingerprint])?"` opens an unmasked three-button prompt (`Yes`/`No`/`Abort`) with the whole prompt legible; `Yes` prints `yes`, `No` prints `no`, `Abort` prints nothing and exits non-zero. Finally `grep -c gatherd-hostkey-verify ~/.config/sway/config.d/application_defaults` prints `0`.'
 ```
 
 This replaces rather than adds, so the `li` count stays at 12.
@@ -1022,7 +1033,7 @@ converged machines rather than leaving a stale line behind.
 The verify step is rewritten rather than added to, so the li count stays at 12.
 It now checks the parts that are easy to get quietly wrong: that context is
 present for a real sudo, that it degrades to 'context unavailable' rather than
-a fabricated command when the /proc/PPID/exe check fails, that elision is
+a fabricated command when the /proc/PPID owner-uid check fails, that elision is
 announced, that the TTY branch still reaches sudo's own prompt, and that the
 host-key decision is the same box rather than a separate window."
 ```
@@ -1032,7 +1043,7 @@ host-key decision is the same box rather than a separate window."
 ## Self-Review
 
 **Spec coverage:** renderer swap → Task 2/3; context line and its three rules →
-Task 1; trust levels and the `exe` check → Task 1 Step 3; polkit message →
+Task 1; trust levels and the privilege attestation → Task 1 Step 3; polkit message →
 Task 4; terminal sudo routing → Task 5; deleted foot/fuzzel paths → Task 2 and
 Task 6; wayprompt-missing behaviour → Task 2 Step 3; verify step → Task 6. The
 spec's "What a correct API would look like" is reference material with no task,

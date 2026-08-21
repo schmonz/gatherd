@@ -35,6 +35,11 @@ sway.
   changes. The comments carry the measurements and the reasoning.
 - `git filter-repo` operates ONLY on a scratch clone under `/tmp`. Never run it
   against `/home/schmonz/.autofs-mounts/code/trees/gatherd`.
+- **The new repo lives on LOCAL disk: `/home/schmonz/src/`.** `~/trees` and
+  `~/.autofs-mounts` are the same NFS mount, reached over Tailscale at 131ms
+  RTT with packet loss; `git status` there takes 47 seconds against 0.00s
+  locally. `/tmp` is tmpfs, so work in progress there does not survive a
+  reboot — Task 6 moves it to local disk promptly for that reason.
 - The human creates the GitHub repo and pushes. Do not create remotes, do not
   push.
 
@@ -637,9 +642,10 @@ them from a script at all."
 - [ ] **Step 6: Move the repo into place and hand off**
 
 ```bash
+mkdir -p /home/schmonz/src
 mv /tmp/extract/chuwi-minibook-tablet-mode \
-   /home/schmonz/.autofs-mounts/code/trees/chuwi-minibook-tablet-mode
-cd /home/schmonz/.autofs-mounts/code/trees/chuwi-minibook-tablet-mode
+   /home/schmonz/src/chuwi-minibook-tablet-mode
+cd /home/schmonz/src/chuwi-minibook-tablet-mode
 git log --oneline | head -5
 ./tests/tablet-mode 2>&1 | tail -1
 ```

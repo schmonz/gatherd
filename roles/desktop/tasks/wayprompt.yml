@@ -1,13 +1,12 @@
 ---
 - name: Create the wayprompt config directory
   ansible.builtin.file:
-    path: /etc/wayprompt
+    path: "{{ target_home }}/.config/wayprompt"
     state: directory
     mode: '0755'
 
 - name: Configure the credential prompt's house style
   ansible.builtin.template:
     src: wayprompt.ini.j2
-    dest: /etc/wayprompt/config.ini
+    dest: "{{ target_home }}/.config/wayprompt/config.ini"
     mode: '0644'
-  notify: Etckeeper commit

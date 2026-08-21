@@ -6,9 +6,17 @@
 # when you are about to type a root password. The heavy salmon border finishes
 # the separation.
 #
-# In /etc rather than ~/.config because the styling derives from
-# foot_font_size, a machine fact rather than a user preference, and because a
-# prompt must look the same regardless of who runs it.
+# In ~/.config rather than /etc: wayprompt's getConfigPath() is an else-if
+# chain on environment variables (src/Config.zig), not a search over
+# locations -- it reads $XDG_CONFIG_HOME/wayprompt/config.ini, else
+# $HOME/.config/wayprompt/config.ini, else /etc/wayprompt/config.ini, and
+# stops at the first branch that matches. /etc is only reached when both
+# XDG_CONFIG_HOME and HOME are unset, which never happens in a desktop
+# session -- the man page's "checked in this order" implies a fallback
+# search that the code doesn't actually do. Every caller of
+# gatherd-askpass runs as the target user (sudo invokes the askpass helper
+# as the invoking user, not root; the polkit agent and ssh likewise), so
+# the user path is the one that's actually consulted.
 [general]
 # fcft, the same font library fuzzel and foot use, so this is the same syntax
 # already templated into fuzzel.ini and foot.ini.

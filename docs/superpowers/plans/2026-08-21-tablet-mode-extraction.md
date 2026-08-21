@@ -203,7 +203,13 @@ Note: the trailing entries cover the env-var overrides
 ```bash
 cd /tmp/extract/chuwi-minibook-tablet-mode
 git filter-repo --force --replace-text /tmp/extract/replacements.txt
+git filter-repo --force --replace-message /tmp/extract/replacements.txt
 ```
+
+BOTH passes are required. In git-filter-repo 2.47.0, `--replace-text` rewrites
+blob content ONLY; commit and tag messages need `--replace-message`, which
+takes the same file syntax. Running only the first leaves the old names in
+every commit message and fails Step 3's expectation of zero.
 
 - [ ] **Step 3: Verify no old names survive anywhere**
 

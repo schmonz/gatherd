@@ -4,8 +4,16 @@
 # is the same class of delivery-mechanism trap documented in user_path.yml,
 # where environment.d silently never reached the sway session.
 #
-# Guarded on WAYLAND_DISPLAY so a TTY or an inbound SSH session gets sudo's own
-# prompt. On a TTY the context is already on screen -- you typed the command,
+# Guarded on WAYLAND_DISPLAY *and* on the renderer being installed, so anything
+# that cannot draw a box degrades to sudo's own prompt instead of failing. That
+# second condition is not hypothetical: `sudo -A` ABORTS when its askpass exits
+# non-zero, and gatherd-askpass exits non-zero when the renderer is missing --
+# which is the state of every machine between CORE finishing and REST installing
+# nowayprompt, and the permanent state of any machine where that build fails.
+# Without it, a package that would not build takes interactive sudo down with
+# it. This repo fails open everywhere else; the prompt must too.
+#
+# The WAYLAND_DISPLAY half gets sudo's own prompt on a TTY or an inbound SSH. On a TTY the context is already on screen -- you typed the command,
 # and the prompt appears inline in the shell that ran it -- so nowayprompt's
 # box would add nothing there; the context line exists for prompts you did not
 # expect. But this guard is load-bearing, not merely that preference:
@@ -20,7 +28,7 @@
     path: /etc/bash.bashrc
     block: |
       sudo() {
-          if [ -n "$WAYLAND_DISPLAY" ]; then
+          if [ -n "$WAYLAND_DISPLAY" ] && command -v nowayprompt >/dev/null 2>&1; then
               command sudo -A "$@"
           else
               command sudo "$@"

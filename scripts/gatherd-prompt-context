@@ -71,7 +71,8 @@ if [ -n "$pid" ] && [ -d "$proc/$pid" ]; then
         *' '*) argv=${argv#* } ;;
         *) argv='' ;;
         esac
-        argv=${argv#-A }
+        argv=${argv#-A}
+        argv=${argv# }
         [ -n "$argv" ] && add "elevating: $(sanitize "$argv")"
     fi
 

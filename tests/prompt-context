@@ -143,5 +143,29 @@ assert_out 'a missing argument says so rather than printing nothing' \
     'context unavailable' \
     gatherd-prompt-context
 
+# A bare sudo -A with no command must show no elevating line: -A is only noise
+# from gatherd's wrapper, and a command that is not being run should never be
+# shown even as a truncation of nothing.
+mkproc 510 400 sudo 0 sudo -A
+mkproc 400 300 bash 1000 /bin/bash
+mkproc 300 1   foot 1000 foot --server
+assert_out 'a bare sudo -A produces no elevating line' \
+    'requested by foot' \
+    gatherd-prompt-context 510
+
+# The ownership check must not fail open: if stat cannot run, no elevating line
+# must appear. This is the load-bearing security property: without the uid 0
+# check, any process could set SUDO_ASKPASS and show a fabricated command.
+# Temporarily remove stat to verify it fails closed.
+_stat_save="$FAKEBIN/stat"
+mv "$_stat_save" "$_stat_save.bak"
+mkproc 511 400 sudo 0 sudo -A id
+mkproc 400 300 bash 1000 /bin/bash
+mkproc 300 1   foot 1000 foot --server
+assert_out 'missing stat fails closed: no elevating line' \
+    'requested by foot' \
+    gatherd-prompt-context 511
+mv "$_stat_save.bak" "$_stat_save"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

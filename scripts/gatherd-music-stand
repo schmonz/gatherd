@@ -215,6 +215,13 @@ turn_on() {
     _viewer_pid=$!
     mkdir -p "$state_dir" 2>/dev/null || true
     printf '%s\n' "$_viewer_pid" > "$viewer_pid_file" 2>/dev/null || true
+
+    # Already folded when this score was picked? Then tablet mode has been on
+    # since long before this window existed, so its fullscreen has already
+    # happened and missed. Ask for it again now. A no-op when unfolded, which
+    # is the case where the score is meant to be an ordinary window.
+    # gatherd-tablet-mode remains the only thing that talks to sway.
+    gatherd-tablet-mode fullscreen-viewer || true
 }
 
 viewer_running() {

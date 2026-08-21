@@ -138,6 +138,36 @@ set_viewer_fullscreen() {
     swaymsg "[app_id=\"$viewer_app_id\"] fullscreen $1" >/dev/null 2>&1 || true
 }
 
+# Wait for the viewer's window to exist, then fullscreen it. Needed when a
+# score is opened while ALREADY folded - "Pick another score" from the folded
+# menu - because turn_on's fullscreen ran long before this window existed, and
+# the launching script cannot do it inline either: it returns as soon as the
+# process is spawned, well before the window maps.
+#
+# Bounded and always succeeds. A viewer that never appears (a crash, a missing
+# file, a human who cancelled) must not leave the caller hanging or reporting
+# failure for something cosmetic.
+viewer_window_present() {
+    swaymsg -t get_tree 2>/dev/null \
+        | jq -e --arg id "$viewer_app_id" \
+            'first(.. | objects | select(.app_id? == $id)) != null' >/dev/null 2>&1
+}
+
+fullscreen_viewer() {
+    is_on || return 0
+    [ -n "$viewer_app_id" ] || return 0
+    _waited=0
+    while [ "$_waited" -lt 50 ]; do
+        if viewer_window_present; then
+            set_viewer_fullscreen enable
+            return 0
+        fi
+        _waited=$((_waited + 1))
+        sleep 0.1
+    done
+    return 0
+}
+
 set_inhibitors() {
     for _id in $(view_ids); do
         swaymsg "[con_id=$_id]" inhibit_idle "$1" >/dev/null
@@ -225,6 +255,7 @@ case "${1:-toggle}" in
     off)    turn_off ;;
     toggle) if is_on; then turn_off; else turn_on; fi ;;
     status) is_on ;;
+    fullscreen-viewer) fullscreen_viewer ;;
     rotation-status) rotation_is_on ;;
     rotation-on)     rm -f "$rotation_off_file" ;;
     rotation-off)    mkdir -p "$state_dir"; : > "$rotation_off_file" ;;
@@ -233,6 +264,6 @@ case "${1:-toggle}" in
                      else
                          rm -f "$rotation_off_file"
                      fi ;;
-    *)      echo "usage: $0 on|off|toggle|status|rotation-{status,on,off,toggle}" >&2
+    *)      echo "usage: $0 on|off|toggle|status|fullscreen-viewer|rotation-{status,on,off,toggle}" >&2
             exit 2 ;;
 esac

@@ -73,7 +73,8 @@ cat > "$WORK/tree.json" <<'JSON'
           "app_id": null,
           "nodes": [
             {"type": "con", "id": 101, "app_id": "org.gnome.Papers"},
-            {"type": "con", "id": 102, "app_id": "foot"}
+            {"type": "con", "id": 102, "app_id": "foot"},
+            {"type": "con", "id": 103, "app_id": "luajit"}
           ],
           "floating_nodes": []
         }
@@ -521,6 +522,24 @@ assert_out 'the viewer opened the chosen score' "$SCORES/2 Skazki, Op. 48.pdf" \
 # happened in real use, leaving a score half-launched and the screen flicking
 # back to landscape.
 assert_fail 'opening a score does not enter tablet mode' gatherd-tablet-mode status
+
+# ...but opening one while ALREADY folded must fullscreen it. Asserted here on
+# gatherd-music-stand rather than only on the verb it calls: deleting the call
+# passed every test until this one existed.
+_saved_conf=$(cat "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf" 2>/dev/null || true)
+printf 'viewer_app_id=luajit\n' > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+gatherd-tablet-mode on >/dev/null 2>&1
+reset_log
+reset_picker 'Medtner' 'Two Skazki'
+assert_ok 'music-stand on succeeds while already folded' gatherd-music-stand on
+if log_has '[app_id="luajit"] fullscreen enable'; then
+    ok 'a score opened while already folded is asked to fill the screen'
+else
+    bad 'a score opened while already folded is asked to fill the screen'
+fi
+gatherd-music-stand close >/dev/null 2>&1 || true
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+printf '%s' "$_saved_conf" > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
 assert_out 'the pick was recorded in the MRU' \
     'Medtner	Two Skazki	2 Skazki, Op. 48.pdf' \
     cat "$XDG_STATE_HOME/gatherd/music-stand-scores"
@@ -988,6 +1007,48 @@ if log_has 'fullscreen'; then
     bad 'no configured app_id means no fullscreen call at all'
 else
     ok 'no configured app_id means no fullscreen call at all'
+fi
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+
+# ── a score opened while ALREADY folded still fills the screen ───────────────
+# "Pick another score" from the folded menu launches a viewer into a tablet
+# mode that has been on for some time, so turn_on's fullscreen ran long before
+# this window existed. The launching script cannot do it inline either - it
+# returns as soon as the process is spawned, well before the window maps - so
+# there is a separate verb that waits for the window and then fullscreens it.
+
+printf 'transform=180\nviewer_app_id=luajit\n' \
+    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+gatherd-tablet-mode off >/dev/null 2>&1 || true
+reset_log
+assert_ok 'fullscreen-viewer is a no-op when not in tablet mode' \
+    gatherd-tablet-mode fullscreen-viewer
+if log_has 'fullscreen'; then
+    bad 'an unfolded machine leaves the score as an ordinary window'
+else
+    ok 'an unfolded machine leaves the score as an ordinary window'
+fi
+
+gatherd-tablet-mode on >/dev/null 2>&1
+reset_log
+assert_ok 'fullscreen-viewer succeeds while folded' gatherd-tablet-mode fullscreen-viewer
+if log_has '[app_id="luajit"] fullscreen enable'; then
+    ok 'a score opened while already folded is fullscreened'
+else
+    bad 'a score opened while already folded is fullscreened'
+fi
+
+# A viewer that never appears must not hang the caller or fail. The fixture
+# has no window with this app_id, so the wait runs out.
+printf 'transform=180\nviewer_app_id=no-such-viewer-window\n' \
+    > "$XDG_CONFIG_HOME/gatherd/tablet-mode.conf"
+reset_log
+assert_ok 'a viewer window that never appears is not an error' \
+    gatherd-tablet-mode fullscreen-viewer
+if log_has 'fullscreen'; then
+    bad 'no window means no fullscreen call'
+else
+    ok 'no window means no fullscreen call'
 fi
 gatherd-tablet-mode off >/dev/null 2>&1 || true
 

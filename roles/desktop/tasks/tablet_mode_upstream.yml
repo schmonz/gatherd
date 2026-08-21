@@ -4,6 +4,16 @@
 # is REST, not CORE: cloning is a network operation, and CORE must converge
 # with no internet at all. roles/desktop/tasks/tablet_mode.yml (CORE) already
 # installed the config and menu this reads.
+#
+# The consequence, accepted deliberately: on a FRESH machine tablet mode does
+# not exist until this play runs, so folding does nothing between first boot
+# and the end of REST. That window costs less than it appears - the PDF viewer
+# is an AUR package installed in REST too, so the music stand could not have
+# worked there either, and what is actually lost is bare fold-to-rotate. The
+# alternative was vendoring a copy of the upstream repo into this one, which
+# would mean gatherd no longer consumes the published artefact the way any
+# other user does - and that consumption is the only real test that the
+# extraction works.
 - name: Clone the tablet-mode mechanism
   ansible.builtin.git:
     repo: "{{ tablet_mode_upstream_repo }}"

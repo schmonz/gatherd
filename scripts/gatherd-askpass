@@ -9,7 +9,7 @@
 # is an optional pre-computed context line for callers that know more than a
 # /proc walk could recover, stdout is the secret, non-zero exit is a cancel.
 
-wayprompt="${GATHERD_WAYPROMPT:-wayprompt}"
+wayprompt="${GATHERD_WAYPROMPT:-nowayprompt}"
 prompt="${1:-Password:}"
 context="${2:-}"
 
@@ -20,14 +20,15 @@ note() {
     printf '%s %s\n' "$(date '+%F %T')" "$1" >> "$log_dir/askpass.log" 2>/dev/null
 }
 
-# wayprompt is an AUR package, so it does not exist until REST has run. Cancel
-# cleanly rather than falling back: falling back to fuzzel would resurrect the
-# second look this design exists to delete, and falling back to
-# systemd-ask-password would owe the Artix/s6 port a second answer. Every
-# caller already reads a non-zero exit as a cancel and does the right thing
-# with it -- gatherd-prompt-vault leaves its loop, polkit denies, sudo aborts.
+# nowayprompt is built from a vendored PKGBUILD (it isn't in the AUR), so it
+# does not exist until REST has run. Cancel cleanly rather than falling back:
+# falling back to fuzzel would resurrect the second look this design exists to
+# delete, and falling back to systemd-ask-password would owe the Artix/s6 port
+# a second answer. Every caller already reads a non-zero exit as a cancel and
+# does the right thing with it -- gatherd-prompt-vault leaves its loop, polkit
+# denies, sudo aborts.
 if ! command -v "$wayprompt" >/dev/null 2>&1; then
-    note "wayprompt missing; cancelled prompt=$prompt"
+    note "nowayprompt missing; cancelled prompt=$prompt"
     exit 1
 fi
 

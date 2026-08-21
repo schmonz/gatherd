@@ -40,18 +40,22 @@
 | `tests/prompt-context` | unit tests for the above against a fake `/proc` | create |
 | `scripts/gatherd-askpass` | classify source, gather context, drive wayprompt, map exits | rewrite |
 | `tests/askpass` | unit tests against a fake `wayprompt` | create |
-| `roles/system/templates/wayprompt.ini.j2` | house style → `/etc/wayprompt/config.ini` | create |
+| `roles/desktop/templates/wayprompt.ini.j2` | house style → `~/.config/wayprompt/config.ini` | create |
 | `roles/system/tasks/sudo.yml` | install prompt-context; point sudo at askpass | modify |
-| `roles/system/tasks/wayprompt.yml` | render `/etc/wayprompt/config.ini` | create |
+| `roles/desktop/tasks/wayprompt.yml` | render `~/.config/wayprompt/config.ini` | create |
 | `roles/system/tasks/sudo_function.yml` | `sudo` shell function in `/etc/bash.bashrc` | create |
 | `group_vars/all/main.yml` | add `wayprompt` to `aur_packages` | modify |
 | `scripts/gatherd-polkit-agent` | pass polkit's message + action id as `argv[2]` | modify |
 | `roles/desktop/tasks/core.yml` | drop the `gatherd-hostkey-verify` sway float rule | modify |
 | `scripts/gatherd-post-setup-notes` | rewrite the credential-prompt verify line | modify |
 
-**Correction to the spec:** it lists the wayprompt config template under
-`roles/desktop`. That role runs `become_user: target_user`, and
-`/etc/wayprompt/config.ini` needs root, so it lives in `roles/system` instead.
+**Superseded during execution.** Task 3 below places the wayprompt config at
+`/etc/wayprompt/config.ini`. wayprompt never reads that path in a desktop
+session: `getConfigPath()` (`src/Config.zig:205-220`) is an else-if chain on
+environment variables, and `/etc` is reached only when both `XDG_CONFIG_HOME`
+and `HOME` are unset. The shipped version writes
+`~/.config/wayprompt/config.ini` from the `desktop` role. See the spec's
+*Architecture* section and commit 07d4476.
 
 ---
 
@@ -1012,7 +1016,7 @@ In `section_verify`, replace the existing `li` beginning `'Credential prompts
 wear the crimson house style:` with:
 
 ```sh
-    li 'Credential prompts wear the crimson house style and say who asked. `sudo -k; sudo id -u` in a NEW terminal pops a crimson box with a salmon border reading `elevating: id -u` and `requested by foot`, in the font from `grep font-regular /etc/wayprompt/config.ini` — typing the password prints `0`, Escape prints nothing and exits non-zero. Context is advisory, not a control, and the box must say so when it has nothing: `/usr/local/bin/gatherd-askpass "[sudo]"` run directly (no privileged parent, so the `/proc/PPID` owner-uid check fails) shows `context unavailable` rather than a fabricated command. Elision is announced: `sudo -k; sudo sh -c "$(printf "printf x\\033[2J")"` shows a line ending `[elided]`. The TTY branch still works: `sudo -k; env -u WAYLAND_DISPLAY bash -c "sudo id -u"` gives sudo'"'"'s own tty prompt with no box, and so does `command sudo id -u`. The ssh host-key decision is the SAME box, not a separate foot window: `/usr/local/bin/gatherd-askpass "Are you sure you want to continue connecting (yes/no/[fingerprint])?"` opens an unmasked three-button prompt (`Yes`/`No`/`Abort`) with the whole prompt legible; `Yes` prints `yes`, `No` prints `no`, `Abort` prints nothing and exits non-zero. Finally `grep -c gatherd-hostkey-verify ~/.config/sway/config.d/application_defaults` prints `0`.'
+    li 'Credential prompts wear the crimson house style and say who asked. `sudo -k; sudo id -u` in a NEW terminal pops a crimson box with a salmon border reading `elevating: id -u` and `requested by foot`, in the font from `grep font-regular ~/.config/wayprompt/config.ini` — typing the password prints `0`, Escape prints nothing and exits non-zero. Context is advisory, not a control, and the box must say so when it has nothing: `/usr/local/bin/gatherd-askpass "[sudo]"` run directly (no privileged parent, so the `/proc/PPID` owner-uid check fails) shows `context unavailable` rather than a fabricated command. Elision is announced: `sudo -k; sudo sh -c "$(printf "printf x\\033[2J")"` shows a line ending `[elided]`. The TTY branch still works: `sudo -k; env -u WAYLAND_DISPLAY bash -c "sudo id -u"` gives sudo'"'"'s own tty prompt with no box, and so does `command sudo id -u`. The ssh host-key decision is the SAME box, not a separate foot window: `/usr/local/bin/gatherd-askpass "Are you sure you want to continue connecting (yes/no/[fingerprint])?"` opens an unmasked three-button prompt (`Yes`/`No`/`Abort`) with the whole prompt legible; `Yes` prints `yes`, `No` prints `no`, `Abort` prints nothing and exits non-zero. Finally `grep -c gatherd-hostkey-verify ~/.config/sway/config.d/application_defaults` prints `0`.'
 ```
 
 This replaces rather than adds, so the `li` count stays at 12.

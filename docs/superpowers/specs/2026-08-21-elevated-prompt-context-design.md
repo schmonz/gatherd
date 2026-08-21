@@ -96,7 +96,7 @@ sudo (SUDO_ASKPASS,
 ssh / git (SSH_ASKPASS) ─┤
 gatherd-prompt-vault    ─┼──▶  gatherd-askpass  ──────▶   wayprompt
 gatherd-polkit-agent    ─┘      (classify, gather,         (AUR; house style
-                                 sanitize, map exits)       from /etc/wayprompt)
+                                 sanitize, map exits)    from ~/.config/wayprompt)
                                         │
                                         └──▶ gatherd-prompt-context
                                              (/proc ancestry walk + allowlist)
@@ -114,7 +114,7 @@ gather context, call `wayprompt` instead of `fuzzel`.
 | Component | Job | Lives in |
 | --- | --- | --- |
 | `wayprompt` | draws the box | AUR → `roles/aur/tasks/main.yml` |
-| `/etc/wayprompt/config.ini` | house style: crimson/salmon, `border=4`, `corner-radius=10`, fcft font from `foot_font_size` | new template, `roles/desktop` |
+| `~/.config/wayprompt/config.ini` | house style: crimson/salmon, `border=4`, `corner-radius=10`, fcft font from `foot_font_size` | new template, `roles/desktop` |
 | `gatherd-prompt-context <pid>` | walk `/proc`, verify, allowlist, emit one line | `scripts/`, new |
 | `gatherd-polkit-agent` | pass polkit's `message` and action id through as context instead of a bare `[polkit]` | `scripts/`, modified |
 | `sudo` shell function | route interactive `sudo` to `-A` | `/etc/bash.bashrc` blockinfile, `roles/system` |
@@ -124,10 +124,32 @@ optional `argv[2]` on `gatherd-askpass` carrying a pre-computed context line,
 used when the caller already knows more than a `/proc` walk could recover.
 Backwards compatible — every existing caller passes one argument.
 
-`/etc`, not `~/.config`: wayprompt checks `$XDG_CONFIG_HOME` first and
-`/etc/wayprompt/config.ini` second. The styling derives from `foot_font_size`,
-a machine fact rather than a user preference, and `/etc` means it applies
-regardless of who runs the prompter.
+**`~/.config/wayprompt/config.ini`, not `/etc`.** An earlier draft put this in
+`/etc`, reading wayprompt(5)'s statement that it looks for a config "in the
+following locations, in this order" — `$XDG_CONFIG_HOME/wayprompt/config.ini`,
+then `/etc/wayprompt/config.ini`. That reads like a search path. **It is not.**
+`getConfigPath()` (`src/Config.zig:205-220`) is an else-if chain on
+*environment variables*:
+
+```zig
+if (getenv("XDG_CONFIG_HOME"))  -> $XDG_CONFIG_HOME/wayprompt/config.ini
+else if (getenv("HOME"))        -> $HOME/.config/wayprompt/config.ini
+else                            -> /etc/wayprompt/config.ini
+```
+
+followed by `posix.access(path, R_OK) catch return` — one path, and built-in
+defaults if it is unreadable. `/etc` is consulted only when **both** variables
+are unset, which never happens in a desktop session. Had the `/etc` version
+shipped, every prompt would have drawn in stock white-and-black and nothing in
+the plan would have caught it: the file renders correctly and lint passes; it
+is simply never opened.
+
+The `/etc` reasoning does not bite anyway. Every caller of `gatherd-askpass`
+runs as the target user — sudo runs the askpass helper as the *invoking* user
+rather than as root, and the polkit agent and ssh likewise — so the user path
+is the one actually consulted. `foot_font_size` is still a machine fact; the
+`desktop` role already templates other user config from machine facts
+(`fuzzel.ini`, `foot.ini`), so it owns this too.
 
 ### What gets deleted
 

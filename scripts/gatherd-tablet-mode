@@ -3,7 +3,8 @@
 # portrait and stop the built-in keyboard and touchpad from typing against
 # whatever the folded machine is resting on.
 #
-# This is the only thing that touches sway state. The keybinding, the power
+# This is the only thing that touches compositor state, and it reaches the
+# compositor only through gatherd-compositor. The keybinding, the power
 # button and (later) a hinge-angle daemon are all callers — which is what lets
 # the trigger change without reopening the mechanism. See
 # docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
@@ -29,52 +30,18 @@ transform="${GATHERD_TABLET_TRANSFORM:-$transform}"
 # wlroots applies the DRM panel-orientation quirk itself and upright landscape
 # is transform 90. We record whatever we find and restore that.
 internal_output() {
-    swaymsg -t get_outputs \
-        | jq -r 'first(.[] | select(.name | test("^(eDP|DSI|LVDS)")) | .name) // empty'
+    gatherd-compositor internal-output
 }
 
-# Built-in keyboards only: the i8042 controller enumerates as 1:1:*. An external
-# or Bluetooth keyboard has a real vendor:product id and must keep working while
-# folded — a page-turner pedal presents as exactly that, and silencing it would
-# defeat the point of using this at a piano.
-builtin_keyboards() {
-    swaymsg -t get_inputs \
-        | jq -r '.[] | select(.type == "keyboard")
-                     | select(.identifier | startswith("1:1:"))
-                     | .identifier' \
-        | sort -u
-}
-
-# The re-enable side deliberately does NOT use the i8042 heuristic below.
-# That heuristic exists to keep an external keyboard (a page-turner pedal)
-# alive while folded - a constraint that only applies to DISABLING. Re-enabling
-# by type is strictly safer: `enabled` is the default state, so sweeping every
-# keyboard and touchpad costs nothing, while the heuristic could return an
-# empty list (a transient swaymsg or jq failure inside a command substitution
-# is invisible to `set -e`) and silently give the human nothing back.
-enable_all_input() {
-    swaymsg input type:keyboard events enabled >/dev/null || true
-    swaymsg input type:touchpad events enabled >/dev/null || true
-}
-
-# Positive confirmation that the built-in keyboards are actually silenced.
-# `for _id in $(builtin_keyboards)` runs its body ZERO times when the query
-# comes back empty, and a swaymsg or jq failure inside a command substitution
-# is invisible to `set -e` - so the loop could no-op while turn_on carried on
-# and rotated the screen. The result is a tablet mode that looks fully on but
-# left the keyboard live, and a machine folded onto its own keys then types
-# into whatever is focused. That is how a fuzzel menu came up showing its
-# prompt and no entries at all: dmenu filters as you type, and the folded
-# keyboard had filtered every entry away.
-#
-# `length > 0` is the half that matters: "all of an empty list are disabled"
-# is vacuously true, which is exactly the answer that would hide this bug.
+# Confirm the built-in keyboards are actually silenced rather than assuming it.
+# Asking the compositor to silence them can come back having done nothing at
+# all - a transient query failure leaves nothing to iterate over - and turn_on
+# would carry on and rotate the screen regardless. The result is a tablet mode
+# that looks fully on while the keyboard is still live, and a machine folded
+# onto its own keys types into whatever is focused. That is how a folded fuzzel
+# menu once came up with its prompt and every entry filtered away.
 builtin_keyboards_silenced() {
-    swaymsg -t get_inputs 2>/dev/null \
-        | jq -e '[.[] | select(.type == "keyboard")
-                      | select(.identifier | startswith("1:1:"))
-                      | .libinput.send_events // empty]
-                 | length > 0 and all(. == "disabled")' >/dev/null 2>&1
+    gatherd-compositor builtin-input-silenced
 }
 
 warn() {
@@ -92,7 +59,7 @@ warn() {
 disable_builtin_input() {
     _try=1
     while [ "$_try" -le 3 ]; do
-        set_builtin_events disabled
+        gatherd-compositor silence-builtin-input
         if builtin_keyboards_silenced; then
             return 0
         fi
@@ -100,26 +67,6 @@ disable_builtin_input() {
     done
     warn "WARNING could not confirm the built-in keyboard is disabled - a folded machine may type against whatever it is resting on"
     return 1
-}
-
-set_builtin_events() {
-    for _id in $(builtin_keyboards); do
-        swaymsg input "$_id" events "$1" >/dev/null
-    done
-    # The i8042 identifier heuristic does not transfer to touchpads: the built-in
-    # touchpad is indistinguishable by identifier from an external one, and Sway
-    # exposes no "internal device" flag. The constraint (keeping external input
-    # working while folded) is keyboard-specific and is protected by the pedal case.
-    swaymsg input type:touchpad events "$1" >/dev/null
-}
-
-# Every application window (not outputs, not workspaces — those are
-# containers with no app_id) currently in the tree. This is what makes idle
-# inhibition tablet-mode-scoped rather than viewer-scoped: the score being on
-# screen is only one of the things a folded, keyboard-disabled machine must
-# stay awake for.
-view_ids() {
-    swaymsg -t get_tree | jq -r '.. | objects | select(.app_id != null) | .id'
 }
 
 # The score fills the screen while folded, and goes back to being a window
@@ -135,7 +82,7 @@ view_ids() {
 # keyboard, or the rest of turn_off, which gives it back.
 set_viewer_fullscreen() {
     [ -n "$viewer_app_id" ] || return 0
-    swaymsg "[app_id=\"$viewer_app_id\"] fullscreen $1" >/dev/null 2>&1 || true
+    gatherd-compositor set-fullscreen "$viewer_app_id" "$1"
 }
 
 # Wait for the viewer's window to exist, then fullscreen it. Needed when a
@@ -148,9 +95,7 @@ set_viewer_fullscreen() {
 # file, a human who cancelled) must not leave the caller hanging or reporting
 # failure for something cosmetic.
 viewer_window_present() {
-    swaymsg -t get_tree 2>/dev/null \
-        | jq -e --arg id "$viewer_app_id" \
-            'first(.. | objects | select(.app_id? == $id)) != null' >/dev/null 2>&1
+    gatherd-compositor window-present "$viewer_app_id"
 }
 
 fullscreen_viewer() {
@@ -168,12 +113,6 @@ fullscreen_viewer() {
     return 0
 }
 
-set_inhibitors() {
-    for _id in $(view_ids); do
-        swaymsg "[con_id=$_id]" inhibit_idle "$1" >/dev/null
-    done
-}
-
 is_on() { [ -f "$state_file" ]; }
 
 turn_on() {
@@ -188,12 +127,10 @@ turn_on() {
     # `// empty` matters: without it a missing .transform writes the literal
     # string "null", which turn_off must then treat as unusable rather than
     # rotate to.
-    swaymsg -t get_outputs \
-        | jq -r --arg o "$_output" 'first(.[] | select(.name == $o) | .transform) // empty' \
-        > "$state_file"
-    swaymsg output "$_output" transform "$transform" >/dev/null
+    gatherd-compositor output-transform "$_output" > "$state_file"
+    gatherd-compositor set-transform "$_output" "$transform"
     disable_builtin_input || true
-    set_inhibitors open
+    gatherd-compositor inhibit-idle-all open
     set_viewer_fullscreen enable
 }
 
@@ -215,34 +152,32 @@ turn_off() {
     # only escape hatch, and it calls this. If anything below it (rotation)
     # were to run first and exit non-zero under `set -eu`, this line would
     # never be reached and the human would be stranded with a dead keyboard
-    # and touchpad and no way to get them back. Confirmed on this hardware:
-    # `swaymsg output DSI-1 transform null` exits 2.
-    enable_all_input
+    # and touchpad and no way to get them back. Not hypothetical: asking for
+    # an invalid transform genuinely fails on this hardware, which is what
+    # made the ordering matter in the first place.
+    gatherd-compositor restore-all-input
 
     # Clearing idle inhibitors happens second, and is non-fatal (|| true) for
     # the same reason the rotation restore below is: input is already safe by
     # this point, and a compositor error here must never stop the rotation
     # restore or state cleanup that follow it from running.
-    set_inhibitors none || true
+    gatherd-compositor inhibit-idle-all none
     set_viewer_fullscreen disable
 
-    # Only rotate to a value sway itself would accept. Do NOT fall back to
+    # Only rotate to a value the compositor would accept. Do NOT fall back to
     # "normal" when the recorded value is missing or bogus (e.g. the literal
     # string "null" from a pre-`// empty` bug) — on this hardware, where
     # wlroots applies the DRM panel-orientation quirk, "normal" is *portrait*.
     # Falling back to it would rotate an already-correct screen into tablet
     # orientation. Leaving the display untouched is strictly safer.
-    case "$_prior" in
-        normal | 90 | 180 | 270 | flipped | flipped-90 | flipped-180 | flipped-270) ;;
-        *)
-            echo "gatherd-tablet-mode: recorded transform '$_prior' is not valid; leaving the display as-is" >&2
-            _prior=""
-            ;;
-    esac
+    if ! gatherd-compositor valid-transform "$_prior"; then
+        echo "gatherd-tablet-mode: recorded transform '$_prior' is not valid; leaving the display as-is" >&2
+        _prior=""
+    fi
     if [ -n "$_output" ] && [ -n "$_prior" ]; then
         # Non-fatal: a compositor error rotating back must never prevent the
         # rest of turn_off (clearing state) from completing.
-        swaymsg output "$_output" transform "$_prior" >/dev/null || true
+        gatherd-compositor set-transform "$_output" "$_prior"
     fi
 
     rm -f "$state_file"

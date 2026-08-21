@@ -358,6 +358,10 @@ tablet_mode_hinge_poll_interval_idle: 0.5
 tablet_mode_hinge_motion_theta_deg: 20.0
 tablet_mode_hinge_motion_rotation_deg: 10.0
 tablet_mode_hinge_motion_hold_seconds: 3.0
+# Where the power button goes when the machine is not folded. EndeavourOS
+# ships this; it is the only path in tablet mode that assumes a particular
+# desktop, so it is a value rather than a hardcoded string in the script.
+tablet_mode_power_menu: "{{ target_home }}/.config/sway/scripts/power_menu.sh"
 tablet_mode_rotation_reference_deg: 267.0
 music_stand_root: "{{ target_home }}/Documents/forscore"
 # music_stand_viewer, music_stand_app_id and music_stand_viewer_flag must

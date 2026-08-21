@@ -343,6 +343,32 @@ task rather than a fork of the EndeavourOS script. The binding target becomes
 conditional: `gatherd-power-button` where the feature applies, `$powermenu`
 otherwise.
 
+## The compositor boundary
+
+`scripts/gatherd-compositor` is the only file that knows sway exists. Every
+other part of the feature asks for what it *wants* — "silence the built-in
+keyboard", "is the viewer's window up yet", "would this transform be accepted"
+— and never says how. Porting to another compositor is one reimplementation of
+that file against the same verbs, not a hunt for `swaymsg` through four scripts
+and a Python daemon.
+
+The boundary is drawn at intent, not syntax. The i8042 identifier heuristic,
+`type:` selectors, `con_id` iteration, sway's criteria brackets and the set of
+transform names it accepts are all sway-shaped and all live inside. A caller
+that had to know an app_id is matched with `[app_id="..."]` would not really be
+decoupled.
+
+Two consequences worth stating. Every verb is safe to call when the compositor
+is absent or unhappy — reads print nothing, writes do nothing, neither is an
+error — because callers are midway through disabling somebody's keyboard and
+cannot afford to abort. And the test suite asserts the boundary directly: a
+`swaymsg` appearing in any other script fails a test, because one stray call
+quietly undoes the whole point.
+
+The one remaining host-specific value is `power_menu`, what the power button
+falls back to when unfolded. EndeavourOS ships that path; another desktop will
+not, so it is configuration rather than a string in the script.
+
 **Tablet mode is not a setting.** It is the fold. It begins when the hinge
 folds and ends when the hinge unfolds, and nothing else turns it on or off.
 The power-button menu therefore offers no exit: an exit entry could only mean

@@ -34,7 +34,7 @@
 # the fold trigger above, so following the display to how the tablet is
 # actually held in the hand costs zero extra I2C - I2C is the entire cost
 # here (~470us per axis transaction). A second process reading the sensor
-# and issuing its own `swaymsg output ... transform` would fight this one,
+# and issuing its own transform would fight this one,
 # which is exactly the twitching an earlier version of this daemon produced;
 # rotation is folded into the same loop instead.
 #
@@ -85,10 +85,8 @@
 # screen normal (z) parallel to gravity (screen lying flat - x,y vanish).
 # They are independent conditions and neither gates the other.
 
-import json
 import math
 import os
-import re
 import statistics
 import subprocess
 import sys
@@ -99,6 +97,7 @@ DEFAULT_LID_DEVICE = "/sys/bus/iio/devices/iio:device0"
 DEFAULT_BASE_DEVICE = "/sys/bus/iio/devices/iio:device1"
 DEFAULT_LID_STATE_PATH = "/proc/acpi/button/lid/LID0/state"
 TABLET_MODE_CMD = "gatherd-tablet-mode"
+COMPOSITOR_CMD = "gatherd-compositor"
 
 # Below this fraction of a sensor's own magnitude, the x-z projection is
 # noise rather than signal: it means the hinge axis (y) is pointing along
@@ -135,11 +134,6 @@ ROTATION_HYSTERESIS_MARGIN_DEG = 10
 ROTATION_PERSIST_SAMPLES = 3
 
 TRANSFORM_BY_QUADRANT = {0: "normal", 90: "90", 180: "180", 270: "270"}
-
-# Duplicates gatherd-tablet-mode's own internal_output() connector-name
-# heuristic (there written in POSIX sh, needed again here in Python) - keep
-# the two in sync if the hardware match ever changes.
-INTERNAL_OUTPUT_RE = re.compile(r"^(eDP|DSI|LVDS)")
 
 
 def lid_device():
@@ -389,7 +383,7 @@ class RotationTracker:
         self.committed_quadrant = None
         self.challenger_quadrant = None
         self.challenger_count = 0
-        # Tracks what was last actually applied via swaymsg, distinct from
+        # Tracks what was last actually applied to the display, distinct from
         # committed_quadrant - see act_rotation(), which is what reads this.
         self.last_applied = None
 
@@ -453,29 +447,25 @@ class RotationTracker:
 
 
 def internal_output_name():
-    # Read-only swaymsg call - safe from decide_once()/print_once(), which
-    # never call this; only act_rotation() (poll_once()'s acting path) does.
+    # Read-only, and asked of gatherd-compositor rather than of sway: that
+    # script is the only thing in tablet mode that knows which compositor is
+    # running, so a port needs one reimplementation rather than a hunt through
+    # this daemon as well. Safe from decide_once()/print_once(), which never
+    # call this; only act_rotation() (poll_once()'s acting path) does.
     result = subprocess.run(
-        ["swaymsg", "-t", "get_outputs"],
+        [COMPOSITOR_CMD, "internal-output"],
         capture_output=True,
         text=True,
         check=False,
     )
     if result.returncode != 0:
         return None
-    try:
-        outputs = json.loads(result.stdout)
-    except ValueError:
-        return None
-    for output in outputs:
-        name = output.get("name", "")
-        if INTERNAL_OUTPUT_RE.match(name):
-            return name
-    return None
+    name = result.stdout.strip()
+    return name or None
 
 
 def rotate_output(transform):
-    # The ONLY swaymsg call rotation is allowed to make - never
+    # The ONLY display change rotation is allowed to make - never
     # gatherd-tablet-mode, never its state file. That is the entire reason
     # `gatherd-tablet-mode off` can always restore the ORIGINAL resting
     # transform regardless of anything rotation did while folded: it never
@@ -484,7 +474,7 @@ def rotate_output(transform):
     if name is None:
         return
     subprocess.run(
-        ["swaymsg", "output", name, "transform", transform],
+        [COMPOSITOR_CMD, "set-transform", name, transform],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
@@ -508,7 +498,7 @@ def act_rotation(tracker, active):
         return
     if not active:
         # Drop last_applied (not just skip) rather than leave it stale: the
-        # next activation must always issue at least one swaymsg call, even
+        # next activation must always issue at least one transform, even
         # if the tracker's committed quadrant happens to match what
         # gatherd-tablet-mode's `on` just set the display to.
         tracker.last_applied = None
@@ -671,7 +661,7 @@ def print_once():
     belief that --print was inert, rotating the display and disabling the
     keyboard on every invocation. Output format is unchanged by rotation -
     decide_once() updates the rotation tracker but act_rotation() (the only
-    thing that touches swaymsg for rotation) is never called here."""
+    thing that changes the display for rotation) is never called here."""
     history = deque(maxlen=window_size())
     rotation_tracker = RotationTracker()
     median_abs_theta, action, _moving = decide_once(history, rotation_tracker)

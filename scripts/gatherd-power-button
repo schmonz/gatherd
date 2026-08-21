@@ -10,29 +10,29 @@
 # See docs/superpowers/specs/2026-08-16-tablet-mode-design.md.
 set -eu
 
-powermenu="$HOME/.config/sway/scripts/power_menu.sh"
+# The unfolded fallback: whatever this desktop already uses for the power
+# button. Configurable because it is the one genuinely host-specific thing in
+# here - EndeavourOS ships this path, another distribution or another
+# compositor will not - and a port should not have to edit code to say so.
+power_menu="$HOME/.config/sway/scripts/power_menu.sh"
+menu_font=""
+config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
+# Sourced BEFORE the unfolded fallback below, not after: a configured
+# power_menu that is read later than the exec that uses it is not configurable
+# at all.
+# shellcheck source=/dev/null
+[ -r "$config" ] && . "$config"
 
-# Ask sway what is actually true, rather than trusting the state file alone.
+# Ask the compositor what is actually true, rather than trusting the state
+# file alone.
 # A disabled built-in keyboard IS the trap this menu exists to escape, and it
 # is observable directly; the state file is a record of intent that can go
 # stale. When the two disagree, the human is still stuck, so the escape menu
 # must still appear - offering the stock power menu (whose entries assume a
 # working keyboard) to someone who has none is how a wrong menu becomes a
 # lockout.
-builtin_input_disabled() {
-    # Positive evidence only: a device that reports no send_events at all
-    # (sway does not expose libinput detail for every input) means "unknown",
-    # not "disabled". Treating unknown as disabled would pop the tablet escape
-    # menu on an ordinary unfolded laptop.
-    swaymsg -t get_inputs 2>/dev/null \
-        | jq -e '[.[] | select(.type == "keyboard")
-                      | select(.identifier | startswith("1:1:"))
-                      | .libinput.send_events // empty] | any(. != "enabled")' \
-            >/dev/null 2>&1
-}
-
-if ! gatherd-tablet-mode status && ! builtin_input_disabled; then
-    exec "$powermenu"
+if ! gatherd-tablet-mode status && ! gatherd-compositor builtin-input-disabled; then
+    exec "$power_menu"
 fi
 
 # Record what the menu was handed and what came back. This menu has twice
@@ -48,11 +48,6 @@ menu_log() {
     printf '%s %s\n' "$(date +%Y-%m-%dT%H:%M:%S)" "$1" \
         >> "$_dir/power-button.log" 2>/dev/null || true
 }
-
-config="${XDG_CONFIG_HOME:-$HOME/.config}/gatherd/tablet-mode.conf"
-menu_font=""
-# shellcheck source=/dev/null
-[ -r "$config" ] && . "$config"
 
 # menu_font (a whole fontconfig string, not just a size) is a multiple of
 # foot_font_size, not a constant: it derives from the panel via
@@ -88,13 +83,10 @@ entries=$(printf '%s\n' \
 # single-instance, so a second one already running is recorded too - it exits
 # without drawing, and would otherwise look identical to a menu that drew
 # nothing.
-_kbd=$(swaymsg -t get_inputs 2>/dev/null \
-    | jq -r '[.[] | select(.type == "keyboard")
-                  | select(.identifier | startswith("1:1:"))
-                  | .libinput.send_events // "unknown"] | join(",")' 2>/dev/null || true)
-_geom=$(swaymsg -t get_outputs 2>/dev/null \
-    | jq -r 'first(.[] | select(.name | test("^(eDP|DSI|LVDS)"))
-             | "\(.transform) \(.rect.width)x\(.rect.height)")' 2>/dev/null || true)
+_kbd=disabled
+gatherd-compositor builtin-input-disabled || _kbd=enabled-or-unknown
+_out=$(gatherd-compositor internal-output)
+_geom="$_out $(gatherd-compositor output-transform "$_out")"
 _fuzzels=0
 if command -v pgrep >/dev/null 2>&1; then
     _fuzzels=$(pgrep -x -c fuzzel 2>/dev/null || echo 0)

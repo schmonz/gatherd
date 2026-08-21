@@ -91,6 +91,10 @@ cat > "$FAKEBIN/swaymsg" <<EOF
 # generation time, executed against the REAL sway, with their output injected
 # into this script. Use single quotes in comments here.
 WORK='$WORK'
+# \$WORK/compositor-down simulates a compositor that is not answering. NEVER
+# remove this fake from PATH to simulate that: the real swaymsg is also on
+# PATH, and the suite would start driving the live session.
+if [ -f "\$WORK/compositor-down" ]; then exit 1; fi
 case "\$1" in
   -t)
     case "\$2" in
@@ -1051,6 +1055,51 @@ else
     ok 'no window means no fullscreen call'
 fi
 gatherd-tablet-mode off >/dev/null 2>&1 || true
+
+# ── gatherd-compositor: the one file that knows sway exists ──────────────────
+# Everything else asks for what it wants and never says how, so that porting to
+# another compositor is one reimplementation rather than a hunt through four
+# scripts and a Python daemon. These assert the boundary holds, because a
+# single stray swaymsg elsewhere quietly undoes the whole point.
+
+for _script in gatherd-tablet-mode gatherd-power-button gatherd-music-stand \
+               gatherd-music-index gatherd-hinge-daemon; do
+    if grep -q 'swaymsg' "$REPO/scripts/$_script"; then
+        bad "$_script reaches the compositor only through gatherd-compositor"
+    else
+        ok "$_script reaches the compositor only through gatherd-compositor"
+    fi
+done
+
+assert_out 'the adapter finds the internal output' 'DSI-1' \
+    gatherd-compositor internal-output
+assert_out 'the adapter reads an output transform' '90' \
+    sh -c 'printf 90 > "$WORK/transform"; gatherd-compositor output-transform DSI-1'
+assert_ok 'a transform the compositor accepts is reported valid' \
+    gatherd-compositor valid-transform 270
+assert_fail 'a transform it would reject is reported invalid' \
+    gatherd-compositor valid-transform sideways
+assert_fail 'the literal string null is not a valid transform' \
+    gatherd-compositor valid-transform null
+assert_ok 'a window that exists is found' gatherd-compositor window-present luajit
+assert_fail 'a window that does not exist is not found' \
+    gatherd-compositor window-present no-such-app
+assert_fail 'an unknown verb is refused' gatherd-compositor no-such-verb
+assert_fail 'a verb given the wrong number of arguments is refused' \
+    gatherd-compositor set-transform DSI-1
+
+# Reads must be survivable when the compositor is not answering: callers are
+# midway through disabling somebody's keyboard.
+touch "$WORK/compositor-down"
+assert_out 'internal-output prints nothing when the compositor is unreachable' '' \
+    gatherd-compositor internal-output
+assert_ok 'silencing input is not an error when the compositor is unreachable' \
+    gatherd-compositor silence-builtin-input
+assert_ok 'restoring input is not an error when the compositor is unreachable' \
+    gatherd-compositor restore-all-input
+assert_fail 'an unreachable compositor reports no window present' \
+    gatherd-compositor window-present luajit
+rm -f "$WORK/compositor-down"
 
 # ── gatherd-power-button ──────────────────────────────────────────────────────
 

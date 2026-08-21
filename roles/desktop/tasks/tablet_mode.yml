@@ -6,6 +6,9 @@
     mode: '0755'
     remote_src: true
   loop:
+    # gatherd-compositor first in spirit if not in order: it is the only one of
+    # these that knows sway exists, and the others are useless without it.
+    - gatherd-compositor
     - gatherd-tablet-mode
     - gatherd-music-index
     - gatherd-music-stand

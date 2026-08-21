@@ -184,15 +184,6 @@ turn_on() {
         || { echo "gatherd-music-stand: viewer not found: $viewer" >&2; exit 1; }
 
     remember "$composer" "$title" "$file"
-    # sway's own `for_window ... fullscreen enable` rule fires but papers
-    # restores its own persisted (non-fullscreen) window state moments later
-    # and clobbers it — confirmed by event trace. Launching straight into the
-    # viewer's presentation mode sidesteps that race entirely (it's inherently
-    # fullscreen) and, as a bonus the human specifically asked for, turns the
-    # page on a tap instead of scrolling. Idle inhibition stays a declarative
-    # sway rule (`inhibit_idle visible`) as belt-and-braces alongside papers'
-    # own presentation-mode idle inhibitor, since neither races the viewer's
-    # startup the way fullscreen state did.
     # Replace rather than stack: "Pick another score" from the folded menu is
     # a request to read a different score, not to accumulate viewers behind
     # the fullscreen one - and only the newest pid can be recorded below, so
@@ -220,7 +211,7 @@ turn_on() {
     # since long before this window existed, so its fullscreen has already
     # happened and missed. Ask for it again now. A no-op when unfolded, which
     # is the case where the score is meant to be an ordinary window.
-    # gatherd-tablet-mode remains the only thing that talks to sway.
+    # gatherd-tablet-mode remains the only thing that talks to the compositor.
     gatherd-tablet-mode fullscreen-viewer || true
 }
 

@@ -47,7 +47,7 @@ missing `libKF6WindowSystem.so.6`. `pinentry-gnome3` needs gnome-keyring's
 | Fingerprint prompt matches | same binary, `--button-ok/--button-not-ok/--button-cancel`, no masking |
 | No fuzzel single-instance lock | layer-shell, no lock |
 | Secret hygiene | `src/SecretBuffer.zig`; no shell variable, no temp file |
-| TTY/SSH | TUI fallback when no Wayland connection is available |
+| TTY/SSH | not needed — see *Routing terminal sudo*; wayprompt's TUI fallback is a bonus we do not rely on |
 
 Packaging: AUR `wayprompt` 0.1.2-2, updated 2025-11-10, not flagged out of
 date, built with zig 0.13, six pinned source tarballs rather than live
@@ -213,11 +213,34 @@ wrong for the same family of reasons the `pam_env` comment in
 `profile.d`. This is the first shell rc gatherd owns, so the block needs a
 comment saying why.
 
-**No `WAYLAND_DISPLAY` guard.** wayprompt falls back to a TUI when it cannot
-reach Wayland, so `sudo -A` on a TTY or over SSH prompts in the terminal rather
-than failing. This was the single biggest reason wayprompt beat the
-alternatives. **It must be verified on real hardware for the CLI binary
-specifically before this ships** — the README claims it for the tool.
+**Guard on `WAYLAND_DISPLAY`**, so a TTY or an inbound SSH session gets sudo's
+own tty prompt:
+
+```sh
+sudo() {
+    if [ -n "$WAYLAND_DISPLAY" ]; then
+        command sudo -A "$@"
+    else
+        command sudo "$@"
+    fi
+}
+```
+
+wayprompt does ship a TUI fallback for the no-Wayland case, and an earlier
+draft leaned on it to drop this guard — calling it the biggest reason wayprompt
+won, which was wrong on two counts.
+
+First, it is not needed: **on a TTY the context is already on screen.** You
+typed the command, and the prompt appears inline in the shell that ran it. The
+context line exists for *unexpected* prompts; a tty prompt answering your own
+keystroke is the most expected thing there is. The fallback would do its work
+exactly where the feature has no value.
+
+Second, relying on it would make the design depend on an unverified upstream
+claim. The guard is one line, works today, and gives the better experience on a
+tty anyway. wayprompt's real advantages are the multi-line description, the
+full colour/border/radius config, fcft fonts, one binary for the fingerprint
+prompt, layer-shell with no single-instance lock, and `SecretBuffer`.
 
 `command sudo` still bypasses the function, and scripts are untouched since
 they do not source `bash.bashrc`.
@@ -257,9 +280,9 @@ graphical session, and would owe the Artix port a second answer. Exiting
 non-zero owes it nothing.
 
 **This design is Artix/s6-clean as a whole.** wayprompt depends on zig,
-wayland, fcft, pixman and xkbcommon — no systemd — and its TUI fallback covers
-the no-Wayland case portably. Nothing here needs a second answer after the
-migration.
+wayland, fcft, pixman and xkbcommon — no systemd — and the no-Wayland case is
+handled by the shell function's own guard rather than by anything init-specific.
+Nothing here needs a second answer after the migration.
 
 **Narrowing the window instead of papering over it:** install wayprompt from
 `roles/aur/tasks/main.yml` rather than `slow.yml`. All of REST is post-login
@@ -333,5 +356,5 @@ Per `CLAUDE.md`, a step is added to `section_verify` in
 `scripts/gatherd-post-setup-notes` as a runnable command sequence. It must
 cover: the box shows two lines for a terminal `sudo`; `context unavailable`
 appears when `gatherd-askpass` is exec'd directly; the fingerprint prompt
-renders unmasked with three buttons; and the TUI fallback works with
-`WAYLAND_DISPLAY` unset.
+renders unmasked with three buttons; and `sudo` with `WAYLAND_DISPLAY` unset
+falls through to sudo's own tty prompt rather than failing.

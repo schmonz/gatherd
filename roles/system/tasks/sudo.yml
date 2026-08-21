@@ -14,6 +14,13 @@
     mode: '0755'
     remote_src: true
 
+- name: Install gatherd-prompt-context for prompt annotation
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-prompt-context"
+    dest: /usr/local/bin/gatherd-prompt-context
+    mode: '0755'
+    remote_src: true
+
 - name: Point sudo's no-terminal askpass at fuzzel, not seahorse
   # Match only an active (uncommented) Path askpass line, so the stock commented
   # examples stay intact and ours is appended; a seahorse line, if EndeavourOS

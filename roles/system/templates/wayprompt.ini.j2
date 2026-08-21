@@ -1,0 +1,36 @@
+# {{ ansible_managed }}
+#
+# The credential house style. The fuzzel launcher's indigo 08052b is
+# channel-swapped to crimson 2b0508 -- the same colours, red-shifted -- so this
+# box reads as kin to the launcher while being impossible to mistake for it
+# when you are about to type a root password. The heavy salmon border finishes
+# the separation.
+#
+# In /etc rather than ~/.config because the styling derives from
+# foot_font_size, a machine fact rather than a user preference, and because a
+# prompt must look the same regardless of who runs it.
+[general]
+# fcft, the same font library fuzzel and foot use, so this is the same syntax
+# already templated into fuzzel.ini and foot.ini.
+font-regular = JetBrainsMono-Regular:size={{ foot_font_size }};
+font-large = JetBrainsMono-Regular:size={{ (13 * foot_font_size / 10) | round | int }};
+border = 4;
+corner-radius = 10;
+
+[colours]
+background = 0x2b0508;
+border = 0xff7f7f;
+text = 0xe3e3ea;
+error-text = 0xff7f7f;
+pin-background = 0x1a0305;
+pin-border = 0xff7f7f;
+pin-square = 0xff7f7f;
+ok-button = 0x2b0508;
+ok-button-border = 0xff7f7f;
+ok-button-text = 0xe3e3ea;
+not-ok-button = 0x2b0508;
+not-ok-button-border = 0xff7f7f;
+not-ok-button-text = 0xe3e3ea;
+cancel-button = 0x2b0508;
+cancel-button-border = 0xff7f7f;
+cancel-button-text = 0xe3e3ea;

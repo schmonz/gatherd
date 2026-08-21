@@ -172,6 +172,9 @@
   ansible.builtin.include_tasks: fingerprint.yml
   when: has_fingerprint_reader
 
+- name: Configure the credential prompt
+  ansible.builtin.include_tasks: wayprompt.yml
+
 - name: Run firmware updates
   ansible.builtin.shell: |
     fwupdmgr refresh || true

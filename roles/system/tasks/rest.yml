@@ -192,6 +192,15 @@
 # Reapplied on every converge on purpose: a koreader-bin upgrade restores the
 # stock file, and the failure is a hard crash at startup rather than anything
 # subtle.
+#
+# TEMPORARY, with a known end. Upstream deleted the whole filesystem-probing
+# approach in koreader e9c0a6e39 ("device: get rid of probing code",
+# 2026-08-05) in favour of a platform string baked in at build time. That is
+# four days AFTER v2026.07.1 (2026-08-01), the newest release and what
+# koreader-bin packages, so no released build has it yet. Once the installed
+# koreader carries the fix this task stops matching and can be deleted; until
+# then it is doing real work. Nothing to report upstream - it is already
+# fixed there.
 - name: Check whether KOReader is installed
   ansible.builtin.stat:
     path: /usr/lib/koreader/frontend/device.lua

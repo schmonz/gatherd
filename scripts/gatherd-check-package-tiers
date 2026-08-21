@@ -24,6 +24,7 @@ TIER_VAR = re.compile(r'^\{\{\s*(\w*_packages)\s*\}\}$')
 # Deliberately inline, with the reason each is not a cache-stick concern.
 ALLOWED = {
     'base-devel': 'yay build prerequisite, not a package set',
+    'nowayprompt': 'vendored PKGBUILD, not from a repo or the AUR (packaging/nowayprompt)',
     'firefox': 'removal, not an install',
     'polkit-gnome': 'removal, not an install',
     # Hardware-gated: each sits beside its has_* gate in its own tiny task file,

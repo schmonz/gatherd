@@ -1,0 +1,54 @@
+---
+# nowayprompt is neither a repo nor an AUR package (see packaging/nowayprompt/PKGBUILD
+# for why it's vendored), so it can't live in aur_packages; it's listed in
+# gatherd-check-package-tiers' ALLOWED dict instead.
+
+- name: Check whether nowayprompt is installed  # noqa: command-instead-of-module
+  ansible.builtin.command: pacman -Q nowayprompt
+  register: _nowayprompt_installed
+  changed_when: false
+  failed_when: false
+
+- name: Build and install nowayprompt from the vendored PKGBUILD
+  when: _nowayprompt_installed.rc != 0
+  block:
+    - name: Create a scratch directory for the nowayprompt build
+      ansible.builtin.file:
+        path: /tmp/nowayprompt
+        state: directory
+        owner: "{{ target_user }}"
+        mode: '0755'
+
+    - name: Copy the vendored PKGBUILD into the scratch directory
+      ansible.builtin.copy:
+        src: "{{ setup_dir }}/packaging/nowayprompt/PKGBUILD"
+        dest: /tmp/nowayprompt/PKGBUILD
+        owner: "{{ target_user }}"
+        mode: '0644'
+        remote_src: true
+
+    # makepkg -si shells out to sudo pacman -U for the install step; makepkg
+    # itself also refuses to run as root at all, so both the build and the
+    # NOPASSWD grant below target the human user, not this play's default root.
+    - name: Grant NOPASSWD pacman for the nowayprompt build
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers
+        line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
+        validate: visudo -cf %s
+      changed_when: false
+
+    - name: Build and install nowayprompt
+      ansible.builtin.command: makepkg -si --noconfirm
+      args:
+        chdir: /tmp/nowayprompt
+      become: true
+      become_user: "{{ target_user }}"
+      changed_when: true
+  always:
+    - name: Revoke NOPASSWD pacman after the nowayprompt build
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers
+        line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
+        state: absent
+        validate: visudo -cf %s
+      changed_when: false

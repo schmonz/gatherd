@@ -35,6 +35,9 @@
   register: _pkg_install
   until: _pkg_install is succeeded
 
+- name: Build and install the credential prompt
+  ansible.builtin.include_tasks: nowayprompt.yml
+
 - name: Initialize etckeeper
   ansible.builtin.command: etckeeper init
   args:

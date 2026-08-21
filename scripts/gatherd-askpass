@@ -1,6 +1,6 @@
 #!/bin/sh
 # The one credential prompt: sudo -A, ssh, git, polkit and our own prompts all
-# arrive here, and all leave through wayprompt. One renderer is the point --
+# arrive here, and all leave through nowayprompt. One renderer is the point --
 # "the crimson box is what asks for my password" is only a useful instinct if
 # it is true of every prompt, including the ssh host-key decision, which used
 # to be a separately-styled foot window.
@@ -70,10 +70,11 @@ esac
 [ -n "$context" ] || context=$(gatherd-prompt-context "$PPID" 2>/dev/null)
 [ -n "$context" ] || context='context unavailable'
 
-# Line 2 is "pin: <secret>", per wayprompt(1). Anchor the strip to the start of
-# that line: the stock wayprompt-ssh-askpass uses s/pin: // unanchored, which
-# corrupts any password containing that string. printf rather than echo, so a
-# secret starting with "-n" is not eaten.
+# Line 2 is "pin: <secret>", per nowayprompt(1). Anchor the strip to the start
+# of that line rather than substituting anywhere: an unanchored s/pin: //
+# corrupts any password containing that string, which is how wayprompt's own
+# shell ssh-askpass got it wrong. printf rather than echo, so a secret starting
+# with "-n" is not eaten.
 out=$("$wayprompt" \
     --title 'gatherd' \
     --description "$context" \

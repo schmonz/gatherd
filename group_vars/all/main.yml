@@ -65,6 +65,10 @@ core_packages: []
 
 # Official repo packages, installed in the main run.
 rest_packages:
+  # fakeroot + cc, needed by the vendored nowayprompt build
+  # (roles/system/tasks/nowayprompt.yml), which runs before the aur role
+  # would otherwise pull this in as an AUR build dependency.
+  - base-devel
   # version control + /etc tracking
   - etckeeper
   - git

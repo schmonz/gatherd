@@ -26,7 +26,9 @@ install.sh   README.md
 
 1. Create `chuwi-minibook-tablet-mode` on GitHub.
 2. `git remote add origin …` and push `main`.
-3. Tag `v0.1.0`.
+3. Tag it. **Versions are date-based**, e.g. `0.0.20260821.1` — the trailing
+   counter distinguishes multiple releases on one day. gatherd pins this exact
+   string in `tablet_mode_upstream_version`.
 
 Task 7 cannot start before that: gatherd clones the repo **by tag**.
 

@@ -657,7 +657,7 @@ git log --oneline | head -5
 ```
 
 Then STOP and tell the human: the repo is ready, they create the GitHub repo,
-add the remote, push, and tag `v0.1.0`. Do not create remotes or push. Task 7
+add the remote, push, and tag it (date-based, e.g. `0.0.20260821.1`). Do not create remotes or push. Task 7
 cannot proceed until the tag exists, because gatherd clones by tag.
 
 ---
@@ -684,7 +684,7 @@ In `group_vars/all/main.yml`:
 # hardware, not of this setup. Pinned rather than tracking main so a repave two
 # years from now reproduces what runs today; upgrading is a one-line bump.
 tablet_mode_upstream_repo: https://github.com/schmonz/chuwi-minibook-tablet-mode.git
-tablet_mode_upstream_version: v0.1.0
+tablet_mode_upstream_version: 0.0.20260821.1
 tablet_mode_upstream_dir: "{{ target_home }}/.local/src/chuwi-minibook-tablet-mode"
 # What gatherd puts in the folded menu. The mechanism ships knowing none of
 # this; the sheet-music reader is ours.

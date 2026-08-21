@@ -775,43 +775,60 @@ polkit already computes a human sentence and an action id, and
 - Consumes: `gatherd-askpass <prompt> [context]` from Task 2.
 - Produces: nothing downstream.
 
-- [ ] **Step 1: Confirm what cmd-polkit actually sends**
+- [ ] **Step 1: Pass polkit's own message through**
 
-The JSON field names are not documented. Capture one live:
+cmd-polkit's handler protocol is undocumented, but its own unit test pins the
+schema exactly (`test/test-unit.entrypoint.c:166-173`, built in
+`src/request-messages.c:17`). A `request password` line looks like:
 
-```bash
-pkill -f cmd-polkit-agent
-GATHERD_ASKPASS=/bin/false sh -c '
-  cmd-polkit-agent -p -c "sh -c \"tee /tmp/polkit-msg.json | cat\"" &
-  sleep 1; pkexec true; sleep 1' 2>/dev/null
-cat /tmp/polkit-msg.json
+```json
+{"action":"request password",
+ "prompt":"Password: ",
+ "message":"Authentication is required to install software.",
+ "polkit action":{"id":"org.freedesktop.packagekit.package-install",
+                  "description":"Install package",
+                  "message":"Authentication is required to install software.",
+                  "vendor name":"PackageKit","vendor url":"","icon name":""}}
 ```
 
-Expected: one JSON object per line; the `request password` line carries the
-action id and message under keys visible in the output. Read the actual key
-names from this file — do not guess them. Restart the real agent afterwards
-with `gatherd-polkit-agent &`.
-
-- [ ] **Step 2: Pass the message through**
+`"polkit action"` is **null** whenever cmd-polkit could not find the action in
+polkit's enumerated list, so nothing may assume it is an object.
 
 In `scripts/gatherd-polkit-agent`, inside the `--handle` loop, replace the
-password call. Substitute the real key names from Step 1 for `KEY_MESSAGE` and
-`KEY_ACTION`:
-
-```sh
-        ctx=$(printf '%s' "$msg" | jq -r '[.KEY_MESSAGE, .KEY_ACTION] | map(select(. != null and . != "")) | join("\n")')
-        if password=$("$askpass" "[polkit]" "$ctx"); then
-```
-
-With a comment above it:
+password call with:
 
 ```sh
         # polkit computes a human sentence ("Authentication is required to
-        # install software") and an action id, and this agent used to discard
-        # both. They are strictly better than anything the /proc walk could
-        # recover for this source: polkit's agent API has no subject parameter,
-        # so ancestry here names cmd-polkit, not the app that asked.
+        # install software.") and an action id for every request, and this
+        # agent used to discard both in favour of a bare tag. They beat
+        # anything the /proc walk could recover here: polkit's agent API has no
+        # subject parameter, so ancestry names cmd-polkit rather than whatever
+        # actually asked. "polkit action" is null when cmd-polkit could not
+        # resolve the action, hence the guarded pick rather than a plain //.
+        ctx=$(printf '%s' "$msg" | jq -r '
+            [ ( [ .message, ."polkit action".message ]
+                | map(select(type == "string" and . != "")) | first // empty ),
+              ( ."polkit action".id // empty | select(. != "") )
+            ] | join("\n")')
+        if password=$("$askpass" "[polkit]" "$ctx"); then
 ```
+
+- [ ] **Step 2: Verify the jq against all four shapes**
+
+The guarded pick exists for the null case; prove it handles each. Run each and
+compare:
+
+```bash
+JQ='[ ( [ .message, ."polkit action".message ] | map(select(type == "string" and . != "")) | first // empty ), ( ."polkit action".id // empty | select(. != "") ) ] | join("\n")'
+echo '{"message":"Authentication is required to install software.","polkit action":{"id":"org.freedesktop.packagekit.package-install","message":"Authentication is required to install software."}}' | jq -r "$JQ"
+echo '{"message":"Authentication is required.","polkit action":null}' | jq -r "$JQ"
+echo '{"message":"","polkit action":{"id":"org.freedesktop.login1.halt","message":"Authentication is required to halt the system."}}' | jq -r "$JQ"
+echo '{"message":"","polkit action":null}' | jq -r "$JQ"
+```
+
+Expected, in order: the sentence plus the packagekit id on two lines; the
+sentence alone; the halt sentence plus the login1 id; and an empty string
+(which `gatherd-askpass` turns into `context unavailable`).
 
 - [ ] **Step 3: Verify against a real polkit request**
 

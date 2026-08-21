@@ -167,5 +167,21 @@ assert_out 'missing stat fails closed: no elevating line' \
     gatherd-prompt-context 511
 mv "$_stat_save.bak" "$_stat_save"
 
+# --sanitize is gatherd-askpass's entry point for caller-supplied context
+# (Finding 2): it must clean each line independently and keep the line count,
+# since polkit context is two lines -- the sentence, then the action id.
+_out=$(printf 'Authentication is required to install software\norg.freedesktop.policykit.exec%s\n' \
+    "$(printf '\033')" | gatherd-prompt-context --sanitize)
+assert_out '--sanitize cleans each line and preserves the line count' \
+    'Authentication is required to install software
+org.freedesktop.policykit.exec [elided]' \
+    printf '%s' "$_out"
+
+# Already-clean text must come back byte-identical: --sanitize must not
+# introduce a marker or truncation where the /proc-walk sanitize() would not.
+assert_out '--sanitize leaves already-clean text byte-identical' \
+    'Authentication is required to install software' \
+    sh -c 'printf "%s\n" "Authentication is required to install software" | gatherd-prompt-context --sanitize'
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

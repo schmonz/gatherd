@@ -16,6 +16,7 @@ PASS=0
 FAIL=0
 
 WORK=$(mktemp -d)
+export WORK  # so fake scripts written to FAKEBIN can find it too
 trap 'rm -rf "$WORK"' EXIT
 FAKEBIN="$WORK/bin"
 mkdir -p "$FAKEBIN"
@@ -92,6 +93,64 @@ if grep -q 'Authentication is required to install software' "$WORK/argv"; then
     ok 'a caller-supplied context reaches nowayprompt'
 else
     bad 'a caller-supplied context reaches nowayprompt'
+fi
+
+# Finding 1 regression: an explicitly-empty argv[2] is the caller saying "I
+# have no context", and must be believed rather than second-guessed with a
+# /proc walk. Fake gatherd-prompt-context so a walk that ran is distinguishable
+# from one that never happened -- without the fake, a reverted fix would still
+# usually print real ancestry text here rather than coincidentally producing
+# the string "context unavailable", but the fake makes the check exact.
+cat > "$FAKEBIN/gatherd-prompt-context" <<'EOF'
+#!/bin/sh
+if [ "$1" = '--sanitize' ]; then
+    cat
+    exit 0
+fi
+: > "$WORK/proc_walk_invoked"
+printf 'context unavailable\n'
+EOF
+chmod +x "$FAKEBIN/gatherd-prompt-context"
+
+fake_nowayprompt 0 'user-action: ok' 'pin: x'
+gatherd-askpass '[polkit]' '' >/dev/null 2>&1 || true
+_desc=$(awk '/^--description$/{getline; print; exit}' "$WORK/argv")
+if [ "$_desc" = 'context unavailable' ]; then
+    ok 'an explicitly-empty context yields context unavailable'
+else
+    bad "an explicitly-empty context yields context unavailable (got [$_desc])"
+fi
+if [ -e "$WORK/proc_walk_invoked" ]; then
+    bad 'an explicitly-empty context does not invoke the /proc walk'
+else
+    ok 'an explicitly-empty context does not invoke the /proc walk'
+fi
+rm -f "$FAKEBIN/gatherd-prompt-context" "$WORK/proc_walk_invoked"
+
+# Finding 2: a caller-supplied context is unbounded and unsanitized input --
+# any app can register a polkit action with attacker-chosen text -- so it must
+# pass through the same allowlist as the /proc walk before reaching the box.
+_ctx="clean$(printf '\033')[2Jbad"
+fake_nowayprompt 0 'user-action: ok' 'pin: x'
+gatherd-askpass '[polkit]' "$_ctx" >/dev/null 2>&1 || true
+_desc=$(awk '/^--description$/{getline; print; exit}' "$WORK/argv")
+if [ "$_desc" = 'clean[2Jbad [elided]' ]; then
+    ok 'a caller-supplied context with a control byte is sanitized and marked'
+else
+    bad "a caller-supplied context with a control byte is sanitized and marked (got [$_desc])"
+fi
+
+# A caller-supplied context longer than 60 characters gets the same truncation
+# as the /proc walk's own findings.
+_long=$(printf '%070d' 0 | tr '0' 'a')
+fake_nowayprompt 0 'user-action: ok' 'pin: x'
+gatherd-askpass '[polkit]' "$_long" >/dev/null 2>&1 || true
+_desc=$(awk '/^--description$/{getline; print; exit}' "$WORK/argv")
+_want="$(printf '%060d' 0 | tr '0' 'a')..."
+if [ "$_desc" = "$_want" ]; then
+    ok 'a caller-supplied context over 60 characters is truncated with ...'
+else
+    bad "a caller-supplied context over 60 characters is truncated with ... (got [$_desc])"
 fi
 
 # nowayprompt absent is a cancel, not a crash and not a fallback to fuzzel.

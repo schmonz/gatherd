@@ -101,9 +101,13 @@ fi
 # from one that never happened -- without the fake, a reverted fix would still
 # usually print real ancestry text here rather than coincidentally producing
 # the string "context unavailable", but the fake makes the check exact.
+# box_prompt also calls gatherd-prompt-context, via --sanitize-long, so the
+# fake must pass that mode through too -- otherwise it falls into the
+# /proc-walk branch below and this test would flag a walk that never
+# happened, for a reason unrelated to what it is checking.
 cat > "$FAKEBIN/gatherd-prompt-context" <<'EOF'
 #!/bin/sh
-if [ "$1" = '--sanitize' ]; then
+if [ "$1" = '--sanitize' ] || [ "$1" = '--sanitize-long' ]; then
     cat
     exit 0
 fi

@@ -52,7 +52,12 @@ case "$prompt" in
     # (see the comment above), so the 2-line cap and 60-character truncation
     # that protect a context line would be wrong here.
     description=$(printf '%s\n' "$prompt" | gatherd-prompt-context --sanitize-long 2>/dev/null)
-    [ -n "$description" ] || description=$prompt
+    # Fall back to a fixed literal, never to the raw prompt: this branch only
+    # runs when gatherd-prompt-context could not be found or run, i.e.
+    # exactly when the sanitizing this description depends on is unavailable.
+    # Falling back to $prompt would put the unsanitized string straight into
+    # the box body it exists to guard.
+    [ -n "$description" ] || description='context unavailable'
     "$wayprompt" \
         --title 'SSH host key verification' \
         --description "$description" \
@@ -93,13 +98,19 @@ fi
 
 # The prompt tag reaching here is also caller-influenceable -- an ssh
 # passphrase prompt embeds a key path -- so it needs the same allowlist as
-# everything else that reaches wayprompt. Unlike the host-key description,
-# this is always short (a bare tag, or "Enter passphrase for key '<path>':"),
-# so the truncating mode is the right one: it catches a pathologically long
-# forged prompt, and on a normal one-line tag the 2-line cap and the
-# elevating:/requested-by neutralising in that mode are simply inert.
-box_prompt=$(printf '%s\n' "$prompt" | gatherd-prompt-context --sanitize 2>/dev/null)
-[ -n "$box_prompt" ] || box_prompt=$prompt
+# everything else that reaches wayprompt. It is one line by construction (a
+# bare tag, or "Enter passphrase for key '<path>':"), so --sanitize's 2-line
+# cap is inert either way -- but its 60-character truncation is not: a key
+# path under a long home directory or a nested project runs well past that,
+# and truncating it cuts exactly the identifying tail ("...000000...") a
+# reader needs to tell which key is being asked about. Use --sanitize-long
+# instead: same allowlist and the same elevating:/requested-by neutralising,
+# just no truncation.
+box_prompt=$(printf '%s\n' "$prompt" | gatherd-prompt-context --sanitize-long 2>/dev/null)
+# Fall back to a fixed literal, never to the raw prompt -- same reasoning as
+# the host-key description's fallback above: this only runs when the
+# sanitizing itself could not run.
+[ -n "$box_prompt" ] || box_prompt='context unavailable'
 
 # Line 2 is "pin: <secret>", per nowayprompt(1). Anchor the strip to the start
 # of that line rather than substituting anywhere: an unanchored s/pin: //

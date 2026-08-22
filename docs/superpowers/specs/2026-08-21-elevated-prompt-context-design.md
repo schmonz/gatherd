@@ -26,7 +26,7 @@ sharply limited sense in which that is achievable.
 Both halves were researched before designing. The findings changed the design,
 so they are recorded here.
 
-### The renderer exists: wayprompt
+### The renderer exists: nowayprompt
 
 fuzzel cannot render two lines — a `\n` in `--prompt-only` draws as a literal
 glyph on one line (verified). Every dmenu-family pinentry binding
@@ -37,26 +37,67 @@ cannot express the house style. `pinentry-qt` does not run here at all —
 missing `libKF6WindowSystem.so.6`. `pinentry-gnome3` needs gnome-keyring's
 `gcr` prompter, which we do not run.
 
-[wayprompt](https://git.sr.ht/~leon_plickat/wayprompt) fits every constraint:
+**This spec originally chose [wayprompt](https://git.sr.ht/~leon_plickat/wayprompt).
+It cannot be built, and the reason is worth keeping.** Its AUR package fails
+integrity checks (codeberg regenerated three dependency archives, so the
+recorded b2sums are stale) — but that is only the surface. With checksums
+bypassed it still fails to compile: it pins zig-wayland 0.2.0, whose scanner
+emits `postError(_err: Error, …)` for `wl_shm` and `wl_shm_pool` while placing
+the enums in `common.wl.shm.*`, so against this machine's wayland 1.26.0 the
+generated bindings reference an undeclared type. The incompatible piece is the
+*system* libwayland, which gatherd cannot pin, so neither corrected checksums
+nor vendoring would have helped. Upstream's last commit is 2024-08-25.
 
-| Constraint | How wayprompt meets it |
+The spec had named exactly this risk — "if it ever stops building, we are back
+to fuzzel plus foot" — and it landed on the first install attempt.
+
+[nowayprompt](https://github.com/nilp0inter/nowayprompt) is a Rust port and
+fork of wayprompt, written because wayprompt is dormant and being stuck on Zig
+0.13 put it at risk of removal from Nixpkgs. It fits every constraint, and is a
+verified drop-in for everything this design touches:
+
+| Constraint | How nowayprompt meets it |
 | --- | --- |
 | Two lines | `--title` + multi-line `--description` + `--prompt` |
 | House style | `[colours]` background/border/text/pin-\*/button-\*; `[general]` `border`, `corner-radius` |
 | Font | fcft — the same library fuzzel and foot use, so `foot_font_size` transfers verbatim |
 | Fingerprint prompt matches | same binary, `--button-ok/--button-not-ok/--button-cancel`, no masking |
 | No fuzzel single-instance lock | layer-shell, no lock |
-| Secret hygiene | `src/SecretBuffer.zig`; no shell variable, no temp file |
-| TTY/SSH | not needed — see *Routing terminal sudo*; wayprompt's TUI fallback is a bonus we do not rely on |
+| Secret hygiene | `zeroize` in the dependency tree; no shell variable, no temp file |
+| Exit codes | `0` ok, `10` cancel, `20` not-ok, `1` error — unchanged from wayprompt |
+| stdout | `user-action: <a>` then `pin: <secret>` / `no pin` — unchanged, and asserted in its own unit tests |
+| Config | same `config.ini` keys; tries `nowayprompt/config.ini`, then `wayprompt/config.ini` |
 
-Packaging: AUR `wayprompt` 0.1.2-2, updated 2025-11-10, not flagged out of
-date, built with zig 0.13, six pinned source tarballs rather than live
-submodules — which matters for offline repave, since they are cacheable.
+**It does NOT provide a TTY fallback to us.** Its README says it falls back to a
+TUI when Wayland is missing; that is true of the pinentry variant only.
+`allow_tty_fallback` is set solely in `run_pinentry()` (`src/command.rs`), and
+the plain CLI path we drive uses `Config::default()`, where it is false — it
+exits 1 with `frontend unavailable: no Wayland display`, verified with and
+without a pty. This is why the `WAYLAND_DISPLAY` guard in *Routing terminal
+sudo* is load-bearing rather than a preference.
 
-**Risk, stated plainly:** upstream is quiet (last commit 2024-08-25, 91
-commits, one author). The AUR packaging is the actively maintained part. It is
-a small Zig program doing one thing, so bit-rot is survivable; if it ever stops
-building, we are back to fuzzel plus foot.
+**Why it is structurally safer than what it replaces:** `ldd` on the built
+binary shows `libxkbcommon.so.0` and nothing else beyond libc. It does not link
+libwayland at all — the Rust crates speak the protocol over the socket — so the
+system-libwayland incompatibility that killed wayprompt cannot recur here.
+
+Packaging: **not in the AUR**, so gatherd vendors a PKGBUILD at
+`packaging/nowayprompt/PKGBUILD`. **Pinned to a commit, not a tag**: its tags
+`v0.1.0`–`v0.1.2` are wayprompt's, inherited through the fork, and still
+contain the old Zig tree — pinning the obvious-looking version would fetch
+exactly the broken code. Builds in under two minutes with `rust` from the
+official repos.
+
+**Risk, stated plainly:** young (one author, no tagged Rust release) and traded
+one small upstream for another. Against that: it has CI, renovate, and NixOS
+tests covering Wayland, TTY and Assuan, where wayprompt had none; Rust removes
+the Zig-version treadmill that killed the original; and gatherd pins a commit
+it has built itself. If it ever stops building, the fallback is unchanged —
+fuzzel plus foot.
+
+**Offline-repave caveat:** cargo fetches crates at build time. `Cargo.lock`
+pins versions, but a genuinely offline repave would need them vendored.
+Recorded, not solved.
 
 ### The context-gathering does not exist, and there is a reason
 
@@ -94,9 +135,9 @@ caller                       context layer                renderer
 sudo (SUDO_ASKPASS,
       sudo.conf Path)  ─┐
 ssh / git (SSH_ASKPASS) ─┤
-gatherd-prompt-vault    ─┼──▶  gatherd-askpass  ──────▶   wayprompt
+gatherd-prompt-vault    ─┼──▶  gatherd-askpass  ──────▶  nowayprompt
 gatherd-polkit-agent    ─┘      (classify, gather,         (AUR; house style
-                                 sanitize, map exits)    from ~/.config/wayprompt)
+                              sanitize, map exits)  from ~/.config/nowayprompt)
                                         │
                                         └──▶ gatherd-prompt-context
                                              (/proc ancestry walk + allowlist)
@@ -107,14 +148,14 @@ prompt, stdout is the secret, non-zero exit is a cancel. So `/etc/sudo.conf`'s
 `Path askpass`, both `pam_env` lines, `gatherd-prompt-vault` and
 `gatherd-polkit-agent` are unchanged. Only its internals change: classify the
 source from the prompt string (as it already does for `[sudo]` and `(yes/no`),
-gather context, call `wayprompt` instead of `fuzzel`.
+gather context, call `nowayprompt` instead of `fuzzel`.
 
 ### Components
 
 | Component | Job | Lives in |
 | --- | --- | --- |
-| `wayprompt` | draws the box | AUR → `roles/aur/tasks/main.yml` |
-| `~/.config/wayprompt/config.ini` | house style: crimson/salmon, `border=4`, `corner-radius=10`, fcft font from `foot_font_size` | new template, `roles/desktop` |
+| `nowayprompt` | draws the box | vendored PKGBUILD → `roles/system/tasks/nowayprompt.yml` |
+| `~/.config/nowayprompt/config.ini` | house style: crimson/salmon, `border=4`, `corner-radius=10`, fcft font from `foot_font_size` | new template, `roles/desktop` |
 | `gatherd-prompt-context <pid>` | walk `/proc`, verify, allowlist, emit one line | `scripts/`, new |
 | `gatherd-polkit-agent` | pass polkit's `message` and action id through as context instead of a bare `[polkit]` | `scripts/`, modified |
 | `sudo` shell function | route interactive `sudo` to `-A` | `/etc/bash.bashrc` blockinfile, `roles/system` |
@@ -124,8 +165,8 @@ optional `argv[2]` on `gatherd-askpass` carrying a pre-computed context line,
 used when the caller already knows more than a `/proc` walk could recover.
 Backwards compatible — every existing caller passes one argument.
 
-**`~/.config/wayprompt/config.ini`, not `/etc`.** An earlier draft put this in
-`/etc`, reading wayprompt(5)'s statement that it looks for a config "in the
+**`~/.config/nowayprompt/config.ini`, not `/etc`.** An earlier draft put this in
+`/etc`, reading wayprompt(5)'s statement (nowayprompt inherits the same lookup) that it looks for a config "in the
 following locations, in this order" — `$XDG_CONFIG_HOME/wayprompt/config.ini`,
 then `/etc/wayprompt/config.ini`. That reads like a search path. **It is not.**
 `getConfigPath()` (`src/Config.zig:205-220`) is an else-if chain on
@@ -155,7 +196,7 @@ is the one actually consulted. `foot_font_size` is still a machine fact; the
 
 - The `foot` host-key window (~50 lines of `--override` styling plus a
   `mktemp` answer file) becomes
-  `wayprompt --description "<fingerprint>" --button-ok Yes --button-not-ok No
+  `nowayprompt --description "<fingerprint>" --button-ok Yes --button-not-ok No
   --button-cancel Abort`: unmasked, room to read the key, and it matches the
   password box because it *is* the password box.
 - The fuzzel invocation, its `</dev/null` workaround, and the
@@ -264,28 +305,40 @@ sudo() {
 }
 ```
 
-wayprompt does ship a TUI fallback for the no-Wayland case, and an earlier
-draft leaned on it to drop this guard — calling it the biggest reason wayprompt
-won, which was wrong on two counts.
+**The guard is load-bearing, and this is the clearest case in the whole design
+for not depending on documentation.**
 
-First, it is not needed: **on a TTY the context is already on screen.** You
-typed the command, and the prompt appears inline in the shell that ran it. The
-context line exists for *unexpected* prompts; a tty prompt answering your own
-keystroke is the most expected thing there is. The fallback would do its work
-exactly where the feature has no value.
+An earlier draft dropped it, reasoning that the renderer falls back to a TUI
+when Wayland is missing — both wayprompt and nowayprompt say so in their
+READMEs. Two things were wrong with that.
 
-Second, relying on it would make the design depend on an unverified upstream
-claim. The guard is one line, works today, and gives the better experience on a
-tty anyway. wayprompt's real advantages are the multi-line description, the
-full colour/border/radius config, fcft fonts, one binary for the fingerprint
-prompt, layer-shell with no single-instance lock, and `SecretBuffer`.
+First, the fallback would be doing its work where the feature has no value: **on
+a TTY the context is already on screen.** You typed the command, and the prompt
+appears inline in the shell that ran it. The context line exists for
+*unexpected* prompts; a tty prompt answering your own keystroke is the most
+expected thing there is.
+
+Second — and this is the part that only measurement settled — **the fallback is
+not available to us at all.** `allow_tty_fallback` is set solely in
+`run_pinentry()` (`src/command.rs`); the plain CLI path this design drives uses
+`Config::default()`, where it is false. Verified directly, with and without a
+pty: it exits 1 with `frontend unavailable: no Wayland display`. Without this
+guard, `sudo` on a TTY or over SSH would not fall back — it would simply fail.
+
+The guard also covers a second condition the draft did not anticipate: it checks
+that the renderer is *installed*. `sudo -A` aborts when its askpass exits
+non-zero, and `gatherd-askpass` exits non-zero when the renderer is missing —
+which is every machine between CORE finishing and REST building nowayprompt,
+and permanently on any machine where that build fails. A package that will not
+build must not take interactive sudo down with it. Everything else in this repo
+fails open; the prompt is not the place to make an exception.
 
 `command sudo` still bypasses the function, and scripts are untouched since
 they do not source `bash.bashrc`.
 
 ## Failure modes
 
-**wayprompt missing.** It is an AUR package, so it exists only after REST.
+**nowayprompt missing.** It is built from a vendored PKGBUILD during REST, so it does not exist before then.
 CORE stays package-free as designed, and nothing in CORE prompts:
 `gatherd-prompt-vault` gates on `core-complete`, and the pre-login vault prompt
 goes through `systemd-ask-password` on the console. `gatherd-askpass` must
@@ -317,22 +370,22 @@ a planned `openvt` swap for Artix/s6. Putting `systemd-ask-password` into
 graphical session, and would owe the Artix port a second answer. Exiting
 non-zero owes it nothing.
 
-**This design is Artix/s6-clean as a whole.** wayprompt depends on zig,
-wayland, fcft, pixman and xkbcommon — no systemd — and the no-Wayland case is
+**This design is Artix/s6-clean as a whole.** nowayprompt depends on rust at build time and libxkbcommon at run time — no systemd — and the no-Wayland case is
 handled by the shell function's own guard rather than by anything init-specific.
 Nothing here needs a second answer after the migration.
 
-**Narrowing the window instead of papering over it:** install wayprompt from
-`roles/aur/tasks/main.yml` rather than `slow.yml`. All of REST is post-login
+**Narrowing the window instead of papering over it:** build nowayprompt from a vendored PKGBUILD in `roles/system/tasks/nowayprompt.yml`. All of REST is post-login
 anyway, so `slow.yml` buys nothing here, and a small zig build does not merit
 it. The prompter gates every other credential interaction in the session, so it
 belongs early in REST.
 
-**Exit-code mapping**, from wayprompt(1): `0` ok, `10` cancel, `20` not-ok, `1`
+**Exit-code mapping**, from nowayprompt(1): `0` ok, `10` cancel, `20` not-ok, `1`
 error. `gatherd-askpass` maps `0` → print secret, exit 0; everything else →
 exit non-zero, which sudo and ssh read as abort.
 
-**Do not reuse the stock `wayprompt-ssh-askpass`.** It puts the whole prompt in
+**Do not reuse the stock ssh-askpass variant.** (wayprompt's was a shell
+script with the bug below; nowayprompt's is native and writes the bare
+password, but we drive the CLI directly either way.) It puts the whole prompt in
 `--title` (large font, no description), and extracts the secret with
 `sed -e 's/pin: //'`, which strips that string from anywhere in the line — a
 password containing `pin: ` is corrupted — then `echo`es it. Ours parses line 2
@@ -383,7 +436,7 @@ one.
 
 **git's username prompt.** `askpass.log` shows
 `Username for 'https://github.com':` reaching the prompter on 2026-08-05 and
-being masked as a password. wayprompt has only `--get-pin` (masked
+being masked as a password. nowayprompt has only `--get-pin` (masked
 pin-squares) and no unmasked text entry, so this does not improve and arguably
 worsens — a username typed into a row of squares is invisible. Pre-existing,
 not a regression. Recorded in `plans/TODO.md`.

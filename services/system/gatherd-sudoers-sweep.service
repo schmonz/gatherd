@@ -1,0 +1,28 @@
+[Unit]
+# Removes a build-time sudoers grant left behind by an interrupted converge.
+#
+# roles/aur, roles/hardware and site-async.yml each grant the target user
+# NOPASSWD pacman for the duration of a build, and revoke it in the block's
+# `always:`. That covers a failed TASK but not a killed PROCESS -- Ctrl-C on
+# ansible-playbook, `systemctl stop gatherd-async.service`, or a reboot during
+# a multi-minute build all leave the grant in place, and `pacman -U <file>` is
+# then unrestricted root.
+#
+# Deliberately NOT part of gatherd.service: that unit carries an ExecCondition
+# (gatherd-needs-run) which skips it once the sentinel matches the deployed git
+# HEAD, so on a converged machine it does not run at boot at all. A grant swept
+# only there would survive until the next gatherd UPDATE. This unit has no
+# condition, so it runs every boot and bounds the leak to one boot.
+Description=Remove any leftover gatherd build-time sudoers grant
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+# -f so a missing file (the normal case) is success, not a failed unit.
+ExecStart=/usr/bin/rm -f /etc/sudoers.d/gatherd-build-grant
+
+[Install]
+WantedBy=sysinit.target

@@ -1,8 +1,9 @@
 ---
 - name: Grant NOPASSWD pacman for slow AUR installs
-  ansible.builtin.lineinfile:
-    path: /etc/sudoers
-    line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/gatherd-build-grant
+    content: "{{ target_user }} ALL=(root) NOPASSWD: /usr/bin/pacman\n"
+    mode: '0440'
     validate: visudo -cf %s
   become: true
   become_user: root
@@ -106,10 +107,8 @@
       changed_when: false
 
     - name: Revoke NOPASSWD pacman after slow AUR installs
-      ansible.builtin.lineinfile:
-        path: /etc/sudoers
-        line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
+      ansible.builtin.file:
+        path: /etc/sudoers.d/gatherd-build-grant
         state: absent
-        validate: visudo -cf %s
       become: true
       become_user: root

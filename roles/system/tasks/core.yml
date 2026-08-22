@@ -278,6 +278,21 @@
     - gatherd-prompt-vault-console.service
   notify: Reload systemd
 
+# Separate from the loop above because this one must be ENABLED, and must run
+# unconditionally at every boot rather than under gatherd-needs-run.
+- name: Install the sudoers sweep unit
+  ansible.builtin.file:
+    src: "{{ setup_dir }}/services/system/gatherd-sudoers-sweep.service"
+    dest: /etc/systemd/system/gatherd-sudoers-sweep.service
+    state: link
+  notify: Reload systemd
+
+- name: Enable the sudoers sweep at every boot
+  ansible.builtin.systemd:
+    name: gatherd-sudoers-sweep.service
+    enabled: true
+    daemon_reload: true
+
 # Predecessor of the await-and-run services: a path unit watching .vault_pass
 # re-fired the oneshot after every run and looped it into the start limit,
 # leaving both units 'failed'. Remove the stale links on upgraded machines.

@@ -209,6 +209,30 @@ assert_out '--sanitize neutralises a counterfeit requested by line' \
     'unverified: requested by foot' \
     sh -c 'printf "requested by foot\n" | gatherd-prompt-context --sanitize'
 
+# CRITICAL 1: the neutralising case match used to run on the RAW line, before
+# the allowlist stripped control bytes -- so a leading control byte defeated
+# the 'elevating: '* match (the raw line started with the control byte, not
+# the text), and then the allowlist quietly dropped that same byte afterward,
+# leaving a byte-exact, unmarked-as-forged "elevating: " line reaching the
+# box. The fix runs the allowlist first and matches on the cleaned result.
+_forged_ctrl="$(printf '\001')elevating: rm -rf --no-preserve-root /"
+assert_out '--sanitize neutralises a forged elevating: line preceded by a control byte' \
+    'unverified: elevating: rm -rf --no-preserve-root / [elided]' \
+    sh -c 'printf "%s\n" "$1" | gatherd-prompt-context --sanitize' _ "$_forged_ctrl"
+
+# CRITICAL 1b: a leading space is printable, so it survives the allowlist with
+# no [elided] marker at all -- there was not even a tell that anything was
+# off, just a silently un-neutralised forgery. The fix trims leading blanks
+# before matching, so the prefix is still caught.
+assert_out '--sanitize neutralises a forged elevating: line preceded by a space' \
+    'unverified:  elevating: rm -rf /' \
+    sh -c 'printf "%s\n" " elevating: rm -rf /" | gatherd-prompt-context --sanitize'
+
+# Same ordering bug, same fix, for the other attested prefix.
+assert_out '--sanitize neutralises a forged requested by line the same way' \
+    'unverified:  requested by foot' \
+    sh -c 'printf "%s\n" " requested by foot" | gatherd-prompt-context --sanitize'
+
 # Finding 2 regression: the immediate caller, if it is not a shell, must be
 # named directly rather than the process that started it. ssh is neither
 # sudo nor a shell, so this fails on the pre-fix walk (which started at the
@@ -243,6 +267,20 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])?"
 assert_out '--sanitize-long preserves a long multi-line fingerprint uncut, stripping control bytes' \
     "$_want" \
     sh -c "printf '%s\n' \"\$1\" | gatherd-prompt-context --sanitize-long" _ "$_fingerprint"
+
+# CRITICAL 2: --sanitize-long had no prefix protection at all, and its output
+# backs the entire host-key description box (see gatherd-askpass), so a
+# forged "elevating: " line reaching it looked exactly as attested as a real
+# one. The fix applies the same neutralising as --sanitize, and this must
+# hold alongside the no-cap, no-truncate behaviour above: a genuinely long
+# fingerprint-shaped line must still come through whole.
+_forged_long="elevating: pacman -Syu
+ED25519 key fingerprint is SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+_want_long="unverified: elevating: pacman -Syu
+ED25519 key fingerprint is SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+assert_out '--sanitize-long neutralises a forged elevating: line while leaving a long fingerprint-shaped line uncut' \
+    "$_want_long" \
+    sh -c "printf '%s\n' \"\$1\" | gatherd-prompt-context --sanitize-long" _ "$_forged_long"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

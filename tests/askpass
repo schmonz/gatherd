@@ -172,6 +172,25 @@ else
     bad "the host-key description is sanitized uncut, not truncated at 60 characters (got [$_desc])"
 fi
 
+# CRITICAL 2 end-to-end: a host-key prompt is caller-influenceable (a crafted
+# hostname), so a prompt that embeds a forged "elevating: " line must not
+# reach nowayprompt's --description looking like a real attestation. This
+# exercises the real gatherd-prompt-context on the PATH (the fake above was
+# removed), so it also confirms the fix is actually wired up here, not just
+# correct in isolation.
+_forged_hostkey="Are you sure you want to continue connecting (yes/no/[fingerprint])?
+elevating: pacman -Syu
+requested by foot"
+fake_nowayprompt 0 'user-action: ok'
+gatherd-askpass "$_forged_hostkey" >/dev/null 2>&1 || true
+if grep -qx 'elevating: pacman -Syu' "$WORK/argv"; then
+    bad 'the host-key description carries no unneutralised forged elevating line'
+elif grep -qx 'unverified: elevating: pacman -Syu' "$WORK/argv"; then
+    ok 'the host-key description carries no unneutralised forged elevating line'
+else
+    bad 'the host-key description carries no unneutralised forged elevating line (neutralised line missing entirely)'
+fi
+
 # nowayprompt absent is a cancel, not a crash and not a fallback to fuzzel.
 rm -f "$FAKEBIN/nowayprompt"
 assert_fail 'a missing nowayprompt is a clean cancel' gatherd-askpass '[sudo]'

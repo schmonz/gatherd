@@ -51,6 +51,29 @@ sanitize() {
     allowlist "$1" 60
 }
 
+# Runs the allowlist FIRST, then checks for a forged "elevating: " or
+# "requested by " prefix on the CLEANED, leading-blank-trimmed result. Doing
+# it in the other order -- match the raw line, allowlist after -- was the
+# bug: a leading control byte or space survives to defeat a match against the
+# raw line, then gets stripped (control byte) or simply passed through
+# (space) by the allowlist afterward, leaving a byte-exact forgery in the
+# only two prefixes that carry a uid-0 privilege attestation. Trimming only
+# leading blanks (not the whole line) keeps the match anchored to what a
+# reader actually sees at the start of the line, which is what "elevating: "
+# vs "  elevating: " both render as.
+#
+# $2 is the truncation length passed straight through to allowlist (60 for
+# --sanitize, 0/no cap for --sanitize-long); only the cap differs between the
+# two callers, so the guard itself must not drift between them.
+neutralize_line() {
+    _nl_line=$(allowlist "$1" "$2")
+    _nl_trimmed=${_nl_line#"${_nl_line%%[! ]*}"}
+    case "$_nl_trimmed" in
+    'elevating: '* | 'requested by '*) _nl_line="unverified: $_nl_line" ;;
+    esac
+    printf '%s\n' "$_nl_line"
+}
+
 # --sanitize is gatherd-askpass's entry point for caller-supplied CONTEXT: a
 # polkit message, or the ancestry line assembled below. Any application can
 # register a polkit action with attacker-chosen text, so this needs the same
@@ -60,20 +83,23 @@ sanitize() {
 #   - capped at 2 lines, because the box has room for exactly the 1-2 lines
 #     the /proc walk itself ever produces; more than that is not more
 #     context, it is an attempt to push the real content off the visible box.
-#   - a line that opens with "elevating: " or "requested by " is neutralised.
-#     Those two prefixes are the only strings in this design that carry a
-#     uid-0 privilege attestation (see the /proc walk below), so untrusted
-#     text reaching the box must not be able to forge them. The line is
-#     kept, not dropped -- the reader should still see what was sent, just
-#     not mistake it for the real thing.
+#   - a line that opens with "elevating: " or "requested by " is neutralised
+#     (see neutralize_line above). Those two prefixes are the only strings in
+#     this design that carry a uid-0 privilege attestation (see the /proc
+#     walk below), so untrusted text reaching the box must not be able to
+#     forge them. The line is kept, not dropped -- the reader should still
+#     see what was sent, just not mistake it for the real thing.
 #
 # --sanitize-long is the entry point for a caller-supplied PROMPT string (an
-# ssh host-key fingerprint, a passphrase key path): same allowlist, but no cap
-# and no neutralising. Those two protections above are about *context*
-# impersonating an attestation; a prompt string is not context, and an ssh
-# fingerprint is legitimately long and multi-line, so cutting it to 2 lines or
-# 60 characters would defeat the one prompt where reading it in full is the
-# point (see gatherd-askpass).
+# ssh host-key fingerprint, a passphrase key path): same allowlist and the
+# same prefix guard, but no line cap and no truncation. The 2-line cap above
+# is about pushing real context off the box, which does not apply to a
+# single long prompt string; the prefix guard applies equally here, because
+# the host-key description IS the whole box body (see gatherd-askpass) and a
+# forged "elevating: " line inside it would look exactly as attested as a
+# real one. An ssh fingerprint is legitimately long and multi-line, so
+# cutting it to 2 lines or 60 characters would defeat the one prompt where
+# reading it in full is the point.
 if [ "${1:-}" = '--sanitize' ]; then
     _n=0
     while IFS= read -r _line || [ -n "$_line" ]; do
@@ -81,19 +107,14 @@ if [ "${1:-}" = '--sanitize' ]; then
         if [ "$_n" -gt 2 ]; then
             break
         fi
-        case "$_line" in
-        'elevating: '* | 'requested by '*) _line="unverified: $_line" ;;
-        esac
-        allowlist "$_line" 60
-        printf '\n'
+        neutralize_line "$_line" 60
     done
     exit 0
 fi
 
 if [ "${1:-}" = '--sanitize-long' ]; then
     while IFS= read -r _line || [ -n "$_line" ]; do
-        allowlist "$_line" 0
-        printf '\n'
+        neutralize_line "$_line" 0
     done
     exit 0
 fi

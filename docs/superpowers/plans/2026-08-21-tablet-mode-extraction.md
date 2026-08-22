@@ -35,7 +35,7 @@ sway.
   changes. The comments carry the measurements and the reasoning.
 - `git filter-repo` operates ONLY on a scratch clone under `/tmp`. Never run it
   against `/home/schmonz/.autofs-mounts/code/trees/gatherd`.
-- **The new repo lives on LOCAL disk: `/home/schmonz/src/`.** `~/trees` and
+- **The new repo lives on LOCAL disk: `/home/schmonz/trees/`.** `~/trees` and
   `~/.autofs-mounts` are the same NFS mount, reached over Tailscale at 131ms
   RTT with packet loss; `git status` there takes 47 seconds against 0.00s
   locally. `/tmp` is tmpfs, so work in progress there does not survive a
@@ -650,8 +650,8 @@ them from a script at all."
 ```bash
 mkdir -p /home/schmonz/src
 mv /tmp/extract/chuwi-minibook-tablet-mode \
-   /home/schmonz/src/chuwi-minibook-tablet-mode
-cd /home/schmonz/src/chuwi-minibook-tablet-mode
+   /home/schmonz/trees/chuwi-minibook-tablet-mode
+cd /home/schmonz/trees/chuwi-minibook-tablet-mode
 git log --oneline | head -5
 ./tests/tablet-mode 2>&1 | tail -1
 ```

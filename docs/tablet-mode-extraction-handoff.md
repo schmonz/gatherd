@@ -7,7 +7,7 @@ the repo across an ocean.
 
 ## Where the work is
 
-**`/home/schmonz/src/chuwi-minibook-tablet-mode`** — local btrfs, not the NFS
+**`/home/schmonz/trees/chuwi-minibook-tablet-mode`** — local btrfs, not the NFS
 mount. HEAD `03c972a`, clean tree, **259 assertions passing**, `.git` is 340 KB.
 
 It has never been pushed and has no remote. Nothing here creates one.

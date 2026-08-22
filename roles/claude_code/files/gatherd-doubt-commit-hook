@@ -1,0 +1,8 @@
+#!/bin/sh
+# PreToolUse hook: fires when Claude is about to run `git commit`, the moment a
+# decision stops being provisional. Filtered by the hook entry's `if` clause, so
+# this never runs for other Bash calls.
+#
+# A reminder rather than a gate: hooks cannot force a tool call, and blocking a
+# commit on a heuristic would be worse than the failure it guards against.
+printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"doubt-driven-development: this commit is about to stand. If the change is non-trivial (branching logic, a crossed boundary, an invariant the compiler cannot check, or an irreversible blast radius), run the doubt cycle first: state the claim, extract artifact and contract, and have a fresh-context reviewer try to DISPROVE it. Skip only for mechanical edits."}}'

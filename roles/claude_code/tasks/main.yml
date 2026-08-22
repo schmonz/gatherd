@@ -4,3 +4,6 @@
 
 - name: Install standalone Claude Code skills
   ansible.builtin.import_tasks: skill.yml
+
+- name: Make the doubt-driven-development skill get used, not just installed
+  ansible.builtin.import_tasks: doubt.yml

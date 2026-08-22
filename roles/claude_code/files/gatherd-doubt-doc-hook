@@ -1,0 +1,16 @@
+#!/bin/sh
+# PreToolUse hook: fires when Claude is about to write a document that records a
+# decision, and reminds it that claims about third-party behavior must be
+# measured rather than read.
+#
+# Why this exact moment: a claim becomes expensive once it is written down.
+# Reviews catch bad claims, but only after they have been implemented against.
+# This fires while the correction is still a sentence.
+#
+# Path-matched rather than repo-scoped, because the rule is not about any one
+# project. Exits 0 always -- a hook that blocks a write is worse than a wrong
+# claim, and a missing jq must not wedge the session.
+jq -r '.tool_input.file_path // empty' 2>/dev/null \
+| grep -qiE '(^|/)(docs?|adr)/|(spec|plan|design|decision|rfc|adr)[^/]*\.(md|markdown)$|/CLAUDE\.md$' \
+&& printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"doubt-driven-development: you are about to record a decision. Any claim here about how a third-party tool behaves must be one you measured on this machine, not one you read. Cite the command and its output, or mark the claim UNVERIFIED."}}'
+exit 0

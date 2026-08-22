@@ -16,9 +16,15 @@
 
 - name: Merge gatherd's Claude Code defaults into settings.json
   # Merge ONLY these keys; combine(recursive=true) preserves every other
-  # setting (model, theme, hooks) the user maintains by hand. to_nice_json sorts
+  # setting (model, theme, ...) the user maintains by hand. to_nice_json sorts
   # keys, so the first run may reorder an existing file — stable and idempotent
   # thereafter.
+  #
+  # EXCEPT hooks.PreToolUse: combine(recursive=true) REPLACES lists rather than
+  # appending, so gatherd owns that one event outright and a hand-added
+  # PreToolUse entry would be overwritten on the next converge. Other events
+  # (PostToolUse, Stop, ...) are untouched. Add PreToolUse hooks to doubt.yml,
+  # not to settings.json by hand.
   ansible.builtin.copy:
     dest: "{{ target_home }}/.claude/settings.json"
     content: "{{ current | combine(required, recursive=true) | to_nice_json(indent=2) }}\n"
@@ -45,5 +51,16 @@
            },
            'enabledPlugins': {
              claude_plugin_name ~ '@' ~ claude_plugin_marketplace_name: true
+           },
+           'hooks': {
+             'PreToolUse': [
+               {'matcher': 'Bash',
+                'hooks': [{'type': 'command',
+                           'if': 'Bash(git commit*)',
+                           'command': target_home ~ '/.local/bin/gatherd-doubt-commit-hook'}]},
+               {'matcher': 'Write|Edit',
+                'hooks': [{'type': 'command',
+                           'command': target_home ~ '/.local/bin/gatherd-doubt-doc-hook'}]}
+             ]
            }
          } }}

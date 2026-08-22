@@ -1,0 +1,48 @@
+---
+# Converging the doubt-driven-development skill's PRESENCE was never the gap --
+# skill.yml has installed it all along. The gap is that having a skill available
+# does not make it get used: a session can hold a standing instruction to invoke
+# any applicable skill and still skip it, which is exactly what happened while
+# building the credential prompt (see
+# docs/superpowers/specs/2026-08-21-elevated-prompt-context-design.md, where four
+# documented-but-false upstream facts and one invented rationale reached a spec).
+#
+# Instruction alone is therefore not the lever. These two hooks are, because the
+# harness runs them at the moment a claim becomes durable rather than relying on
+# judgement about whether a skill applies. A hook cannot force a tool call, so
+# this reduces the failure rate rather than eliminating it.
+
+- name: Install the decision-document doubt hook
+  ansible.builtin.copy:
+    src: gatherd-doubt-doc-hook
+    dest: "{{ target_home }}/.local/bin/gatherd-doubt-doc-hook"
+    mode: '0755'
+
+- name: Install the commit doubt hook
+  ansible.builtin.copy:
+    src: gatherd-doubt-commit-hook
+    dest: "{{ target_home }}/.local/bin/gatherd-doubt-commit-hook"
+    mode: '0755'
+
+- name: Remind Claude to measure claims before recording a decision
+  # Machine-wide instructions, not repo-scoped: the rule is about how to reason,
+  # not about any one project. ~/.claude/CLAUDE.md is read in every session.
+  ansible.builtin.blockinfile:
+    path: "{{ target_home }}/.claude/CLAUDE.md"
+    create: true
+    mode: '0644'
+    marker: "<!-- {mark} ANSIBLE MANAGED BLOCK: gatherd doubt -->"
+    block: |
+      ## Claims about third-party behavior
+
+      Before a claim about how someone else's tool behaves enters a spec, a plan,
+      a code comment, or a commit message, measure it on this machine and cite
+      the command and its output. Documentation is evidence about intent, not
+      about behavior — man pages, READMEs and `--help` text on this machine have
+      each been wrong about a flag name, a config search order, and a fallback
+      that did not exist.
+
+      When a decision is non-trivial — branching logic, a crossed boundary, an
+      invariant no compiler checks, or an irreversible blast radius — invoke the
+      `doubt-driven-development` skill and let a fresh-context reviewer try to
+      disprove it. Cheaper before the decision stands than after.

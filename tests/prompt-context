@@ -183,5 +183,27 @@ assert_out '--sanitize leaves already-clean text byte-identical' \
     'Authentication is required to install software' \
     sh -c 'printf "%s\n" "Authentication is required to install software" | gatherd-prompt-context --sanitize'
 
+# Finding 1: --sanitize caps output at 2 lines. The box only ever has room for
+# what the /proc walk itself produces (at most one elevating: line and one
+# requested by line), so more than 2 lines is not more context -- it is an
+# attempt to push real content off the visible box.
+assert_out '--sanitize truncates to 2 lines' \
+    'line one
+line two' \
+    sh -c 'printf "line one\nline two\nline three\nline four\n" | gatherd-prompt-context --sanitize'
+
+# Finding 1: a caller-supplied line that opens with "elevating: " is the one
+# string that could counterfeit the uid-0-attested command line. It must be
+# neutralised, not silently dropped -- the reader still sees the claim, just
+# not mistaken for the real attestation.
+assert_out '--sanitize neutralises a counterfeit elevating: line' \
+    'unverified: elevating: pacman -Syu' \
+    sh -c 'printf "elevating: pacman -Syu\n" | gatherd-prompt-context --sanitize'
+
+# Same for "requested by ", the other attested prefix.
+assert_out '--sanitize neutralises a counterfeit requested by line' \
+    'unverified: requested by foot' \
+    sh -c 'printf "requested by foot\n" | gatherd-prompt-context --sanitize'
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

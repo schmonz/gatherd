@@ -46,8 +46,29 @@ sanitize() {
 # application can register a polkit action with attacker-chosen text, so that
 # path needs the same allowlist as the /proc walk. Sharing sanitize() rather
 # than duplicating it keeps one rule for what may reach the box, in one place.
+#
+# Two more protections apply here, on top of the shared allowlist, because
+# unlike the /proc walk's own output this text is untrusted end to end:
+#
+#   - capped at 2 lines, because the box has room for exactly the 1-2 lines
+#     the /proc walk itself ever produces; more than that is not more
+#     context, it is an attempt to push the real content off the visible box.
+#   - a line that opens with "elevating: " or "requested by " is neutralised.
+#     Those two prefixes are the only strings in this design that carry a
+#     uid-0 privilege attestation (see the /proc walk below), so untrusted
+#     text reaching the box must not be able to forge them. The line is
+#     kept, not dropped -- the reader should still see what was sent, just
+#     not mistake it for the real thing.
 if [ "${1:-}" = '--sanitize' ]; then
+    _n=0
     while IFS= read -r _line || [ -n "$_line" ]; do
+        _n=$((_n + 1))
+        if [ "$_n" -gt 2 ]; then
+            break
+        fi
+        case "$_line" in
+        'elevating: '* | 'requested by '*) _line="unverified: $_line" ;;
+        esac
         sanitize "$_line"
         printf '\n'
     done

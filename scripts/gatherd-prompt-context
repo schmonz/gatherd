@@ -28,27 +28,34 @@ comm_of() {
 # out-flanked by a byte nobody thought of. Metacharacters are deliberately
 # kept -- a reader needs to see "curl evil.sh | sh" as it really is; the
 # danger was only ever control bytes and escape sequences.
-sanitize() {
+#
+# $2 is the truncation length, or 0 for none. --sanitize and --sanitize-long
+# both call this so the allowlist itself -- the part that must not be wrong --
+# cannot drift between the two modes; only the cap differs.
+allowlist() {
     _raw=$1
+    _cap=$2
     _clean=$(printf '%s' "$_raw" | LC_ALL=C tr -cd '\40-\176')
     # Track elision independently of truncation. A command can be both
     # over-long and full of control bytes, and reporting only the truncation
     # would hide precisely what this marker exists to disclose.
     _mark=''
     [ "${#_clean}" -ne "${#_raw}" ] && _mark=' [elided]'
-    if [ "${#_clean}" -gt 60 ]; then
-        _clean=$(printf '%s' "$_clean" | cut -c1-60)...
+    if [ "$_cap" -gt 0 ] && [ "${#_clean}" -gt "$_cap" ]; then
+        _clean=$(printf '%s' "$_clean" | cut -c1-"$_cap")...
     fi
     printf '%s%s' "$_clean" "$_mark"
 }
 
-# A second entry point for gatherd-askpass's caller-supplied context: any
-# application can register a polkit action with attacker-chosen text, so that
-# path needs the same allowlist as the /proc walk. Sharing sanitize() rather
-# than duplicating it keeps one rule for what may reach the box, in one place.
-#
-# Two more protections apply here, on top of the shared allowlist, because
-# unlike the /proc walk's own output this text is untrusted end to end:
+sanitize() {
+    allowlist "$1" 60
+}
+
+# --sanitize is gatherd-askpass's entry point for caller-supplied CONTEXT: a
+# polkit message, or the ancestry line assembled below. Any application can
+# register a polkit action with attacker-chosen text, so this needs the same
+# allowlist as the /proc walk (shared via allowlist()), plus two protections
+# that belong specifically to context, not to prompt text in general:
 #
 #   - capped at 2 lines, because the box has room for exactly the 1-2 lines
 #     the /proc walk itself ever produces; more than that is not more
@@ -59,6 +66,14 @@ sanitize() {
 #     text reaching the box must not be able to forge them. The line is
 #     kept, not dropped -- the reader should still see what was sent, just
 #     not mistake it for the real thing.
+#
+# --sanitize-long is the entry point for a caller-supplied PROMPT string (an
+# ssh host-key fingerprint, a passphrase key path): same allowlist, but no cap
+# and no neutralising. Those two protections above are about *context*
+# impersonating an attestation; a prompt string is not context, and an ssh
+# fingerprint is legitimately long and multi-line, so cutting it to 2 lines or
+# 60 characters would defeat the one prompt where reading it in full is the
+# point (see gatherd-askpass).
 if [ "${1:-}" = '--sanitize' ]; then
     _n=0
     while IFS= read -r _line || [ -n "$_line" ]; do
@@ -69,7 +84,15 @@ if [ "${1:-}" = '--sanitize' ]; then
         case "$_line" in
         'elevating: '* | 'requested by '*) _line="unverified: $_line" ;;
         esac
-        sanitize "$_line"
+        allowlist "$_line" 60
+        printf '\n'
+    done
+    exit 0
+fi
+
+if [ "${1:-}" = '--sanitize-long' ]; then
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        allowlist "$_line" 0
         printf '\n'
     done
     exit 0

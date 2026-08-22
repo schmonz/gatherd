@@ -153,6 +153,25 @@ else
     bad "a caller-supplied context over 60 characters is truncated with ... (got [$_desc])"
 fi
 
+# Finding 3: the host-key prompt embeds a hostname/fingerprint that ssh
+# assembles from whatever we connected to (a crafted ssh://<host>/ in a repo
+# or CI config reaches here), so it must be sanitized like every other
+# untrusted string -- but through --sanitize-long, not --sanitize, so the
+# fingerprint is not cut to 60 characters or 2 lines. A control byte must
+# still be stripped and marked; the rest of the (over 60 character) prompt
+# must survive uncut, which a reverted fix (raw "$prompt", or the wrong mode)
+# would not produce.
+_hostkey="Are you sure you want to continue connecting (yes/no/[fingerprint])? ED25519 key fingerprint is SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$(printf '\033')[2J."
+fake_nowayprompt 0 'user-action: ok'
+gatherd-askpass "$_hostkey" >/dev/null 2>&1 || true
+_desc=$(awk '/^--description$/{getline; print; exit}' "$WORK/argv")
+_want_hostkey="Are you sure you want to continue connecting (yes/no/[fingerprint])? ED25519 key fingerprint is SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa[2J. [elided]"
+if [ "$_desc" = "$_want_hostkey" ]; then
+    ok 'the host-key description is sanitized uncut, not truncated at 60 characters'
+else
+    bad "the host-key description is sanitized uncut, not truncated at 60 characters (got [$_desc])"
+fi
+
 # nowayprompt absent is a cancel, not a crash and not a fallback to fuzzel.
 rm -f "$FAKEBIN/nowayprompt"
 assert_fail 'a missing nowayprompt is a clean cancel' gatherd-askpass '[sudo]'

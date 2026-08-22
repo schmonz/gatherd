@@ -231,5 +231,18 @@ assert_out 'the walk still skips sudo itself and resolves to the app above it' \
 requested by foot' \
     gatherd-prompt-context 521
 
+# Finding 3: --sanitize-long backs the ssh host-key description, where the
+# fingerprint is the whole point -- it must survive uncut and multi-line,
+# unlike --sanitize's 60-character, 2-line box. Control bytes still go.
+_fingerprint="Are you sure you want to continue connecting (yes/no/[fingerprint])?
+ED25519 key fingerprint is SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$(printf '\033')[2J.
+Are you sure you want to continue connecting (yes/no/[fingerprint])?"
+_want="Are you sure you want to continue connecting (yes/no/[fingerprint])?
+ED25519 key fingerprint is SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa[2J. [elided]
+Are you sure you want to continue connecting (yes/no/[fingerprint])?"
+assert_out '--sanitize-long preserves a long multi-line fingerprint uncut, stripping control bytes' \
+    "$_want" \
+    sh -c "printf '%s\n' \"\$1\" | gatherd-prompt-context --sanitize-long" _ "$_fingerprint"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

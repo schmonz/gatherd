@@ -114,7 +114,14 @@ if [ -n "$pid" ] && [ -d "$proc/$pid" ]; then
     # Report only comm: a process can rewrite its own argv (that is what
     # setproctitle does), so this line is materially less trustworthy than the
     # one above and must not be dressed up with a full command line.
-    walk=$(ppid_of "$pid")
+    #
+    # Start at $pid itself, not its parent. sudo stays correctly attributed
+    # because it is already in the skip-list below, so a sudo pid still
+    # resolves to the first non-shell ancestor above it -- but every other
+    # caller (ssh, a spoofed direct exec of gatherd-askpass) IS the process
+    # that popped the box, and starting one hop up used to name whatever
+    # forked *it* instead: the supervisor or the terminal, not the requester.
+    walk=$pid
     hops=0
     while [ -n "$walk" ] && [ "$walk" -gt 1 ] 2>/dev/null && [ "$hops" -lt 12 ]; do
         c=$(comm_of "$walk")

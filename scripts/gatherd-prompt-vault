@@ -13,7 +13,13 @@ needed=/usr/local/lib/gatherd/scripts/gatherd-vault-pass-needed
 test -f /etc/gatherd/core-complete || exit 0
 
 while "$needed"; do
-    vault_pass=$("${SUDO_ASKPASS:-/usr/local/bin/gatherd-askpass}" "[vault]") || exit 0
+    # A literal argv[2] rather than the /proc walk: this box is started by
+    # gatherd-session-helpers's run() { sh -c "$1" & }, so the walk names the
+    # supervisor -- "requested by gatherd-session" -- rather than the truth.
+    # There is nothing to walk to here anyway: this IS gatherd asking, always,
+    # so the context is fixed and true rather than guessed at.
+    vault_pass=$("${SUDO_ASKPASS:-/usr/local/bin/gatherd-askpass}" "[vault]" \
+        "gatherd needs the Ansible vault password to continue setup") || exit 0
     printf '%s' "$vault_pass" | sudo -n /usr/local/lib/gatherd/scripts/gatherd-write-vault-pass
 
     # The password is now in flight. gatherd-await-and-run discards it if it

@@ -76,10 +76,33 @@ exits 1 with `frontend unavailable: no Wayland display`, verified with and
 without a pty. This is why the `WAYLAND_DISPLAY` guard in *Routing terminal
 sudo* is load-bearing rather than a preference.
 
-**Why it is structurally safer than what it replaces:** `ldd` on the built
-binary shows `libxkbcommon.so.0` and nothing else beyond libc. It does not link
-libwayland at all — the Rust crates speak the protocol over the socket — so the
-system-libwayland incompatibility that killed wayprompt cannot recur here.
+**Why it is structurally safer than what it replaces — and what that is
+actually about.** Not the absence of libwayland. `libwayland-client.so.0` has
+held its soname since 2012, and the protocol is additive and versioned, so
+neither is a churn source; an earlier draft of this spec credited the wrong
+mechanism.
+
+What killed wayprompt was **build-time code generation from the *system's*
+protocol XML by a stale generator**. zig-wayland 0.2.0 parsed wayland 1.26.0's
+`/usr/share/wayland/wayland.xml`, which had grown content its 2024-era scanner
+mishandled — enums namespaced into `common.wl.shm.*` while the emitted
+`postError` still referenced a bare `Error`. The XML moved forward; the
+generator did not. No ABI was involved.
+
+nowayprompt is protected because its protocol definitions are **vendored and
+pinned alongside their generator**: `wayland-protocols` ships 54 XML files
+inside the crate, `wayland-protocols-wlr` vendors the wlr XML, no build script
+consults `/usr/share/wayland`, and `Cargo.lock` pins the scanner and the XML as
+a matched pair. A system wayland upgrade cannot change what gets generated,
+because the system's copy is never read. (`ldd` showing only
+`libxkbcommon.so.0` is a real but secondary benefit — it removes a C toolchain
+and `-sys` build-script surface.)
+
+**The trade this makes.** Vendoring swaps "breaks when the system moves" for
+"goes stale until someone bumps the crates". If a compositor ever requires a
+newer protocol than the pinned crates speak, the fix is a dependency bump. For
+a prompt using core `wl_*` plus `zwlr_layer_shell_v1` — stable and ancient —
+that is the better side of the trade, but it is a trade, not immunity.
 
 Packaging: **not in the AUR**, so gatherd vendors a PKGBUILD at
 `packaging/nowayprompt/PKGBUILD`. **Pinned to a commit, not a tag**: its tags

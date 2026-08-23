@@ -22,4 +22,3 @@ mock_modules:
   - community.general.git_config
   - community.general.ini_file
   - ansible.posix.firewalld
-  - kewlfft.aur.aur

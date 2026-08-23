@@ -27,14 +27,19 @@
   gather_facts: false
   become: true
 
+  # Both imported as tasks, not one of them in a roles: block, because order
+  # matters and roles: would silently run first: the hardware role builds AUR
+  # packages, and the system tier is what installs aurutils and creates the
+  # local repository they build into.
   tasks:
     - name: Converge the network-dependent system tier
       ansible.builtin.import_role:
         name: system
         tasks_from: rest
 
-  roles:
-    - hardware
+    - name: Converge hardware-specific configuration
+      ansible.builtin.import_role:
+        name: hardware
 
 
 - name: User configuration
@@ -61,32 +66,21 @@
         tasks_from: rest
 
   post_tasks:
-    - name: Grant NOPASSWD pacman for thinkfan install
-      ansible.builtin.lineinfile:
-        path: /etc/sudoers
-        line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
-        validate: visudo -cf %s
+    - name: Build thinkfan into the local AUR repository
+      ansible.builtin.command: "{{ aur_sync_command }} thinkfan"
+      environment: "{{ aur_build_environment }}"
+      register: _aur_sync_thinkfan
+      changed_when: "'there is nothing to do' not in _aur_sync_thinkfan.stderr"
+      when: has_thinkpad_hardware
+
+    - name: Install thinkfan
+      community.general.pacman:
+        name: thinkfan
+        state: present
+        update_cache: true
       when: has_thinkpad_hardware
       become: true
       become_user: root
-
-    - block: # noqa: name[missing]
-        - name: Install thinkfan
-          kewlfft.aur.aur:
-            name: thinkfan
-            use: yay
-            state: present
-          when: has_thinkpad_hardware
-      always:
-        - name: Revoke NOPASSWD pacman after thinkfan install
-          ansible.builtin.lineinfile:
-            path: /etc/sudoers
-            line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
-            state: absent
-            validate: visudo -cf %s
-          when: has_thinkpad_hardware
-          become: true
-          become_user: root
 
     - name: Enable thinkfan service
       ansible.builtin.systemd:

@@ -1,8 +1,32 @@
 ---
-- name: Install FaceTime HD webcam driver
-  kewlfft.aur.aur:
-    name: facetimehd-dkms
-    use: yay
-    state: present
+# Two rounds: facetimehd-dkms depends on facetimehd-firmware, which is itself
+# an AUR package. makepkg checks depends before it builds, and with no sudoers
+# grant nothing can install one mid-build, so the firmware is built and
+# installed first.
+- name: Build the FaceTime HD firmware into the local AUR repository
+  ansible.builtin.command: "{{ aur_sync_command }} facetimehd-firmware"
+  environment: "{{ aur_build_environment }}"
+  register: _aur_sync_facetimehd_firmware
+  changed_when: "'there is nothing to do' not in _aur_sync_facetimehd_firmware.stderr"
   become: true
   become_user: "{{ target_user }}"
+
+- name: Install the FaceTime HD firmware
+  community.general.pacman:
+    name: facetimehd-firmware
+    state: present
+    update_cache: true
+
+- name: Build the FaceTime HD webcam driver into the local AUR repository
+  ansible.builtin.command: "{{ aur_sync_command }} facetimehd-dkms"
+  environment: "{{ aur_build_environment }}"
+  register: _aur_sync_facetimehd_dkms
+  changed_when: "'there is nothing to do' not in _aur_sync_facetimehd_dkms.stderr"
+  become: true
+  become_user: "{{ target_user }}"
+
+- name: Install the FaceTime HD webcam driver
+  community.general.pacman:
+    name: facetimehd-dkms
+    state: present
+    update_cache: true

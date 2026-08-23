@@ -1,11 +1,17 @@
 ---
-- name: Install mbpfan
-  kewlfft.aur.aur:
-    name: mbpfan
-    use: yay
-    state: present
+- name: Build mbpfan into the local AUR repository
+  ansible.builtin.command: "{{ aur_sync_command }} mbpfan"
+  environment: "{{ aur_build_environment }}"
+  register: _aur_sync_mbpfan
+  changed_when: "'there is nothing to do' not in _aur_sync_mbpfan.stderr"
   become: true
   become_user: "{{ target_user }}"
+
+- name: Install mbpfan
+  community.general.pacman:
+    name: mbpfan
+    state: present
+    update_cache: true
 
 - name: Install mbpfan service override
   ansible.builtin.copy:

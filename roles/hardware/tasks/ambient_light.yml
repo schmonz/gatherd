@@ -1,15 +1,59 @@
 ---
 # clight is installed but intentionally disabled until configured.
 # See TODO.md before making it operational.
-- name: Install clight
-  kewlfft.aur.aur:
-    name:
-      - iio-sensor-proxy
-      - clight
-    use: yay
+
+# iio-sensor-proxy is in the official repos; only clight and its chain come
+# from the AUR. yay papered over that difference, aurutils does not.
+- name: Install the ambient light sensor proxy
+  community.general.pacman:
+    name: iio-sensor-proxy
     state: present
+
+# Three rounds: clight depends on clightd, which depends on libmodule, and both
+# are AUR packages. makepkg checks depends before it builds, and with no
+# sudoers grant nothing can install one mid-build, so each layer is built as
+# target_user and installed as root before the next is attempted.
+- name: Build libmodule into the local AUR repository
+  ansible.builtin.command: "{{ aur_sync_command }} libmodule"
+  environment: "{{ aur_build_environment }}"
+  register: _aur_sync_libmodule
+  changed_when: "'there is nothing to do' not in _aur_sync_libmodule.stderr"
   become: true
   become_user: "{{ target_user }}"
+
+- name: Install libmodule
+  community.general.pacman:
+    name: libmodule
+    state: present
+    update_cache: true
+
+- name: Build clightd into the local AUR repository
+  ansible.builtin.command: "{{ aur_sync_command }} clightd"
+  environment: "{{ aur_build_environment }}"
+  register: _aur_sync_clightd
+  changed_when: "'there is nothing to do' not in _aur_sync_clightd.stderr"
+  become: true
+  become_user: "{{ target_user }}"
+
+- name: Install clightd
+  community.general.pacman:
+    name: clightd
+    state: present
+    update_cache: true
+
+- name: Build clight into the local AUR repository
+  ansible.builtin.command: "{{ aur_sync_command }} clight"
+  environment: "{{ aur_build_environment }}"
+  register: _aur_sync_clight
+  changed_when: "'there is nothing to do' not in _aur_sync_clight.stderr"
+  become: true
+  become_user: "{{ target_user }}"
+
+- name: Install clight
+  community.general.pacman:
+    name: clight
+    state: present
+    update_cache: true
 
 - name: Disable clightd service
   ansible.builtin.systemd:

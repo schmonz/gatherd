@@ -1,72 +1,51 @@
 ---
-- name: Grant NOPASSWD pacman for AUR installs
-  ansible.builtin.lineinfile:
-    path: /etc/sudoers
-    line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
-    validate: visudo -cf %s
-  become: true
-  become_user: root
-  changed_when: false
+- name: Import AVS audio tasks
+  ansible.builtin.import_tasks: avs_audio.yml
+  when: has_avs_audio
 
-- block: # noqa: name[missing]
-    - name: Import AVS audio tasks
-      ansible.builtin.import_tasks: avs_audio.yml
-      when: has_avs_audio
+- name: Import Chromebook F-key tasks
+  ansible.builtin.import_tasks: cros_fkeys.yml
+  when: has_cros_fkeys
 
-    - name: Import Chromebook F-key tasks
-      ansible.builtin.import_tasks: cros_fkeys.yml
-      when: has_cros_fkeys
+- name: Install clight (inoperative until configured)
+  ansible.builtin.import_tasks: ambient_light.yml
+  when: has_screen_backlight or has_kbd_backlight
 
-    - name: Install clight (inoperative until configured)
-      ansible.builtin.import_tasks: ambient_light.yml
-      when: has_screen_backlight or has_kbd_backlight
+- name: Import Apple SMC tasks
+  ansible.builtin.import_tasks: applesmc.yml
+  when: has_applesmc
 
-    - name: Import Apple SMC tasks
-      ansible.builtin.import_tasks: applesmc.yml
-      when: has_applesmc
+- name: Import FaceTime HD tasks
+  ansible.builtin.import_tasks: facetimehd.yml
+  when: has_facetimehd
 
-    - name: Import FaceTime HD tasks
-      ansible.builtin.import_tasks: facetimehd.yml
-      when: has_facetimehd
+- name: Import phantom display tasks
+  ansible.builtin.import_tasks: phantom_display.yml
+  when: has_phantom_second_display
 
-    - name: Import phantom display tasks
-      ansible.builtin.import_tasks: phantom_display.yml
-      when: has_phantom_second_display
+- name: Import rotated panel tasks
+  ansible.builtin.import_tasks: rotated_panel.yml
+  when: has_rotated_panel
 
-    - name: Import rotated panel tasks
-      ansible.builtin.import_tasks: rotated_panel.yml
-      when: has_rotated_panel
+- name: Import GRUB background tasks
+  ansible.builtin.import_tasks: grub_background.yml
+  when: has_grub
 
-    - name: Import GRUB background tasks
-      ansible.builtin.import_tasks: grub_background.yml
-      when: has_grub
+- name: Import zswap tasks
+  ansible.builtin.import_tasks: zswap.yml
 
-    - name: Import zswap tasks
-      ansible.builtin.import_tasks: zswap.yml
+- name: Import extlinux zswap tasks
+  ansible.builtin.import_tasks: zswap_extlinux.yml
+  when: has_extlinux
 
-    - name: Import extlinux zswap tasks
-      ansible.builtin.import_tasks: zswap_extlinux.yml
-      when: has_extlinux
+- name: Import keyboard backlight tasks
+  ansible.builtin.import_tasks: kbd_backlight.yml
+  when: has_kbd_backlight
 
-    - name: Import keyboard backlight tasks
-      ansible.builtin.import_tasks: kbd_backlight.yml
-      when: has_kbd_backlight
+- name: Import lid handler tasks
+  ansible.builtin.import_tasks: lid_handler.yml
+  when: not has_lid_events
 
-    - name: Import lid handler tasks
-      ansible.builtin.import_tasks: lid_handler.yml
-      when: not has_lid_events
-
-    - name: Import ThinkPad tasks
-      ansible.builtin.import_tasks: thinkpad.yml
-      when: has_thinkpad_hardware
-
-  always:
-    - name: Revoke NOPASSWD pacman
-      ansible.builtin.lineinfile:
-        path: /etc/sudoers
-        line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
-        state: absent
-        validate: visudo -cf %s
-      become: true
-      become_user: root
-      changed_when: false
+- name: Import ThinkPad tasks
+  ansible.builtin.import_tasks: thinkpad.yml
+  when: has_thinkpad_hardware

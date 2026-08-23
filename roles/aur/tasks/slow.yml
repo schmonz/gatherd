@@ -1,11 +1,8 @@
 ---
 - block: # noqa: name[missing]
     - name: Build slow AUR packages into the local repository
-      ansible.builtin.command: >-
-        aur sync --database {{ aur_repo_name }}
-        --no-view --no-confirm --no-sync
-        --makepkg-args --skippgpcheck
-        {{ aur_slow_packages | join(' ') }}
+      ansible.builtin.command: "{{ aur_sync_command }} {{ aur_slow_packages | join(' ') }}"
+      environment: "{{ aur_build_environment }}"
       register: _aur_sync_slow
       changed_when: "'there is nothing to do' not in _aur_sync_slow.stderr"
 
@@ -21,11 +18,8 @@
       # claude-code is a native Node bundle that uses AVX/SSE4 instructions and
       # SIGILLs on pre-AVX CPUs (e.g. the Core 2 T60); claude-cowork-service is
       # useless without it. On those machines, SSH in from an AVX-capable box.
-      ansible.builtin.command: >-
-        aur sync --database {{ aur_repo_name }}
-        --no-view --no-confirm --no-sync
-        --makepkg-args --skippgpcheck
-        {{ aur_slow_avx_packages | join(' ') }}
+      ansible.builtin.command: "{{ aur_sync_command }} {{ aur_slow_avx_packages | join(' ') }}"
+      environment: "{{ aur_build_environment }}"
       register: _aur_sync_avx
       changed_when: "'there is nothing to do' not in _aur_sync_avx.stderr"
       when: has_avx
@@ -66,11 +60,8 @@
         # Named -git because that is the only fprintd-clients in the AUR; the
         # plain name open-fprintd and python-validity ask for is a provides.
         - name: Build fprintd-clients-git
-          ansible.builtin.command: >-
-            aur sync --database {{ aur_repo_name }}
-            --no-view --no-confirm --no-sync
-            --makepkg-args --skippgpcheck
-            fprintd-clients-git
+          ansible.builtin.command: "{{ aur_sync_command }} fprintd-clients-git"
+          environment: "{{ aur_build_environment }}"
           register: _aur_sync_fprintd_clients
           changed_when: "'there is nothing to do' not in _aur_sync_fprintd_clients.stderr"
 
@@ -83,11 +74,8 @@
           become_user: root
 
         - name: Build open-fprintd
-          ansible.builtin.command: >-
-            aur sync --database {{ aur_repo_name }}
-            --no-view --no-confirm --no-sync
-            --makepkg-args --skippgpcheck
-            open-fprintd
+          ansible.builtin.command: "{{ aur_sync_command }} open-fprintd"
+          environment: "{{ aur_build_environment }}"
           register: _aur_sync_open_fprintd
           changed_when: "'there is nothing to do' not in _aur_sync_open_fprintd.stderr"
 
@@ -100,11 +88,8 @@
           become_user: root
 
         - name: Build python-validity
-          ansible.builtin.command: >-
-            aur sync --database {{ aur_repo_name }}
-            --no-view --no-confirm --no-sync
-            --makepkg-args --skippgpcheck
-            python-validity
+          ansible.builtin.command: "{{ aur_sync_command }} python-validity"
+          environment: "{{ aur_build_environment }}"
           register: _aur_sync_python_validity
           changed_when: "'there is nothing to do' not in _aur_sync_python_validity.stderr"
 

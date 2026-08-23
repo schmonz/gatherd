@@ -69,9 +69,29 @@ rest_packages:
   # (roles/system/tasks/nowayprompt.yml), which runs before the aur role
   # would otherwise pull this in as an AUR build dependency.
   - base-devel
-  # cargo, for the same vendored build. Declared as "rust" because that is the
-  # package: cargo is only a provides, so pacman cannot install it by that name.
+  # cargo, for the same vendored build, and for arch-update's makedepends.
+  # Declared as "rust" because that is the package: cargo is only a provides,
+  # so pacman cannot install it by that name.
   - rust
+  # aurutils' runtime dependencies. It is built from a vendored PKGBUILD with
+  # plain makepkg (no -s), so nothing installs these on its behalf; they have
+  # to be here or the bootstrap in roles/system/tasks/aurutils.yml fails.
+  # git is declared below with the rest of the version-control tools.
+  - pacutils
+  - curl
+  - perl
+  - perl-json-xs
+  - bash
+  # Providers for the virtual dependencies of AUR packages we build. makepkg
+  # runs without -s and so cannot install a missing dependency itself; each of
+  # these has to be present before the build that needs it. pacman cannot
+  # install a virtual by name, so the real provider is named instead.
+  - gtk3          # libgtk-3.so, for 1password
+  - gnome-keyring # org.freedesktop.secrets, for jetbrains-toolbox
+  - ttf-dejavu    # ttf-font, for zoom
+  # The fifth virtual, udev, is provided by systemd, which the `base` group
+  # guarantees on every Arch install; declaring it would only invite pacman to
+  # reconsider a core package.
   # cloud sync. Was in aur_slow_packages, but rclone has been in [extra] for a
   # while; yay installed it from there regardless of which list named it.
   - rclone
@@ -203,6 +223,20 @@ aur_slow_packages:
 aur_slow_avx_packages:
   - claude-code
   - claude-cowork-service
+
+# Local pacman repository that AUR builds land in. aurutils builds each package
+# as the unprivileged target_user and adds it here with repo-add; root then
+# installs it with an ordinary `pacman -S`. That is the whole reason this repo
+# exists: it splits "build" from "install" so the build half never needs root,
+# and no transient sudoers grant has to be issued and revoked around it.
+#
+# The directory is writable by target_user (repo-add runs as that user) and the
+# pacman.conf entry trusts it unsigned, so target_user can put a package here
+# that root will install by name. That is the same trust already implied by
+# running their makepkg output as a package; what it is NOT is the standing
+# `pacman -U <any file>` a NOPASSWD grant leaves behind if the play is killed.
+aur_repo_name: gatherd-aur
+aur_repo_dir: /var/cache/gatherd-aur
 
 web_apps:
   # Each app's icon is resolved at provision time by gatherd-fetch-webapp-icon:

@@ -1,0 +1,35 @@
+# Vendored rather than fetched from the AUR, because this is the one package
+# that cannot come from the AUR: it IS the AUR builder. Bootstrapping it with
+# the pattern it replaces (a temporary NOPASSWD pacman grant) would defeat the
+# point, so it is built here with plain makepkg -- no -s, so makepkg has no
+# reason to reach for sudo -- and installed from the play's own root context.
+#
+# Not a copy of upstream's PKGBUILD: that one carries install= and changelog=
+# side files that makepkg would demand alongside it. This pins the same source
+# tarball and the same sha256sum upstream declares, and nothing else.
+#
+# To upgrade: bump pkgver, refresh sha256sums from
+# https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=aurutils, and confirm
+# depends still matches upstream's (all six must be official-repo packages, or
+# the chicken-and-egg problem is back).
+
+pkgname=aurutils
+pkgver=20.5.8
+pkgrel=1
+pkgdesc='helper tools for the arch user repository'
+url='https://github.com/AladW/aurutils'
+arch=('any')
+license=('ISC')
+depends=('git' 'pacutils' 'curl' 'perl' 'perl-json-xs' 'bash')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$pkgver.tar.gz")
+sha256sums=('9a425508e59db73b1ae4644d15fc3c09e3cbd85788295455bd2d13fb6ceccee5')
+
+build() {
+    cd "$pkgname-$pkgver"
+    make AURUTILS_VERSION="$pkgver"
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    make AURUTILS_VERSION="$pkgver" PREFIX=/usr ETCDIR=/etc DESTDIR="$pkgdir" install
+}

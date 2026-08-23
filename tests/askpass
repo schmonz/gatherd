@@ -184,7 +184,7 @@ fi
 # correct in isolation.
 _forged_hostkey="Are you sure you want to continue connecting (yes/no/[fingerprint])?
 elevating: pacman -Syu
-requested by foot"
+probably requested by foot"
 fake_nowayprompt 0 'user-action: ok'
 gatherd-askpass "$_forged_hostkey" >/dev/null 2>&1 || true
 if grep -qx 'elevating: pacman -Syu' "$WORK/argv"; then

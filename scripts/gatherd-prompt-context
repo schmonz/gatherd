@@ -52,7 +52,7 @@ sanitize() {
 }
 
 # Runs the allowlist FIRST, then checks for a forged "elevating: " or
-# "requested by " prefix on the CLEANED, leading-blank-trimmed result. Doing
+# "requested by " prefixes on the CLEANED, leading-blank-trimmed result. Doing
 # it in the other order -- match the raw line, allowlist after -- was the
 # bug: a leading control byte or space survives to defeat a match against the
 # raw line, then gets stripped (control byte) or simply passed through
@@ -69,7 +69,8 @@ neutralize_line() {
     _nl_line=$(allowlist "$1" "$2")
     _nl_trimmed=${_nl_line#"${_nl_line%%[! ]*}"}
     case "$_nl_trimmed" in
-    'elevating: '* | 'requested by '*) _nl_line="unverified: $_nl_line" ;;
+    'elevating: '* | 'requested by '* | 'probably requested by '*)
+        _nl_line="unverified: $_nl_line" ;;
     esac
     printf '%s\n' "$_nl_line"
 }
@@ -83,7 +84,8 @@ neutralize_line() {
 #   - capped at 2 lines, because the box has room for exactly the 1-2 lines
 #     the /proc walk itself ever produces; more than that is not more
 #     context, it is an attempt to push the real content off the visible box.
-#   - a line that opens with "elevating: " or "requested by " is neutralised
+#   - a line that opens with "elevating: ", "requested by " or
+#     "probably requested by " is neutralised
 #     (see neutralize_line above). Those two prefixes are the only strings in
 #     this design that carry a uid-0 privilege attestation (see the /proc
 #     walk below), so untrusted text reaching the box must not be able to
@@ -172,7 +174,12 @@ if [ -n "$pid" ] && [ -d "$proc/$pid" ]; then
         case "$c" in
         sudo | bash | sh | zsh | dash | fish) ;;
         '') break ;;
-        *) add "requested by $(sanitize "$c")"; break ;;
+        # "probably", because this is the ONE line here that carries no
+        # attestation: comm is settable by the process itself via
+        # prctl(PR_SET_NAME), so a hostile program can name itself anything.
+        # The elevating: line above is backed by /proc ownership; this is a
+        # hint, and the wording should not let a reader mistake it for more.
+        *) add "probably requested by $(sanitize "$c")"; break ;;
         esac
         walk=$(ppid_of "$walk")
         hops=$((hops + 1))

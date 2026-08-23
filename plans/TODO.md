@@ -47,33 +47,6 @@
 
 ## Backlog (uncategorized)
 
-- **Make the build-time pacman grant structurally unnecessary (aurutils).** The
-  four build sites (`roles/aur/tasks/main.yml`, `roles/aur/tasks/slow.yml`,
-  `roles/hardware/tasks/main.yml`, `site-async.yml`) still grant
-  `NOPASSWD: /usr/bin/pacman` for the duration of a build, because every AUR
-  helper shells out to `sudo pacman` to install what it built, and
-  `community.general.pacman` cannot install from the AUR. As of 2026-08-22 the
-  grant is a `/etc/sudoers.d/` drop-in, targets `(root)` rather than `(ALL)`,
-  and is swept at every boot by `gatherd-sudoers-sweep.service`, so an
-  interrupted converge leaks it until the next boot rather than forever. That
-  bounds the exposure; it does not remove it.
-  - **The structural fix is [aurutils](https://aur.archlinux.org/packages/aurutils)**
-    (AUR, 303 votes): build as an unprivileged user into a *local pacman repo*,
-    then let root install from that repo with an ordinary `pacman -S`. No grant
-    at any point. Costs a rework of three roles and a new dependency, and has
-    to preserve what the current role does for free: `--mflags --skippgpcheck`,
-    the 1Password/helium GPG key imports, AUR-to-AUR dependency ordering, and
-    `kewlfft`'s already-installed idempotency.
-  - **Cheaper interim, unverified:** grant `NOPASSWD` on a gatherd-owned wrapper
-    that validates argv instead of on `/usr/bin/pacman` itself. Reachable
-    because `yay --sudo <file>` and `--sudoflags <flags>` both exist, so
-    `--sudoflags "-n /usr/local/lib/gatherd/scripts/gatherd-build-install"`
-    makes yay run `sudo -n <wrapper> pacman -U ...`. NOT done because yay's
-    exact command construction was never confirmed by running it.
-  - `scripts/gatherd-check-privilege-grants` bans the old shape, but it is a
-    spelling check: `Defaults:user !authenticate`, a templated `.j2`, wheel
-    membership, a polkit rule, or a setuid helper all pass it clean.
-
 - **git's username prompt is masked like a password.** `askpass.log` recorded
   `Username for 'https://github.com':` reaching `gatherd-askpass` on 2026-08-05,
   where it is rendered by the masked password box. Not a secret, and invisible

@@ -1,9 +1,8 @@
 ---
 - name: Grant NOPASSWD pacman for AUR installs
-  ansible.builtin.copy:
-    dest: /etc/sudoers.d/gatherd-build-grant
-    content: "{{ target_user }} ALL=(root) NOPASSWD: /usr/bin/pacman\n"
-    mode: '0440'
+  ansible.builtin.lineinfile:
+    path: /etc/sudoers
+    line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
     validate: visudo -cf %s
   become: true
   become_user: root
@@ -63,9 +62,11 @@
 
   always:
     - name: Revoke NOPASSWD pacman
-      ansible.builtin.file:
-        path: /etc/sudoers.d/gatherd-build-grant
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers
+        line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
         state: absent
+        validate: visudo -cf %s
       become: true
       become_user: root
       changed_when: false

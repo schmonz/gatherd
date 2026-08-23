@@ -72,6 +72,9 @@ rest_packages:
   # cargo, for the same vendored build. Declared as "rust" because that is the
   # package: cargo is only a provides, so pacman cannot install it by that name.
   - rust
+  # cloud sync. Was in aur_slow_packages, but rclone has been in [extra] for a
+  # while; yay installed it from there regardless of which list named it.
+  - rclone
   # version control + /etc tracking
   - etckeeper
   - git
@@ -188,8 +191,6 @@ aur_slow_packages:
   - slack-electron
   - zoom
   - teams-for-linux-electron-bin
-  # cloud sync
-  - rclone
   # writing
   - dawn-writer-bin
   # AI tools (the Electron desktop app runs on any CPU; the native

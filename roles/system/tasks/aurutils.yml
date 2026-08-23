@@ -1,0 +1,116 @@
+---
+# The AUR build machinery, and the local pacman repository it builds into.
+#
+# What this replaces: four sites that granted target_user
+# `NOPASSWD: /usr/bin/pacman` in /etc/sudoers for the duration of an AUR build
+# and revoked it in a block's always:. always: runs when a TASK fails but not
+# when the process is killed -- Ctrl-C, systemctl stop, a reboot mid-build --
+# so the line could outlive the run, and `pacman -U <any file>` is root.
+#
+# aurutils splits the job in two so no grant is needed at any point: makepkg
+# runs as target_user and adds the result to a local repo with repo-add, then
+# root installs it from there with an ordinary `pacman -S`. Both halves already
+# run with exactly the privilege they need, so there is nothing to grant.
+#
+# Lives in the system role, not the aur role, because /etc/pacman.conf and
+# /var/cache are system property, and because the hardware role builds AUR
+# packages in this same play -- it has to be set up before then.
+
+- name: Create the local AUR repository directory
+  ansible.builtin.file:
+    path: "{{ aur_repo_dir }}"
+    state: directory
+    owner: "{{ target_user }}"
+    mode: '0755'
+
+# repo-add with no packages named creates an empty database, which is what a
+# fresh machine needs: pacman refuses to parse a repo whose db is missing.
+- name: Initialize the local AUR repository database
+  ansible.builtin.command: "repo-add {{ aur_repo_dir }}/{{ aur_repo_name }}.db.tar.zst"
+  args:
+    creates: "{{ aur_repo_dir }}/{{ aur_repo_name }}.db"
+  become: true
+  become_user: "{{ target_user }}"
+
+# Appended, so an official repo always wins a name collision with something
+# built here. SigLevel is Optional TrustAll because our own builds are
+# unsigned; the repo is reachable only over file:// on a directory this machine
+# owns.
+- name: Register the local AUR repository with pacman
+  ansible.builtin.blockinfile:
+    path: /etc/pacman.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK gatherd local AUR repository"
+    block: |
+      [{{ aur_repo_name }}]
+      SigLevel = Optional TrustAll
+      Server = file://{{ aur_repo_dir }}
+  notify: Etckeeper commit
+
+- name: Read the pinned aurutils pkgver from the vendored PKGBUILD  # noqa: command-instead-of-module
+  ansible.builtin.command: "grep -m1 -oP '(?<=^pkgver=).*' {{ setup_dir }}/packaging/aurutils/PKGBUILD"
+  register: _aurutils_pkgver
+  changed_when: false
+
+- name: Read the pinned aurutils pkgrel from the vendored PKGBUILD  # noqa: command-instead-of-module
+  ansible.builtin.command: "grep -m1 -oP '(?<=^pkgrel=).*' {{ setup_dir }}/packaging/aurutils/PKGBUILD"
+  register: _aurutils_pkgrel
+  changed_when: false
+
+- name: Check whether aurutils is installed  # noqa: command-instead-of-module
+  ansible.builtin.command: pacman -Q aurutils
+  register: _aurutils_installed
+  changed_when: false
+  failed_when: false
+
+# Compares the full pkgver-pkgrel, not just presence, so a deliberate version
+# bump in the vendored PKGBUILD actually rebuilds.
+- name: Build and install aurutils from the vendored PKGBUILD
+  when: >-
+    _aurutils_installed.rc != 0 or
+    _aurutils_installed.stdout.split(' ')[1] != _aurutils_pkgver.stdout + '-' + _aurutils_pkgrel.stdout
+  block:
+    - name: Create a scratch directory for the aurutils build
+      ansible.builtin.file:
+        path: "{{ target_home }}/.cache/gatherd/aurutils"
+        state: directory
+        owner: "{{ target_user }}"
+        mode: '0755'
+
+    - name: Copy the vendored PKGBUILD into the scratch directory
+      ansible.builtin.copy:
+        src: "{{ setup_dir }}/packaging/aurutils/PKGBUILD"
+        dest: "{{ target_home }}/.cache/gatherd/aurutils/PKGBUILD"
+        owner: "{{ target_user }}"
+        mode: '0644'
+        remote_src: true
+
+    # Plain makepkg, deliberately without -s: -s is the only thing that would
+    # make makepkg shell out to sudo, and the whole point of this file is that
+    # nothing here can. aurutils' six dependencies are declared in
+    # rest_packages and installed by root before this runs.
+    - name: Build aurutils
+      ansible.builtin.command: makepkg --noconfirm
+      args:
+        chdir: "{{ target_home }}/.cache/gatherd/aurutils"
+      become: true
+      become_user: "{{ target_user }}"
+      changed_when: true
+
+    - name: Find the built aurutils package
+      ansible.builtin.find:
+        paths: "{{ target_home }}/.cache/gatherd/aurutils"
+        patterns: "*.pkg.tar.zst"
+      register: _aurutils_built
+
+    - name: Fail unless the build produced exactly one aurutils package
+      ansible.builtin.fail:
+        msg: >-
+          Expected exactly one *.pkg.tar.zst in
+          {{ target_home }}/.cache/gatherd/aurutils, found
+          {{ _aurutils_built.files | length }}.
+      when: _aurutils_built.files | length != 1
+
+    - name: Install the built aurutils package
+      community.general.pacman:
+        name: "{{ _aurutils_built.files[0].path }}"
+        state: present

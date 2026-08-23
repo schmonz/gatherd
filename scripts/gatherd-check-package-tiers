@@ -23,7 +23,7 @@ TIER_VAR = re.compile(r'^\{\{\s*(\w*_packages)\s*\}\}$')
 
 # Deliberately inline, with the reason each is not a cache-stick concern.
 ALLOWED = {
-    'base-devel': 'yay build prerequisite, not a package set',
+    'base-devel': 'build prerequisite, not a package set',
     'nowayprompt': 'vendored PKGBUILD, not from a repo or the AUR (packaging/nowayprompt)',
     'firefox': 'removal, not an install',
     'polkit-gnome': 'removal, not an install',
@@ -44,6 +44,7 @@ ALLOWED = {
     # a stick would need is the pinned source tarball, which the PKGBUILD
     # names and checksums; see packaging/nowayprompt/PKGBUILD.
     '{{ _nowayprompt_built.files[0].path }}': 'vendored build, installed by path',
+    '{{ _aurutils_built.files[0].path }}': 'vendored build, installed by path',
 }
 
 

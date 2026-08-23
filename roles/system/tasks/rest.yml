@@ -38,6 +38,9 @@
 - name: Build and install the credential prompt
   ansible.builtin.include_tasks: nowayprompt.yml
 
+- name: Set up the AUR builder and the local repository it builds into
+  ansible.builtin.include_tasks: aurutils.yml
+
 - name: Initialize etckeeper
   ansible.builtin.command: etckeeper init
   args:

@@ -1,0 +1,10 @@
+# makepkg build output. The playbook copies the PKGBUILD to
+# ~/.cache/gatherd/<pkg> and builds there, but building in place is the obvious
+# thing to try by hand -- and it drops an 8MB source tarball plus a root-mode
+# pkg/ tree next to the PKGBUILD. Untracked and unignored, that is one
+# `git add -A` away from being committed.
+src/
+pkg/
+*.pkg.tar.*
+*.tar.gz
+*.tar.xz

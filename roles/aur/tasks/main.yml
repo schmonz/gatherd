@@ -1,102 +1,68 @@
 ---
-- name: Ensure yay build dependencies are present
-  community.general.pacman:
-    name:
-      - base-devel
-    state: present
-  become: true
-  become_user: root
+- name: Ensure ~/.gnupg exists with correct permissions
+  ansible.builtin.file:
+    path: "{{ target_home }}/.gnupg"
+    state: directory
+    mode: '0700'
 
-- name: Check if yay is installed
-  ansible.builtin.stat:
-    path: /usr/bin/yay
-  register: _yay_bin
+- name: Configure GPG to auto-retrieve keys from reliable keyserver
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.gnupg/gpg.conf"
+    content: |
+      keyserver hkps://keyserver.ubuntu.com
+      keyserver-options auto-key-retrieve
+    mode: '0600'
 
-- name: Grant NOPASSWD pacman for AUR installs
-  ansible.builtin.lineinfile:
-    path: /etc/sudoers
-    line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
-    validate: visudo -cf %s
-  become: true
-  become_user: root
+- name: Configure dirmngr keyserver (GPG 2.1+)
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.gnupg/dirmngr.conf"
+    content: |
+      keyserver hkps://keyserver.ubuntu.com
+    mode: '0600'
+
+- name: Restart dirmngr to pick up new keyserver config
+  ansible.builtin.command: gpgconf --kill dirmngr
+  changed_when: false
+  failed_when: false
+
+- name: Import 1Password GPG key from upstream URL
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -sS https://downloads.1password.com/linux/keys/1password.asc | gpg --import
+  args:
+    executable: /bin/bash
   changed_when: false
 
-- block: # noqa: name[missing]
-    - name: Clone yay-bin
-      ansible.builtin.git:
-        repo: https://aur.archlinux.org/yay-bin.git
-        dest: /tmp/yay-bin
-        version: HEAD
-      when: not _yay_bin.stat.exists
+- name: Import helium-browser GPG key from upstream README
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -sS https://raw.githubusercontent.com/imputnet/helium-linux/refs/heads/main/README.md \
+      | awk '/-----BEGIN PGP PUBLIC KEY BLOCK-----/{p=1} p; /-----END PGP PUBLIC KEY BLOCK-----/{p=0}' \
+      | gpg --import
+  args:
+    executable: /bin/bash
+  changed_when: false
 
-    - name: Build and install yay
-      ansible.builtin.command: makepkg -si --noconfirm
-      args:
-        chdir: /tmp/yay-bin
-      when: not _yay_bin.stat.exists
-      changed_when: not _yay_bin.stat.exists
+- name: Build AUR packages into the local repository
+  ansible.builtin.command: >-
+    aur sync --database {{ aur_repo_name }}
+    --no-view --no-confirm --no-sync
+    --makepkg-args --skippgpcheck
+    {{ aur_packages | join(' ') }}
+  register: _aur_sync
+  changed_when: "'there is nothing to do' not in _aur_sync.stderr"
 
-    - name: Ensure ~/.gnupg exists with correct permissions
-      ansible.builtin.file:
-        path: "{{ target_home }}/.gnupg"
-        state: directory
-        mode: '0700'
-
-    - name: Configure GPG to auto-retrieve keys from reliable keyserver
-      ansible.builtin.copy:
-        dest: "{{ target_home }}/.gnupg/gpg.conf"
-        content: |
-          keyserver hkps://keyserver.ubuntu.com
-          keyserver-options auto-key-retrieve
-        mode: '0600'
-
-    - name: Configure dirmngr keyserver (GPG 2.1+)
-      ansible.builtin.copy:
-        dest: "{{ target_home }}/.gnupg/dirmngr.conf"
-        content: |
-          keyserver hkps://keyserver.ubuntu.com
-        mode: '0600'
-
-    - name: Restart dirmngr to pick up new keyserver config
-      ansible.builtin.command: gpgconf --kill dirmngr
-      changed_when: false
-      failed_when: false
-
-    - name: Import 1Password GPG key from upstream URL
-      ansible.builtin.shell: |
-        set -o pipefail
-        curl -sS https://downloads.1password.com/linux/keys/1password.asc | gpg --import
-      args:
-        executable: /bin/bash
-      changed_when: false
-
-    - name: Import helium-browser GPG key from upstream README
-      ansible.builtin.shell: |
-        set -o pipefail
-        curl -sS https://raw.githubusercontent.com/imputnet/helium-linux/refs/heads/main/README.md \
-          | awk '/-----BEGIN PGP PUBLIC KEY BLOCK-----/{p=1} p; /-----END PGP PUBLIC KEY BLOCK-----/{p=0}' \
-          | gpg --import
-      args:
-        executable: /bin/bash
-      changed_when: false
-
-    - name: Install AUR packages
-      kewlfft.aur.aur:
-        name: "{{ aur_packages }}"
-        use: yay
-        state: present
-        extra_args: "--mflags --skippgpcheck"
-
-  always:
-    - name: Revoke NOPASSWD pacman
-      ansible.builtin.lineinfile:
-        path: /etc/sudoers
-        line: "{{ target_user }} ALL=(ALL) NOPASSWD: /usr/bin/pacman"
-        state: absent
-        validate: visudo -cf %s
-      become: true
-      become_user: root
-      changed_when: false
+# update_cache is what makes the just-built packages visible: pacman only sees
+# a repo through its synced database copy, and the local one has just changed.
+# It reports changed only when the database contents actually differ, so a
+# converged run stays green.
+- name: Install AUR packages
+  community.general.pacman:
+    name: "{{ aur_packages }}"
+    state: present
+    update_cache: true
+  become: true
+  become_user: root
 
 - name: Enable and start autofs
   ansible.builtin.systemd:

@@ -127,6 +127,12 @@
     # make makepkg shell out to sudo, and the whole point of this file is that
     # nothing here can. aurutils' six dependencies are declared in
     # rest_packages and installed by root before this runs.
+    - name: Find aurutils artifacts from earlier builds
+      ansible.builtin.find:
+        paths: "{{ target_home }}/.cache/gatherd/aurutils"
+        patterns: "*.pkg.tar.zst"
+      register: _aurutils_stale
+
     - name: Build aurutils
       ansible.builtin.command: makepkg --noconfirm
       args:
@@ -134,6 +140,20 @@
       become: true
       become_user: "{{ target_user }}"
       changed_when: true
+
+    # Clear old artifacts first. makepkg leaves every build it has ever done in
+    # place, so after a pkgver bump the directory holds two *.pkg.tar.zst and
+    # the "exactly one" guard below fires -- a failure that only appears on the
+    # upgrade path, which is the path nobody exercises until it matters.
+    - name: Remove aurutils artifacts from earlier builds
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _aurutils_stale.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      become: true
+      become_user: "{{ target_user }}"
 
     - name: Find the built aurutils package
       ansible.builtin.find:

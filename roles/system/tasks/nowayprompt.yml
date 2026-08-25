@@ -52,6 +52,12 @@
     # at all: it checks dependencies and exits 8 naming what is absent. That
     # is why libxkbcommon and rust are declared in rest_packages. The
     # environment is belt and braces for the same property.
+    - name: Find nowayprompt artifacts from earlier builds
+      ansible.builtin.find:
+        paths: "{{ target_home }}/.cache/gatherd/nowayprompt"
+        patterns: "*.pkg.tar.zst"
+      register: _nowayprompt_stale
+
     - name: Build nowayprompt
       ansible.builtin.command: makepkg --noconfirm
       args:
@@ -60,6 +66,20 @@
       become_user: "{{ target_user }}"
       environment: "{{ aur_build_environment }}"
       changed_when: true
+
+    # Clear old artifacts first. makepkg leaves every build it has ever done in
+    # place, so after a pkgver bump the directory holds two *.pkg.tar.zst and
+    # the "exactly one" guard below fires -- a failure that only appears on the
+    # upgrade path, which is the path nobody exercises until it matters.
+    - name: Remove nowayprompt artifacts from earlier builds
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _nowayprompt_stale.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      become: true
+      become_user: "{{ target_user }}"
 
     - name: Find the built nowayprompt package
       ansible.builtin.find:

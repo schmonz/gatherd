@@ -92,6 +92,57 @@ rest_packages:
   # The fifth virtual, udev, is provided by systemd, which the `base` group
   # guarantees on every Arch install; declaring it would only invite pacman to
   # reconsider a core package.
+  # Build and runtime dependencies of the AUR packages below. yay let
+  # `makepkg --syncdeps` fetch these on demand; aurutils builds with plain
+  # makepkg and PACMAN_AUTH=/bin/false, so an undeclared one is a hard build
+  # failure on a fresh machine. Grouped by what needs them.
+  - archlinux-contrib      # arch-update
+  - htmlq                  # arch-update
+  - scdoc                  # arch-update, xdg-terminal-exec
+  - rpcsvc-proto           # autofs
+  - sssd                   # autofs
+  - go                     # captive-browser-git, claude-cowork-service
+  - bash-completion        # clight
+  - cmake                  # clight, clightd, libmodule, thinkfan
+  - libconfig              # clight
+  - ddcutil                # clightd
+  - libiio                 # clightd
+  - linux-api-headers      # clightd
+  - meson                  # cmd-polkit-git, fprintd-clients-git
+  - dkms                   # facetimehd-dkms
+  - dbus-glib              # fprintd-clients-git
+  - glib2-devel            # fprintd-clients-git, python-validity
+  - libfprint              # fprintd-clients-git
+  - pam_wrapper            # fprintd-clients-git
+  - python-dbusmock        # fprintd-clients-git
+  - libxss                 # helium-browser-bin, jetbrains-toolbox
+  - ttf-liberation         # helium-browser-bin
+  - xcb-util-keysyms       # jetbrains-toolbox, zoom
+  - noto-fonts             # koreader-bin
+  - ttf-droid              # koreader-bin
+  - fuse2                  # localsend-bin
+  - libayatana-appindicator  # localsend-bin
+  - xdg-user-dirs          # localsend-bin
+  - python-setuptools      # open-fprintd, python-validity
+  - zip                    # piavpn-bin
+  - innoextract            # python-validity
+  - python-pyusb           # python-validity
+  - python-yaml            # python-validity
+  - electron42             # slack-electron, teams-for-linux-electron-bin
+  - nodejs                 # teams-for-linux-electron-bin
+  - yaml-cpp               # thinkfan
+  - timeshift              # timeshift-autosnap
+  - electron43             # vesktop-bin
+  # claude-desktop: Cowork runs its sandbox in a QEMU VM. Upstream ships the VM
+  # stack as a Recommends:, which apt installs by default; the AUR package makes
+  # it a hard dependency to match. x86_64 names only -- the PKGBUILD's
+  # depends_aarch64 wants qemu-system-aarch64/edk2-aarch64 instead.
+  - qemu-system-x86
+  - edk2-ovmf
+  - virtiofsd
+  - xcb-util-cursor        # zoom
+  - xcb-util-image         # zoom
+  - xcb-util-wm            # zoom
   # cloud sync. Was in aur_slow_packages, but rclone has been in [extra] for a
   # while; yay installed it from there regardless of which list named it.
   - rclone
@@ -187,7 +238,9 @@ aur_packages:
   - 1password-cli
   # web browsers
   - helium-browser-bin
-  - captive-browser
+  # AUR pkgbase is captive-browser-git; plain "captive-browser" is only a
+  # provides. yay resolved provides for targets, aur-depends does not.
+  - captive-browser-git
   # snapshots
   - timeshift-autosnap
   # update notifier
@@ -221,7 +274,10 @@ aur_slow_packages:
   - dawn-writer-bin
   # AI tools (the Electron desktop app runs on any CPU; the native
   # claude-code bundle needs AVX — see aur_slow_avx_packages)
-  - claude-desktop-bin
+  # Was claude-desktop-bin until the AUR dropped it. claude-desktop repackages
+  # Anthropic's official .deb and declares conflicts=(claude claude-desktop-bin),
+  # so it is the replacement rather than a fork.
+  - claude-desktop
   # IDE manager
   - jetbrains-toolbox
 
@@ -276,6 +332,20 @@ aur_build_environment:
   PACMAN_AUTH: /bin/false
   AUR_PACMAN_AUTH: /bin/false
 
+# Chromium extensions loaded into the web app profiles: every app, or only the
+# ones named in `apps`. Helium cannot install from the Web Store (the update URL
+# is domain-substituted to a dead host), so gatherd-fetch-browser-extension
+# unpacks a signature-checked CRX and the desktop entry names the directory with
+# --load-extension. An id is the last path segment of a Web Store detail URL.
+web_app_extensions:
+  # Fills logins in the web apps. Talks to the desktop app over native messaging,
+  # which answers only a fixed allowlist of extension ids -- so the unpacked copy
+  # has to keep its official id, which is what the fetch script's key pinning is for.
+  - name: 1password
+    id: aeblfdkhhhdcdjpifhhbdiojplfjncoa
+    # Onboards per profile, so without a seed every web app opens its welcome
+    # page in a window of its own the first time it runs.
+    seed_state: true
 web_apps:
   # Each app's icon is resolved at provision time by gatherd-fetch-webapp-icon:
   # an app_store_id pulls the official 512px artwork via the iTunes Lookup API

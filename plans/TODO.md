@@ -47,6 +47,45 @@
 
 ## Backlog (uncategorized)
 
+- **`update_cache: true` at 14 AUR install sites is a partial-upgrade shape.**
+  `pacman` only sees a repo through its synced database copy, and `aur sync`
+  has just changed the local one — so each install needs a refresh to see what
+  was built. But `pacman -Sy` refreshes *every* repo (there is no per-repo
+  refresh), and gatherd never runs a full `-Syu` anywhere. So each site opens a
+  window where one dependency can upgrade in isolation against an otherwise
+  older system. Already one refresh per group rather than per package, so there
+  is no redundancy to trim.
+  - **Option A — one `-Syu` during REST.** Then the refreshes are harmless
+    because the system is consistent. Changes gatherd's policy: it currently
+    never upgrades, leaving that to `arch-update`. Converges get slower and
+    occasionally surprising.
+  - **Option B — install by file path** (`pacman -U /var/cache/gatherd-aur/…`)
+    instead of by name, removing all 14 refreshes. But it spreads the "exactly
+    one artifact" fragility (fixed for the two vendored builds in `00abf46`)
+    across 14 more sites, and redesigns the install path.
+  - Low urgency for repave-oriented use: on a fresh machine everything installs
+    in one session from one db state. The risk lands on a long-lived machine
+    whose db is stale, gets refreshed mid-converge, and pulls one newer dep.
+
+- **Decide who owns `/var/cache/gatherd-aur`.** It is `target_user`-writable
+  with `SigLevel = Optional TrustAll`, and root runs `pacman -S` out of it at
+  every AUR install. Anything running as the user can drop a higher-versioned
+  package for a name gatherd installs and have its `install` scriptlet run as
+  root at the next converge. Compared with the sudoers grant this replaced, it
+  removes an *immediate and total* escalation (`pacman -U` anything, plus a
+  forever-leak on interruption) and adds a *deferred and narrower* one.
+  - Making the repo root-owned is possible: `aur build --root` separates where
+    artifacts are written from the repo pacman reads (`aur-sync:491` forwards
+    it), so the user could build into a staging dir and root could move
+    artifacts in and run `repo-add`.
+  - The catch: if staging is cleared each run, `aur sync`'s already-built check
+    consults staging, finds it empty, and rebuilds all ~32 AUR packages every
+    converge. Keeping staging populated just moves the poisonable store one
+    directory over.
+  - Irreducible either way: root installs a package the user built, and cannot
+    tell a legitimate build from a crafted one. True of every AUR workflow,
+    yay included.
+
 - **git's username prompt is masked like a password.** `askpass.log` recorded
   `Username for 'https://github.com':` reaching `gatherd-askpass` on 2026-08-05,
   where it is rendered by the masked password box. Not a secret, and invisible

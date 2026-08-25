@@ -43,15 +43,22 @@
         remote_src: true
 
     # makepkg refuses to run as root at all, so the build targets the human
-    # user. -sr builds and installs makedeps but does NOT install the result,
-    # so no NOPASSWD sudoers grant is needed: the package is installed below
-    # from this play's own root context instead.
+    # user; the result is installed below from this play's own root context.
+    #
+    # Deliberately NOT -s. --syncdeps shells out to `sudo pacman -S` for any
+    # missing dependency, which is the one thing this file claims not to do --
+    # it would prompt on an unattended converge, or silently succeed if some
+    # other task had left a grant behind. Plain makepkg cannot reach for root
+    # at all: it checks dependencies and exits 8 naming what is absent. That
+    # is why libxkbcommon and rust are declared in rest_packages. The
+    # environment is belt and braces for the same property.
     - name: Build nowayprompt
-      ansible.builtin.command: makepkg -sr --noconfirm
+      ansible.builtin.command: makepkg --noconfirm
       args:
         chdir: "{{ target_home }}/.cache/gatherd/nowayprompt"
       become: true
       become_user: "{{ target_user }}"
+      environment: "{{ aur_build_environment }}"
       changed_when: true
 
     - name: Find the built nowayprompt package

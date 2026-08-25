@@ -137,6 +137,8 @@ rest_packages:
   # stack as a Recommends:, which apt installs by default; the AUR package makes
   # it a hard dependency to match. x86_64 names only -- the PKGBUILD's
   # depends_aarch64 wants qemu-system-aarch64/edk2-aarch64 instead.
+  # nowayprompt (packaging/nowayprompt): its only non-libc linkage.
+  - libxkbcommon
   - qemu-system-x86
   - edk2-ovmf
   - virtiofsd

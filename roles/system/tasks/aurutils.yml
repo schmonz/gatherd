@@ -25,10 +25,49 @@
 
 # repo-add with no packages named creates an empty database, which is what a
 # fresh machine needs: pacman refuses to parse a repo whose db is missing.
+# Guarded on the TARBALL, not the .db symlink -- see the repair task below for
+# why those are not the same question.
 - name: Initialize the local AUR repository database
   ansible.builtin.command: "repo-add {{ aur_repo_dir }}/{{ aur_repo_name }}.db.tar.zst"
   args:
-    creates: "{{ aur_repo_dir }}/{{ aur_repo_name }}.db"
+    creates: "{{ aur_repo_dir }}/{{ aur_repo_name }}.db.tar.zst"
+  become: true
+  become_user: "{{ target_user }}"
+
+# repo-add takes a lock and removes it from EXIT/TERM/INT traps -- none of which
+# run on SIGKILL. `systemctl stop gatherd-async.service` mid-write therefore
+# leaves the lock behind, and every later build dies with "Failed to acquire
+# lockfile". Reproduced: repo-add exits non-zero and touches nothing.
+#
+# Only safe because gatherd's builds are serialised within one play, so a lock
+# still present when this task runs is by definition nobody's. The pgrep guard
+# keeps a hand-run `aur sync` in another terminal from being stomped.
+- name: Check whether a repo-add is genuinely running  # noqa: command-instead-of-module
+  ansible.builtin.command: pgrep -x repo-add
+  register: _repo_add_running
+  changed_when: false
+  failed_when: false
+
+- name: Clear a stale repository lock left by a killed build
+  ansible.builtin.file:
+    path: "{{ aur_repo_dir }}/{{ aur_repo_name }}.db.tar.zst.lck"
+    state: absent
+  when: _repo_add_running.rc != 0
+
+# repo-add's rotate_db does `rm -f <db>` then `ln -s`. Killed in that window,
+# the tarball survives and the symlink does not -- and repo-add will NOT put it
+# back: with the tarball present and nothing to add it prints "No changes made
+# to package database" and returns success, so a `creates:`-guarded re-run
+# no-ops forever while pacman cannot read the repo. Reproduced, and reproduced
+# that recreating the symlink by hand is the whole repair.
+- name: Repair the repository database symlinks
+  ansible.builtin.file:
+    src: "{{ aur_repo_name }}{{ item }}.tar.zst"
+    dest: "{{ aur_repo_dir }}/{{ aur_repo_name }}{{ item }}"
+    state: link
+    force: true
+    follow: false
+  loop: ['.db', '.files']
   become: true
   become_user: "{{ target_user }}"
 

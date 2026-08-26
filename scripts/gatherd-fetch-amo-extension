@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Install a signed extension from addons.mozilla.org into a browser profile.
+
+Waterfox is a Firefox fork, so it takes AMO's signed XPIs directly -- unlike the
+Chromium side, where Helium cannot reach the Web Store at all and
+gatherd-fetch-browser-extension has to verify a CRX by hand.
+
+What this checks, and what it does not: an AMO XPI carries a Mozilla signature
+under META-INF/, and the browser verifies that signature itself at install time
+(an unsigned or tampered XPI is refused, which is why the file is dropped in
+whole rather than unpacked). So this script does not re-implement that
+cryptography. It does confirm the download is a signed archive for the extension
+id we asked for, which catches a wrong slug, an AMO error page, or a redirect to
+something else entirely -- the failures a fetch can actually hit.
+
+Usage: gatherd-fetch-amo-extension <dest.xpi> <amo-slug> <extension-id>
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import zipfile
+
+AMO_LATEST = "https://addons.mozilla.org/firefox/downloads/latest/{slug}/"
+
+
+def die(msg):
+    print(f"gatherd-fetch-amo-extension: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def gecko_id(manifest):
+    apps = manifest.get("browser_specific_settings") or manifest.get("applications") or {}
+    return (apps.get("gecko") or {}).get("id")
+
+
+def main():
+    if len(sys.argv) != 4:
+        die("usage: gatherd-fetch-amo-extension <dest.xpi> <amo-slug> <extension-id>")
+    dest, slug, ext_id = sys.argv[1], sys.argv[2], sys.argv[3]
+
+    url = AMO_LATEST.format(slug=slug)
+    tmp_fd, tmp = tempfile.mkstemp(prefix=".xpi-", dir=os.path.dirname(dest) or ".")
+    os.close(tmp_fd)
+    try:
+        try:
+            subprocess.run(["curl", "-fsSL", "--max-time", "180", "-o", tmp, url], check=True)
+        except subprocess.CalledProcessError as exc:
+            die(f"download failed (curl exit {exc.returncode}) for {url}")
+
+        if not zipfile.is_zipfile(tmp):
+            die("downloaded file is not an XPI; AMO probably served an error page")
+
+        with zipfile.ZipFile(tmp) as zf:
+            names = zf.namelist()
+            # The browser rejects an XPI whose signature is missing or broken, so
+            # its absence here means we fetched something that will never install.
+            if not any(n.startswith("META-INF/") and n.endswith((".rsa", ".sf", ".mf")) for n in names):
+                die("XPI carries no META-INF signature; refusing to install an unsigned add-on")
+            if "manifest.json" not in names:
+                die("XPI has no manifest.json")
+            manifest = json.loads(zf.read("manifest.json").decode("utf-8-sig"))
+
+        found = gecko_id(manifest)
+        if found != ext_id:
+            die(f"XPI is for extension {found!r}, expected {ext_id!r}")
+
+        os.replace(tmp, dest)
+        print(f"installed {ext_id} ({manifest.get('version')}) to {dest}")
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+if __name__ == "__main__":
+    main()

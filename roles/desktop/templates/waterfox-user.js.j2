@@ -1,0 +1,26 @@
+// Managed by gatherd. Profile for the {{ item.name }} web app.
+//
+// Duolingo decides whether to offer speaking exercises by parsing the UA string
+// -- bowser: getBrowserName() === "Chrome" && !navigator.brave -- with no feature
+// detection at all. Overriding the UA is therefore the whole trick. The
+// per-domain form (general.useragent.override.<domain>) did NOT take effect when
+// tested; this profile serves one site, so overriding globally is both simpler
+// and the one that works.
+user_pref("general.useragent.override", "{{ waterfox_chrome_user_agent }}");
+
+// An extension dropped into the profile's own extensions/ directory is disabled
+// by default. 0 means auto-disable nothing, so the polyfill is live at first run.
+user_pref("extensions.autoDisableScopes", 0);
+
+// Keep storage.local in its legacy JSON file rather than IndexedDB, which is what
+// lets the playbook seed the extension's settings as an ordinary file
+// (browser-extension-data/<id>/storage.js). Without this the only way to
+// configure the add-on is to drive a browser and click through its options page.
+user_pref("extensions.webextensions.ExtensionStorageIDB.enabled", false);
+
+// A single-purpose profile has no use for the usual first-run furniture.
+user_pref("browser.shell.checkDefaultBrowser", false);
+user_pref("browser.aboutwelcome.enabled", false);
+user_pref("datareporting.policy.dataSubmissionEnabled", false);
+user_pref("toolkit.telemetry.enabled", false);
+user_pref("browser.startup.homepage", "{{ item.url }}");

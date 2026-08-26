@@ -1,0 +1,74 @@
+# Firefox-family profiles for the web apps that cannot run on Helium.
+#
+# Only Duolingo needs this, and only for its speaking exercises: Helium is
+# ungoogled-chromium-derived, so its Web Speech endpoint is a domain that does
+# not resolve and its API key is the string "dummytoken" -- the exercise dies
+# with a network error before you can speak, and no setting changes that. The way
+# back is an add-on that replaces webkitSpeechRecognition with a recognizer
+# running locally (Vosk, in WASM), which exists for Firefox but not for Chromium.
+#
+# Everything here is offline-safe; the add-on download lives in rest.yml with the
+# other network work.
+- name: Create Waterfox web app profile directories
+  ansible.builtin.file:
+    path: "{{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.0.codename }}/{{ item.1 }}"
+    state: directory
+    mode: '0755'
+  loop: "{{ waterfox_web_apps | product(['extensions', 'browser-extension-data/' ~ speech_polyfill_extension_id]) | list }}"
+  loop_control:
+    label: "{{ item.0.codename }}/{{ item.1 }}"
+
+- name: Create the Waterfox native messaging directory
+  ansible.builtin.file:
+    path: "{{ target_home }}/.waterfox/native-messaging-hosts"
+    state: directory
+    mode: '0755'
+  when: waterfox_web_apps | length > 0
+
+- name: Configure Waterfox web app profiles
+  ansible.builtin.template:
+    src: waterfox-user.js.j2
+    dest: "{{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.codename }}/user.js"
+    mode: '0644'
+  loop: "{{ waterfox_web_apps }}"
+  loop_control:
+    label: "{{ item.codename }}"
+
+- name: Seed the speech polyfill's settings
+  # force: false so tuning done in the add-on's own options page survives a
+  # converge. The values that matter are provider/voskModel/language: "Language"
+  # and "Language Model" are separate settings in that add-on, and setting only
+  # the former leaves an English recognizer transcribing German.
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.codename }}/browser-extension-data/{{ speech_polyfill_extension_id }}/storage.js"
+    content: "{{ {'settings': speech_polyfill_settings} | to_nice_json }}\n"
+    mode: '0644'
+    force: false
+  loop: "{{ waterfox_web_apps }}"
+  loop_control:
+    label: "{{ item.codename }}"
+
+- name: Give Waterfox 1Password's native messaging manifest
+  # 1Password writes these itself for browsers it knows (~/.mozilla for Firefox,
+  # ~/.config/<browser> for the Chromium family) but has never heard of Waterfox,
+  # so nothing would appear under ~/.waterfox and the extension would fall back to
+  # asking for an account sign-in. Written out rather than copied from the Firefox
+  # one, so this does not depend on Firefox being installed.
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.waterfox/native-messaging-hosts/com.1password.1password.json"
+    content: "{{ onepassword_native_messaging_host | to_nice_json }}\n"
+    mode: '0644'
+  when: waterfox_web_apps | length > 0
+
+- name: Hide Waterfox itself from the app launcher
+  # The browser is an implementation detail of one web app, not something to
+  # launch directly; only the Duolingo entry should be visible in fuzzel.
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.local/share/applications/waterfox.desktop"
+    content: |
+      [Desktop Entry]
+      Type=Application
+      Name=Waterfox
+      Exec=waterfox %u
+      NoDisplay=true
+    mode: '0644'

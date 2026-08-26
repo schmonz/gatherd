@@ -58,12 +58,18 @@
     mode: '0755'
   notify: Etckeeper commit
 
-- name: Allow Helium browser in 1Password
+- name: Allow the browsers gatherd ships in 1Password
+  # The name checked is the binary the browser actually execs, not the launcher:
+  # Waterfox's wrapper runs waterfox-bin, and 1Password refuses the connection
+  # with UnknownBrowser(/opt/waterfox/waterfox-bin) if only "waterfox" is listed.
   ansible.builtin.lineinfile:
     path: /etc/1password/custom_allowed_browsers
-    line: helium
+    line: "{{ item }}"
     create: true
     mode: '0644'
+  loop:
+    - helium
+    - waterfox-bin
   notify: Etckeeper commit
 
 - name: Create Chromium managed-policy directory

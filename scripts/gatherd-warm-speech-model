@@ -1,0 +1,57 @@
+#!/bin/sh
+# Download a web app profile's speech model at converge time instead of leaving it
+# for the first speaking exercise.
+#
+# The polyfill add-on fetches its recognizer (~44MB for German) the first time it
+# is needed. Left alone that happens mid-lesson, on whatever connection the human
+# has at the time. The add-on's cacheDefaultModel setting makes it fetch at
+# browser startup instead, so running the browser headless once here gets the
+# model onto disk while the machine is already converging.
+#
+# Writes a sentinel on success so later converges cost nothing. Exits non-zero if
+# the model never lands, which the playbook treats as non-fatal: a missing model
+# only means the first exercise pays for the download, which is the old behavior.
+#
+# Usage: gatherd-warm-speech-model <browser> <profile-dir> [timeout-seconds]
+set -eu
+
+browser="$1"
+profile="$2"
+timeout_secs="${3:-300}"
+
+sentinel="$profile/.gatherd-model-warmed"
+storage="$profile/storage/default"
+# Anything smaller than this is the profile's ordinary bookkeeping, not a model.
+min_bytes=20000000
+
+if [ -e "$sentinel" ]; then
+    exit 0
+fi
+
+command -v "$browser" >/dev/null 2>&1 || {
+    echo "gatherd-warm-speech-model: $browser is not installed yet" >&2
+    exit 1
+}
+
+"$browser" --headless --profile "$profile" --no-remote about:blank >/dev/null 2>&1 &
+browser_pid=$!
+# Only ever kill the process this script started.
+trap 'kill "$browser_pid" 2>/dev/null || true' EXIT INT TERM
+
+elapsed=0
+while [ "$elapsed" -lt "$timeout_secs" ]; do
+    sleep 10
+    elapsed=$((elapsed + 10))
+    size=$(du -sb "$storage" 2>/dev/null | cut -f1 || echo 0)
+    if [ "${size:-0}" -ge "$min_bytes" ]; then
+        # Let the write finish before pulling the browser out from under it.
+        sleep 10
+        date -u +%Y-%m-%dT%H:%M:%SZ > "$sentinel"
+        echo "warmed speech model in $profile ($((size / 1048576))MB)"
+        exit 0
+    fi
+    kill -0 "$browser_pid" 2>/dev/null || break
+done
+
+echo "gatherd-warm-speech-model: model did not appear within ${timeout_secs}s" >&2
+exit 1

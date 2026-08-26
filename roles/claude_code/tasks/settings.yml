@@ -44,6 +44,7 @@
     required: >-
       {{ {
            'disableClaudeAiConnectors': true,
+           'outputStyle': 'Concise',
            'extraKnownMarketplaces': {
              claude_plugin_marketplace_name: {
                'source': {'source': 'github', 'repo': claude_plugin_marketplace_repo}

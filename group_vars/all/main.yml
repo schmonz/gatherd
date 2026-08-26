@@ -269,6 +269,8 @@ aur_packages:
 # Long AUR builds and big binary drops, deferred to the async play
 # (roles/aur/tasks/slow.yml).
 aur_slow_packages:
+  # Firefox fork, for the one web app whose speaking exercises Helium cannot do
+  - waterfox-bin
   # file transfer
   - localsend-bin
   # communication
@@ -350,9 +352,63 @@ web_app_extensions:
   # has to keep its official id, which is what the fetch script's key pinning is for.
   - name: 1password
     id: aeblfdkhhhdcdjpifhhbdiojplfjncoa
-    # Onboards per profile, so without a seed every web app opens its welcome
-    # page in a window of its own the first time it runs.
-    seed_state: true
+# Waterfox-backed web apps. Only Duolingo, and only because its speaking
+# exercises cannot work in Helium at all: ungoogled-chromium rewrites the Web
+# Speech endpoint to a domain that does not resolve and hands it a dummy API key,
+# so the exercise fails with a network error before you can speak. Chromium
+# proper is no better -- Google answers 403 for the shared distro API key. The
+# working path is a Firefox-family browser plus an add-on that swaps in a
+# recognizer running locally, so no audio leaves the machine.
+waterfox_web_apps: "{{ web_apps | selectattr('browser', 'defined') | selectattr('browser', 'eq', 'waterfox') | list }}"
+
+# Duolingo gates speaking on UA string parsing alone (bowser: getBrowserName()
+# === "Chrome" && !navigator.brave), so this is what opens the gate.
+waterfox_chrome_user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+
+# The add-on that provides webkitSpeechRecognition, from addons.mozilla.org.
+speech_polyfill_amo_slug: speech-recognition-polyfill
+speech_polyfill_extension_id: "@firefox-speech-polyfill"
+
+# Add-ons installed into every Waterfox web app profile, straight from AMO --
+# Waterfox verifies Mozilla's signature itself at install time.
+waterfox_extensions:
+  - slug: "{{ speech_polyfill_amo_slug }}"
+    id: "{{ speech_polyfill_extension_id }}"
+  # Reaches the 1Password desktop app over native messaging, so it uses the
+  # account already unlocked there: no per-profile sign-in, nothing seeded.
+  - slug: 1password-x-password-manager
+    id: "{d634138d-c276-4fc8-924b-40a0ea21d284}"
+
+# 1Password's browser integration: the desktop app's helper, and the extension
+# ids it will answer. Waterfox is not a browser 1Password knows, so gatherd writes
+# this manifest itself; /etc/1password/custom_allowed_browsers is the other half.
+onepassword_native_messaging_host:
+  name: com.1password.1password
+  description: 1Password BrowserSupport
+  path: /opt/1Password/1Password-BrowserSupport
+  type: stdio
+  allowed_extensions:
+    - "{0a75d802-9aed-41e7-8daa-24c067386e82}"
+    - "{25fc87fa-4d31-4fee-b5c1-c32a7844c063}"
+    - "{d634138d-c276-4fc8-924b-40a0ea21d284}"
+
+# Seeded into the profile as browser-extension-data/<id>/storage.js. voskModel is
+# the setting that actually chooses the recognizer -- language alone does not.
+speech_polyfill_settings:
+  defaults:
+    provider: vosk
+    voskModel: vosk-model-small-de-0.15
+    language: de
+    model: Xenova/whisper-base
+    silenceTimeoutMs: 1000
+    micGain: 1
+    silenceSensitivity: 12
+  graceEnabled: true
+  graceMs: 450
+  cacheDefaultModel: true
+  toastNotificationsEnabled: true
+  debugMode: false
+
 web_apps:
   # Each app's icon is resolved at provision time by gatherd-fetch-webapp-icon:
   # an app_store_id pulls the official 512px artwork via the iTunes Lookup API
@@ -450,6 +506,8 @@ web_apps:
     url: https://www.duolingo.com
     comment: Learning
     codename: Duolingo
+    # Speaking exercises need a Firefox-family browser; see waterfox_web_apps.
+    browser: waterfox
     app_store_id: "570060128"
   - name: Reddit
     url: https://www.reddit.com

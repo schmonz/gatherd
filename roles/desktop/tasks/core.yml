@@ -765,12 +765,11 @@
     force: false
   loop: "{{ web_apps }}"
 
+- name: Set up Waterfox web app profiles
+  ansible.builtin.import_tasks: waterfox_web_apps.yml
+
 - name: Create web app desktop entries
-  ansible.builtin.template:
-    src: web-app.desktop.j2
-    dest: "{{ target_home }}/.local/share/applications/WebApp-{{ item.codename }}.desktop"
-    mode: '0644'
-  loop: "{{ web_apps }}"
+  ansible.builtin.import_tasks: web_app_entries.yml
 
 - name: Wire git/ssh to the 1Password SSH agent
   ansible.builtin.import_tasks: ssh-agent.yml

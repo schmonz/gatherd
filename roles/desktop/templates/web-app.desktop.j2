@@ -1,8 +1,25 @@
+{% set ext_dirs = [] %}
+{% for extension in installed_web_app_extensions | default([]) %}
+{% if extension.apps is not defined or item.codename in extension.apps %}
+{% set _ = ext_dirs.append(target_home ~ '/.local/share/ice/extensions/' ~ extension.name) %}
+{% endif %}
+{% endfor %}
+{% set load_extension = ' --load-extension=' ~ ext_dirs | join(',') if ext_dirs else '' %}
 [Desktop Entry]
 Version=1.0
 Name={{ item.name }}
 Comment={{ item.comment | default('') }}
-Exec=helium-browser --app={{ item.url }} --class=WebApp-{{ item.codename }} --name=WebApp-{{ item.codename }} --user-data-dir={{ target_home }}/.local/share/ice/profiles/{{ item.codename }}
+{% if item.browser | default('helium') == 'waterfox' %}
+{# Firefox-family: no --app mode, so a dedicated profile is what makes this a
+   site-specific browser. Extensions and settings are seeded into that profile at
+   converge time rather than named on the command line.
+   MOZ_APP_REMOTINGNAME, not --class: --class is X11-only, and under Wayland it
+   leaves every window reporting app_id="waterfox", so StartupWMClass below would
+   never match and the sway rules would not bind. #}
+Exec=env MOZ_APP_REMOTINGNAME=WebApp-{{ item.codename }} waterfox --profile {{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.codename }} --no-remote --new-instance {{ item.url }}
+{% else %}
+Exec=helium-browser --app={{ item.url }} --class=WebApp-{{ item.codename }} --name=WebApp-{{ item.codename }} --user-data-dir={{ target_home }}/.local/share/ice/profiles/{{ item.codename }}{{ load_extension }}
+{% endif %}
 Terminal=false
 X-MultipleArgs=false
 Type=Application

@@ -65,6 +65,88 @@
     - item.rc is defined
     - item.rc != 0
 
+- name: Download and verify web app browser extensions
+  # Helium cannot install from the Web Store at all: the extension update URL is
+  # domain-substituted to a host that does not resolve. An unpacked directory named
+  # with --load-extension is the only way in, and Chromium verifies nothing it is
+  # handed that way, so gatherd-fetch-browser-extension checks the CRX signature
+  # itself and pins the official extension id. As with favicons, one failed
+  # download must not abort the rest of this role; the creates guard refetches next
+  # run, and until then the entry is rendered without that extension.
+  ansible.builtin.command:
+    argv:
+      - "{{ setup_dir }}/scripts/gatherd-fetch-browser-extension"
+      - "{{ target_home }}/.local/share/ice/extensions/{{ item.name }}"
+      - "{{ item.id }}"
+    creates: "{{ target_home }}/.local/share/ice/extensions/{{ item.name }}/manifest.json"
+  loop: "{{ web_app_extensions }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _web_app_extension_dl
+  changed_when: _web_app_extension_dl.rc == 0
+  failed_when: false
+
+- name: Report web app browser extensions that could not be installed
+  ansible.builtin.debug:
+    msg: "Extension failed for {{ item.item.name }}: {{ item.stderr | default('skipped') | trim }}"
+  loop: "{{ _web_app_extension_dl.results }}"
+  loop_control:
+    label: "{{ item.item.name | default('?') }}"
+  when:
+    - item.rc is defined
+    - item.rc != 0
+
+- name: Download the Waterfox web app add-ons
+  # Waterfox takes AMO's signed XPIs directly, and verifies the signature itself
+  # at install time -- unlike the Chromium side, where Helium cannot reach the Web
+  # Store at all. As with the other downloads here, one failure must not abort the
+  # role; the creates guard retries next converge.
+  ansible.builtin.command:
+    argv:
+      - "{{ setup_dir }}/scripts/gatherd-fetch-amo-extension"
+      - "{{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.0.codename }}/extensions/{{ item.1.id }}.xpi"
+      - "{{ item.1.slug }}"
+      - "{{ item.1.id }}"
+    creates: "{{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.0.codename }}/extensions/{{ item.1.id }}.xpi"
+  loop: "{{ waterfox_web_apps | product(waterfox_extensions) | list }}"
+  loop_control:
+    label: "{{ item.0.codename }}/{{ item.1.slug }}"
+  register: _speech_polyfill_dl
+  changed_when: _speech_polyfill_dl.rc == 0
+  failed_when: false
+
+- name: Report Waterfox add-on downloads that failed
+  ansible.builtin.debug:
+    msg: "Add-on failed for {{ item.item.0.codename }}/{{ item.item.1.slug }}: {{ item.stderr | default('skipped') | trim }}"
+  loop: "{{ _speech_polyfill_dl.results }}"
+  loop_control:
+    label: "{{ item.item.0.codename | default('?') }}"
+  when:
+    - item.rc is defined
+    - item.rc != 0
+
+- name: Download the speech model for Waterfox web apps
+  # Otherwise the first speaking exercise pays for a ~44MB download mid-lesson.
+  # The add-on fetches its model at browser startup when cacheDefaultModel is set,
+  # so one headless run here gets it onto disk while the machine is converging.
+  # Non-fatal: without it the old first-use download still works.
+  ansible.builtin.command:
+    argv:
+      - "{{ setup_dir }}/scripts/gatherd-warm-speech-model"
+      - waterfox
+      - "{{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.codename }}"
+      - "300"
+    creates: "{{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.codename }}/.gatherd-model-warmed"
+  loop: "{{ waterfox_web_apps }}"
+  loop_control:
+    label: "{{ item.codename }}"
+  register: _speech_model_warm
+  changed_when: _speech_model_warm.rc == 0
+  failed_when: false
+
+- name: Re-create web app desktop entries now the extensions are on disk
+  ansible.builtin.import_tasks: web_app_entries.yml
+
 - name: Fix missing fuzzel icons
   # Scans all .desktop entries and remediates known gap patterns: XPM-only icons
   # in pixmaps (converted to PNG), SVGs filed under non-apps theme contexts

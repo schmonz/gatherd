@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""Install a Chrome Web Store extension as an unpacked directory.
+
+Helium is ungoogled-chromium-derived, so it cannot install from the Web Store at
+all: the extension update URL is domain-substituted to a host that does not
+resolve. The only way in is an unpacked directory named on the command line with
+--load-extension, and Chromium verifies *nothing* it is handed that way. So this
+script does the checking the browser would have done on a normal install: it
+verifies Google's CRX3 signature over the archive before unpacking anything, and
+refuses unless the packed public key is the one whose SHA-256 yields the
+extension id we asked for. A tampered or substituted download fails closed.
+
+An unpacked extension is normally assigned an id derived from its filesystem
+path. That breaks 1Password, whose native-messaging host answers only a fixed
+allowlist of extension ids. Writing the packed public key into the manifest's
+"key" field pins the unpacked copy to its official Web Store id, which is why
+the browser can still reach 1Password-BrowserSupport.
+
+Usage: gatherd-fetch-browser-extension <dest-dir> <extension-id>
+"""
+
+import base64
+import hashlib
+import io
+import json
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import zipfile
+
+CRX_URL = (
+    "https://clients2.google.com/service/update2/crx"
+    "?response=redirect&os=linux&arch=x64&nacl_arch=x86-64"
+    "&prod=chromiumcrx&prodchannel=unknown&prodversion=9999.0.0.0"
+    "&acceptformat=crx2,crx3&x=id%3D{ext_id}%26uc"
+)
+
+# CRX3 signs this payload, not the file: a magic string, then the length of the
+# signed header, then that header, then the zip. See crx3.proto upstream.
+SIGNATURE_CONTEXT = b"CRX3 SignedData\x00"
+
+
+def die(msg):
+    print(f"gatherd-fetch-browser-extension: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def read_varint(buf, i):
+    result = shift = 0
+    while True:
+        if i >= len(buf):
+            raise ValueError("truncated varint")
+        byte = buf[i]
+        i += 1
+        result |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return result, i
+        shift += 7
+
+
+def proto_fields(buf):
+    """Yield (field_number, value) for a serialized protobuf message."""
+    i = 0
+    while i < len(buf):
+        key, i = read_varint(buf, i)
+        field, wire = key >> 3, key & 7
+        if wire == 0:
+            value, i = read_varint(buf, i)
+            yield field, value
+        elif wire == 2:
+            length, i = read_varint(buf, i)
+            yield field, buf[i:i + length]
+            i += length
+        elif wire == 5:
+            yield field, buf[i:i + 4]
+            i += 4
+        elif wire == 1:
+            yield field, buf[i:i + 8]
+            i += 8
+        else:
+            raise ValueError(f"unsupported wire type {wire}")
+
+
+def extension_id(public_key):
+    """Chromium derives the id from the key: sha256, first 16 bytes, hex a-p."""
+    digest = hashlib.sha256(public_key).hexdigest()[:32]
+    return "".join(chr(ord("a") + int(c, 16)) for c in digest)
+
+
+def parse_crx(blob, want_id):
+    if blob[:4] != b"Cr24":
+        die("not a CRX file (bad magic); the Web Store probably served an error page")
+    version, header_len = struct.unpack("<II", blob[4:12])
+    if version != 3:
+        die(f"unsupported CRX version {version}")
+    header = blob[12:12 + header_len]
+    archive = blob[12 + header_len:]
+    if archive[:2] != b"PK":
+        die("CRX payload is not a zip archive")
+
+    signed_header = None
+    proofs = []
+    for field, value in proto_fields(header):
+        if field == 2 and isinstance(value, bytes):  # sha256_with_rsa
+            proof = dict(proto_fields(value))
+            proofs.append((proof.get(1), proof.get(2)))
+        elif field == 10000 and isinstance(value, bytes):  # signed_header_data
+            signed_header = value
+    if signed_header is None:
+        die("CRX header has no signed_header_data")
+
+    # The signed header carries the id the publisher claims; it must be ours.
+    claimed = dict(proto_fields(signed_header)).get(1)
+    if not claimed or len(claimed) != 16:
+        die("CRX signed header has no usable crx_id")
+    claimed_id = "".join(chr(ord("a") + (b >> 4)) + chr(ord("a") + (b & 0xF)) for b in claimed)
+    if claimed_id != want_id:
+        die(f"CRX is for extension {claimed_id}, expected {want_id}")
+
+    for public_key, signature in proofs:
+        if public_key and signature and extension_id(public_key) == want_id:
+            return public_key, signature, signed_header, archive
+    die(f"no RSA signature in the CRX matches extension id {want_id}")
+
+
+def verify_signature(public_key, signature, signed_header, archive):
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    key = serialization.load_der_public_key(public_key)
+    signed = (
+        SIGNATURE_CONTEXT
+        + struct.pack("<I", len(signed_header))
+        + signed_header
+        + archive
+    )
+    try:
+        key.verify(signature, signed, padding.PKCS1v15(), hashes.SHA256())
+    except InvalidSignature:
+        die("CRX signature does not verify; refusing to install")
+
+
+def unpack(archive_bytes, public_key, dest):
+    staging = tempfile.mkdtemp(prefix=".ext-", dir=os.path.dirname(dest) or ".")
+    try:
+        with zipfile.ZipFile(archive_bytes) as zf:
+            for name in zf.namelist():
+                target = os.path.realpath(os.path.join(staging, name))
+                if not target.startswith(os.path.realpath(staging) + os.sep):
+                    die(f"refusing zip entry that escapes the archive: {name}")
+            zf.extractall(staging)
+
+        manifest_path = os.path.join(staging, "manifest.json")
+        if not os.path.exists(manifest_path):
+            die("archive has no manifest.json")
+        with open(manifest_path, encoding="utf-8-sig") as fh:
+            manifest = json.load(fh)
+        # Pins the unpacked copy to its Web Store id instead of a path-derived one.
+        manifest["key"] = base64.b64encode(public_key).decode("ascii")
+        with open(manifest_path, "w", encoding="utf-8") as fh:
+            json.dump(manifest, fh, indent=2)
+
+        # Swap in only once the archive has verified and unpacked cleanly, so a
+        # failed refetch leaves the working copy the browser is using untouched.
+        if os.path.exists(dest):
+            shutil.rmtree(dest)
+        os.replace(staging, dest)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def main():
+    if len(sys.argv) != 3:
+        die("usage: gatherd-fetch-browser-extension <dest-dir> <extension-id>")
+    dest, ext_id = sys.argv[1], sys.argv[2]
+    if len(ext_id) != 32 or not all("a" <= c <= "p" for c in ext_id):
+        die(f"{ext_id!r} is not a Chrome extension id")
+
+    url = CRX_URL.format(ext_id=ext_id)
+    try:
+        blob = subprocess.run(
+            ["curl", "-fsSL", "--max-time", "120", url],
+            check=True, stdout=subprocess.PIPE,
+        ).stdout
+    except subprocess.CalledProcessError as exc:
+        die(f"download failed (curl exit {exc.returncode})")
+    if not blob:
+        die("download was empty")
+
+    public_key, signature, signed_header, archive = parse_crx(blob, ext_id)
+    verify_signature(public_key, signature, signed_header, archive)
+
+    os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+    unpack(io.BytesIO(archive), public_key, dest)
+    print(f"installed {ext_id} to {dest}")
+
+
+if __name__ == "__main__":
+    main()

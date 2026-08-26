@@ -1,0 +1,25 @@
+# Rendered from both core.yml and rest.yml. CORE writes the entries with no
+# network, when no extension has been downloaded yet; REST re-renders them once
+# the extensions are on disk. That ordering is the point: Chromium greets a
+# --load-extension directory that does not exist with an error dialog, so an
+# extension only reaches the Exec line after its manifest is actually there.
+- name: Check which web app browser extensions are installed
+  ansible.builtin.stat:
+    path: "{{ target_home }}/.local/share/ice/extensions/{{ item.name }}/manifest.json"
+  loop: "{{ web_app_extensions }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _web_app_extensions_stat
+
+- name: Create web app desktop entries
+  ansible.builtin.template:
+    src: web-app.desktop.j2
+    dest: "{{ target_home }}/.local/share/applications/WebApp-{{ item.codename }}.desktop"
+    mode: '0644'
+  loop: "{{ web_apps }}"
+  vars:
+    installed_web_app_extensions: >-
+      {{ _web_app_extensions_stat.results
+         | selectattr('stat.exists')
+         | map(attribute='item')
+         | list }}

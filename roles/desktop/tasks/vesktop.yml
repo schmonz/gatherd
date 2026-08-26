@@ -1,0 +1,65 @@
+---
+- name: Pre-seed Vesktop first-run state to skip setup screen
+  # Vesktop shows a setup screen when state.json has no firstLaunch key.
+  # force: false so Vesktop can update the file freely after first run.
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.config/vesktop/state.json"
+    content: '{"firstLaunch":false}'
+    mode: '0600'
+    force: false
+
+- name: Pre-seed Vesktop initial settings
+  # Sets the choices the setup screen would otherwise ask for.
+  # force: false so Vesktop can update freely after first run.
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.config/vesktop/settings.json"
+    content: '{"discordBranch":"stable","minimizeToTray":true,"arRPC":false}'
+    mode: '0600'
+    force: false
+
+- name: Stat Vesktop's cached Vencord bundle
+  ansible.builtin.stat:
+    path: "{{ vesktop_vencord_dir }}"
+  register: vesktop_vencord_cache
+
+- name: Stat the node binary the bundle check needs
+  # Not installed yet on a first boot, when CORE runs before any packages.
+  ansible.builtin.stat:
+    path: /usr/bin/node
+  register: vesktop_node_bin
+
+- name: Parse each cached Vencord file
+  # Vesktop pipes each download straight into createWriteStream(<final path>):
+  # no temp file, no resume, and its retry wraps only the fetch() that gets the
+  # headers, not the body stream. So ANY interrupted transfer -- not just a slow
+  # one -- leaves a truncated file at the real path, and Vesktop's "do I have a
+  # bundle?" test is bare existence, so it trusts that file forever. Its main
+  # process require()s it on every later launch, throwing SyntaxError before the
+  # window loads: startup hangs until someone clears the cache by hand.
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/node
+      - --check
+      - "{{ vesktop_vencord_dir }}/{{ item }}"
+  # Only the two files node itself loads. vencordDesktopRenderer.js is browser
+  # code that node never parses, so a --check on it could reject a healthy
+  # bundle and put the machine in a re-download loop -- the opposite failure.
+  loop:
+    - vencordDesktopMain.js
+    - vencordDesktopPreload.js
+  register: vesktop_vencord_parse
+  changed_when: false
+  failed_when: false
+  when:
+    - vesktop_vencord_cache.stat.isdir | default(false)
+    - vesktop_node_bin.stat.exists
+
+- name: Discard the truncated Vencord bundle so Vesktop refetches it
+  # A missing file counts as truncated too: a partial set wedges startup the
+  # same way a partial file does.
+  ansible.builtin.file:
+    path: "{{ vesktop_vencord_dir }}"
+    state: absent
+  when: vesktop_vencord_parse.results | default([])
+        | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
+        | list | length > 0

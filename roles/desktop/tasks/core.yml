@@ -689,23 +689,8 @@
       _ts=$(gsettings get org.gnome.desktop.interface text-scaling-factor 2>/dev/null || echo 1)
       GDK_DPI_SCALE=$(awk "BEGIN{printf \"%.4f\", 1.0/$_ts}") yad "${cheat[@]}"
 
-- name: Pre-seed Vesktop first-run state to skip setup screen
-  # Vesktop shows a setup screen when state.json has no firstLaunch key.
-  # force: false so Vesktop can update the file freely after first run.
-  ansible.builtin.copy:
-    dest: "{{ target_home }}/.config/vesktop/state.json"
-    content: '{"firstLaunch":false}'
-    mode: '0600'
-    force: false
-
-- name: Pre-seed Vesktop initial settings
-  # Sets the choices the setup screen would otherwise ask for.
-  # force: false so Vesktop can update freely after first run.
-  ansible.builtin.copy:
-    dest: "{{ target_home }}/.config/vesktop/settings.json"
-    content: '{"discordBranch":"stable","minimizeToTray":true,"arRPC":false}'
-    mode: '0600'
-    force: false
+- name: Configure Vesktop and repair a half-downloaded Vencord bundle
+  ansible.builtin.import_tasks: vesktop.yml
 
 - name: Create JetBrains Toolbox data directory
   ansible.builtin.file:

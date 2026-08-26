@@ -47,6 +47,11 @@ wallpaper_dir: "{{ target_home }}/.local/share/backgrounds"
 wallpaper_dark_path: "{{ wallpaper_dir }}/wallpaper-dark"
 wallpaper_light_path: "{{ wallpaper_dir }}/wallpaper-light"
 
+# Where Vesktop keeps the Vencord bundle it would otherwise download on first
+# launch. REST pre-fetches it (vesktop_vencord.yml) so that launch needs no
+# network; CORE discards it if it is truncated (vesktop.yml).
+vesktop_vencord_dir: "{{ target_home }}/.config/vesktop/sessionData/vencordFiles"
+
 # Package sets — single source of truth. The offline-cache builder
 # (scripts/gatherd-build-offline-cache) downloads these exact lists, so the USB
 # stick can never drift from what the playbook installs. Tier (core/rest) is on

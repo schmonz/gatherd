@@ -1,0 +1,128 @@
+---
+# Vesktop fetches Vencord's bundle from GitHub the first time it launches, and
+# decides it already has one by testing that five paths merely EXIST -- no size,
+# hash or version check (dist/js/main.js in app.asar: `access(F_OK)` over
+# package.json plus the four asset names). Two consequences drive this file:
+#
+#   1. Pre-seeding works completely. Put those five files in place and the first
+#      launch downloads nothing, so Vesktop starts on a network that could never
+#      have fetched it -- in-flight wifi, a hotel portal, a train.
+#   2. A truncated file still "exists", so Vesktop will re-require it forever
+#      instead of repairing itself. That is what wedged startup for three weeks.
+#
+# Vesktop cannot safely fetch this itself on a flaky link: it pipes the body
+# straight into createWriteStream(<final path>) with no temp file and no resume,
+# and its retry covers only the fetch() for the headers -- so a stream cut off
+# at 90% overwrites from byte 0 next attempt and, if that one breaks too, leaves
+# a truncated file the existence check above then blesses. So converge owns the
+# download instead: get_url writes to a temp file and renames, which is what
+# makes a cut-off transfer leave nothing rather than something broken.
+
+- name: Stat each file Vesktop counts as a complete Vencord bundle
+  ansible.builtin.stat:
+    path: "{{ vesktop_vencord_dir }}/{{ item }}"
+  loop:
+    - package.json
+    - vencordDesktopMain.js
+    - vencordDesktopPreload.js
+    - vencordDesktopRenderer.js
+    - vencordDesktopRenderer.css
+  register: vesktop_vencord_files
+
+- name: Parse the bundle files node itself loads
+  # Existence is Vesktop's bar, not ours: a present-but-truncated main.js is the
+  # exact failure this file exists to prevent, so a bundle that does not parse
+  # counts as absent and gets refetched.
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/node
+      - --check
+      - "{{ vesktop_vencord_dir }}/{{ item }}"
+  loop:
+    - vencordDesktopMain.js
+    - vencordDesktopPreload.js
+  register: vesktop_vencord_parse
+  changed_when: false
+  failed_when: false
+  when: vesktop_vencord_files.results | selectattr('stat.exists') | list | length == 5
+
+- name: Decide whether Vesktop already has a bundle worth keeping
+  ansible.builtin.set_fact:
+    vesktop_vencord_usable: "{{ vesktop_vencord_files.results | selectattr('stat.exists') | list | length == 5
+      and vesktop_vencord_parse.results | default([]) | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0) | list | length == 0 }}"
+
+- name: Fetch the Vencord bundle so Vesktop's first launch needs no network
+  when: not vesktop_vencord_usable
+  block:
+    - name: Discard whatever incomplete bundle is there
+      ansible.builtin.file:
+        path: "{{ vesktop_vencord_dir }}"
+        state: absent
+
+    - name: Create the Vencord bundle directory
+      ansible.builtin.file:
+        path: "{{ vesktop_vencord_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Ask GitHub which release Vesktop would download
+      # Same endpoint Vesktop uses -- not a pinned tag. Vencord ships a rolling
+      # release, so asking for the tag by name would drift from what Vesktop
+      # would have fetched for itself.
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/Vendicated/Vencord/releases/latest
+        headers:
+          Accept: application/vnd.github+json
+        return_content: true
+      register: vesktop_vencord_release
+
+    - name: Download each Vencord asset
+      # Vesktop takes every asset whose name STARTS WITH one of the four bundle
+      # names, which is how the .map and .LEGAL.txt siblings come along.
+      ansible.builtin.get_url:
+        url: "{{ item.browser_download_url }}"
+        dest: "{{ vesktop_vencord_dir }}/{{ item.name }}"
+        mode: '0644'
+        timeout: 60
+      loop: "{{ vesktop_vencord_release.json.assets
+        | selectattr('name', 'match', 'vencordDesktop(Main\\.js|Preload\\.js|Renderer\\.(js|css))') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: vesktop_vencord_download
+      until: vesktop_vencord_download is succeeded
+      retries: 3
+      delay: 5
+
+    - name: Write the package.json Vesktop looks for
+      # Vesktop writes this itself, as the literal two bytes "{}"; without it
+      # the bundle reads as incomplete and every launch refetches.
+      ansible.builtin.copy:
+        dest: "{{ vesktop_vencord_dir }}/package.json"
+        content: '{}'
+        mode: '0644'
+
+    - name: Confirm the fetched bundle actually parses
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/node
+          - --check
+          - "{{ vesktop_vencord_dir }}/{{ item }}"
+      loop:
+        - vencordDesktopMain.js
+        - vencordDesktopPreload.js
+      changed_when: false
+
+  rescue:
+    - name: Leave no partial bundle behind for Vesktop to trust
+      # Better to have nothing than something truncated: with the directory gone
+      # Vesktop refetches on its own, and the next converge tries again. A
+      # half-written bundle is the one state neither of them recovers from.
+      ansible.builtin.file:
+        path: "{{ vesktop_vencord_dir }}"
+        state: absent
+
+    - name: Report that Vesktop will have to fetch its own bundle
+      ansible.builtin.debug:
+        msg: >-
+          Could not pre-fetch Vencord for Vesktop; removed the partial bundle.
+          Vesktop will download it at first launch, which needs a usable network.

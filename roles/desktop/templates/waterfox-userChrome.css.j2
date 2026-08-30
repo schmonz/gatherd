@@ -1,0 +1,31 @@
+/* Managed by gatherd. Makes {{ item.name }} look like an app rather than a browser.
+ *
+ * Firefox-family browsers have no --app mode, so there is no flag that removes
+ * the tab strip, the address bar, or Waterfox's left-hand sidebar. Hiding them
+ * in userChrome.css is the whole mechanism; toolkit.legacyUserProfileCustomizations.stylesheets
+ * in user.js is what makes the browser read this file at all.
+ */
+
+/* Tab strip: a single-site window has nothing to switch between. */
+#TabsToolbar {
+  visibility: collapse !important;
+}
+
+/* Address bar and its toolbar, including the extension buttons row. */
+#nav-bar,
+#navigator-toolbox > #nav-bar {
+  visibility: collapse !important;
+}
+
+/* Waterfox's vertical tabs / revamped sidebar down the left edge. */
+#sidebar-main,
+#sidebar-box,
+#sidebar-splitter,
+#sidebar-header {
+  display: none !important;
+}
+
+/* Leaves a hairline under the (now hidden) toolbox on some themes. */
+#navigator-toolbox {
+  border-bottom: none !important;
+}

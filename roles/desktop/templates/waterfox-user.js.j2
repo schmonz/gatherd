@@ -18,6 +18,16 @@ user_pref("extensions.autoDisableScopes", 0);
 // configure the add-on is to drive a browser and click through its options page.
 user_pref("extensions.webextensions.ExtensionStorageIDB.enabled", false);
 
+// Read chrome/userChrome.css, which is what strips the tab strip, address bar and
+// sidebar. Firefox-family browsers have no --app mode, so this is the only way to
+// make a web app window stop looking like a browser.
+user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
+
+// Waterfox's revamped sidebar and vertical tabs, off at the source as well as in
+// CSS -- hidden-but-running still steals a first paint and a keyboard shortcut.
+user_pref("sidebar.revamp", false);
+user_pref("sidebar.verticalTabs", false);
+
 // A single-purpose profile has no use for the usual first-run furniture.
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.aboutwelcome.enabled", false);

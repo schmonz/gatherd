@@ -14,7 +14,7 @@
     path: "{{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.0.codename }}/{{ item.1 }}"
     state: directory
     mode: '0755'
-  loop: "{{ waterfox_web_apps | product(['extensions', 'browser-extension-data/' ~ speech_polyfill_extension_id]) | list }}"
+  loop: "{{ waterfox_web_apps | product(['extensions', 'chrome', 'browser-extension-data/' ~ speech_polyfill_extension_id]) | list }}"
   loop_control:
     label: "{{ item.0.codename }}/{{ item.1 }}"
 
@@ -29,6 +29,15 @@
   ansible.builtin.template:
     src: waterfox-user.js.j2
     dest: "{{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.codename }}/user.js"
+    mode: '0644'
+  loop: "{{ waterfox_web_apps }}"
+  loop_control:
+    label: "{{ item.codename }}"
+
+- name: Strip the browser UI from Waterfox web app windows
+  ansible.builtin.template:
+    src: waterfox-userChrome.css.j2
+    dest: "{{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.codename }}/chrome/userChrome.css"
     mode: '0644'
   loop: "{{ waterfox_web_apps }}"
   loop_control:

@@ -28,6 +28,27 @@ user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
 user_pref("sidebar.revamp", false);
 user_pref("sidebar.verticalTabs", false);
 
+// Waterfox restores the previous session by default where Firefox does not, and
+// the launcher passes the URL on the command line every time -- so each launch
+// reopened yesterday's tab AND opened a new one, and the count grew by one per
+// launch (observed 1, then 2, then 3 in sessionstore-backups). 1 = open the
+// homepage, which the command-line URL then supersedes: exactly one tab, always.
+user_pref("browser.startup.page", 1);
+user_pref("browser.sessionstore.resume_from_crash", false);
+
+// The speaking exercises need the microphone, and the permission doorhanger is
+// anchored inside #nav-bar -- which userChrome.css collapses to make this look
+// like an app. The panel therefore opens against a box with no layout, closes
+// again, and the page retries: an infinite flap with no way to click Allow.
+// Measured here rather than assumed: a getUserMedia({audio:true}) page in a copy
+// of this profile never settles (title stayed RESULT:pending), and settles to
+// RESULT:ok with this pref. It short-circuits ahead of the permission manager,
+// so it covers a stored PROMPT_ACTION row for the site as well as the absence of
+// one -- both resolve to "ask", which is the state this removes. Sound only
+// because the profile serves exactly one site; do NOT copy it to a general
+// browser profile, where it would grant the mic to anything that asks.
+user_pref("media.navigator.permission.disabled", true);
+
 // A single-purpose profile has no use for the usual first-run furniture.
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.aboutwelcome.enabled", false);

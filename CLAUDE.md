@@ -62,17 +62,24 @@ Writes `/etc/gatherd/async-complete` when done.
 When a feature is implemented and working:
 
 1. Add a verification step to `section_verify` in `scripts/gatherd-post-setup-notes`.
-   **Write it as a pure shell command sequence whenever possible** — commands the
-   reader can paste and run, each annotated with the expected output, rather than
-   prose describing what to do. The goal is a step that is mechanically checkable
-   (ideally with the pass condition as a command that succeeds or prints an
-   expected value), not one that relies on the reader's interpretation. Fall back
-   to prose only for the genuinely manual parts (look at the screen, click a GUI
-   toggle, plug in hardware), and keep those to the minimum the command sequence
-   can't cover. If a feature can only be observed in a fleeting state (e.g. a
-   window that only exists mid-install), add a flag or hook to the runtime script
-   that lets the verify step reproduce it on a converged machine, so the step is a
-   runnable sequence instead of "you had to be there on a fresh repave".
+
+   **Keep it short — a few lines at most, and very often one line.** These steps
+   are short-lived (see Repave cadence): they are read by someone who has just
+   built the thing and needs reminding what to exercise, not taught what it is.
+   "Make sure Duolingo speaking exercises work" is usually the whole step. Do not
+   restate the rationale — that belongs in code comments and the commit message,
+   and repeating it here is what turned this list into 30KB nobody could scan.
+
+   **When a step does need detail, prefer commands to descriptions.** That rule
+   exists because verbose prose about a manual check is almost always a shell
+   command sequence in disguise; it is not a licence to enumerate every assertion
+   a feature could support. Give the commands with their expected output, and
+   keep prose for the genuinely manual parts (look at the screen, click a GUI
+   toggle, plug in hardware).
+
+   If a feature can only be observed in a fleeting state (e.g. a window that only
+   exists mid-install), add a flag or hook to the runtime script so the step can
+   reproduce it on a converged machine instead of "you had to be there".
 2. Delete the item from `plans/TODO.md`.
 
 The post-setup notes are the living test suite for the playbook. TODO.md is not a record of what was done; git log is.
@@ -81,7 +88,26 @@ Before calling a feature done, test it locally. The verify step documents what t
 
 ## Repave cadence
 
-Count the `li` lines in `section_verify` in `scripts/gatherd-post-setup-notes`. If there are more than 10, suggest that it's time to repave and run through the verify checklist.
+Count the `verify_li` lines in `section_verify` in `scripts/gatherd-post-setup-notes`. If there are more than 10, suggest that it's time to repave and run through the verify checklist.
+
+That count is a BACKLOG DEPTH, not the size of a regression suite. A verify step
+is a manual acceptance check for a newly intended automated behavior, and it is
+spent the moment it has been exercised: either the automation works as intended,
+or it doesn't and we fix it. Neither outcome leaves anything for the step to do
+on a later repave.
+
+So working the list has two halves, and the second one is what keeps the count
+meaningful:
+
+1. During the repave, delete each bullet from `~/.config/gatherd-post-setup.md`
+   as you satisfy it. That is local progress only; the generator runs at every
+   login, and `~/.local/state/gatherd/post-setup-verify-seen` is what stops a
+   ticked-off bullet coming back before you get to step 2.
+2. When the list is worked, delete those entries from `section_verify` and
+   commit. A step that failed gets its automation fixed instead, and the fix
+   brings its own step.
+
+Skipping step 2 is why the count went 9 to 22 without ever coming down.
 
 ## Code style
 

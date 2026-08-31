@@ -222,6 +222,14 @@ rest_packages:
   - powertop
   # pacman cache cleanup
   - pacman-contrib
+  # The playbook builds AUR packages with aurutils and needs no helper, but
+  # arch-update -- the update notifier the desktop role configures -- only
+  # knows paru, yay and pikaur, and silently ignores AUR packages if none is
+  # installed. So yay stays, as the notifier's helper rather than ours.
+  # From the endeavouros repo, NOT the AUR: the ISO's installer already puts
+  # it there, and the AUR's yay-bin conflicts with it, so asking for yay-bin
+  # is an unresolvable conflict on every EndeavourOS machine.
+  - yay
   # cron daemon
   - cronie
 
@@ -259,12 +267,6 @@ aur_packages:
   - koreader-bin
   # polkit agent that drives any prompt command (we point it at fuzzel)
   - cmd-polkit-git
-  # The playbook builds AUR packages with aurutils and needs no helper, but
-  # arch-update -- the update notifier the desktop role configures -- only
-  # knows paru, yay and pikaur, and silently ignores AUR packages if none is
-  # installed. So yay stays, as the notifier's helper rather than ours. It is
-  # a binary package, so building it here costs nothing.
-  - yay-bin
 
 # Long AUR builds and big binary drops, deferred to the async play
 # (roles/aur/tasks/slow.yml).

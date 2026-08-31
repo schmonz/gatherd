@@ -6,6 +6,17 @@
       register: _aur_sync_slow
       changed_when: "'there is nothing to do' not in _aur_sync_slow.stderr"
 
+    - name: Remove the superseded claude-desktop-bin
+      # claude-desktop conflicts with claude-desktop-bin but does not replace it,
+      # so pacman asks "Remove claude-desktop-bin? [y/N]" and --noconfirm answers
+      # N, failing the whole install. Machines converged before the switch still
+      # carry the old package; a fresh repave never installs it.
+      community.general.pacman:
+        name: claude-desktop-bin
+        state: absent
+      become: true
+      become_user: root
+
     - name: Install slow AUR packages
       community.general.pacman:
         name: "{{ aur_slow_packages }}"

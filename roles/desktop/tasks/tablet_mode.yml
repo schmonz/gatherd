@@ -16,6 +16,15 @@
     - gatherd-music-index
     - gatherd-music-stand
 
+# The mechanism's own install.sh would create this, but it runs in REST and
+# this is CORE: the config has to land in a directory that exists before the
+# clone the config belongs to has ever been fetched.
+- name: Create the tablet-mode config directory
+  ansible.builtin.file:
+    path: "{{ target_home }}/.config/minibook-tablet-mode"
+    state: directory
+    mode: '0755'
+
 - name: Configure tablet mode
   ansible.builtin.template:
     src: tablet-mode.conf.j2

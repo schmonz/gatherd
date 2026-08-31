@@ -57,7 +57,6 @@
              'PreToolUse': [
                {'matcher': 'Bash',
                 'hooks': [{'type': 'command',
-                           'if': 'Bash(git commit*)',
                            'command': target_home ~ '/.local/bin/gatherd-doubt-commit-hook'}]},
                {'matcher': 'Write|Edit',
                 'hooks': [{'type': 'command',

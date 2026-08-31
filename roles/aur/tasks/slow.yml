@@ -10,7 +10,7 @@
       community.general.pacman:
         name: "{{ aur_slow_packages }}"
         state: present
-        update_cache: true
+        update_cache: "{{ _aur_sync_slow.changed }}"
       become: true
       become_user: root
 
@@ -28,7 +28,7 @@
       community.general.pacman:
         name: "{{ aur_slow_avx_packages }}"
         state: present
-        update_cache: true
+        update_cache: "{{ _aur_sync_avx.changed }}"
       when: has_avx
       become: true
       become_user: root
@@ -69,7 +69,7 @@
           community.general.pacman:
             name: fprintd-clients-git
             state: present
-            update_cache: true
+            update_cache: "{{ _aur_sync_fprintd_clients.changed }}"
           become: true
           become_user: root
 
@@ -83,7 +83,7 @@
           community.general.pacman:
             name: open-fprintd
             state: present
-            update_cache: true
+            update_cache: "{{ _aur_sync_open_fprintd.changed }}"
           become: true
           become_user: root
 
@@ -97,7 +97,7 @@
           community.general.pacman:
             name: python-validity
             state: present
-            update_cache: true
+            update_cache: "{{ _aur_sync_python_validity.changed }}"
           become: true
           become_user: root
 

@@ -15,7 +15,7 @@
   community.general.pacman:
     name: facetimehd-firmware
     state: present
-    update_cache: true
+    update_cache: "{{ _aur_sync_facetimehd_firmware.changed }}"
 
 - name: Build the FaceTime HD webcam driver into the local AUR repository
   ansible.builtin.command: "{{ aur_sync_command }} facetimehd-dkms"
@@ -29,4 +29,4 @@
   community.general.pacman:
     name: facetimehd-dkms
     state: present
-    update_cache: true
+    update_cache: "{{ _aur_sync_facetimehd_dkms.changed }}"

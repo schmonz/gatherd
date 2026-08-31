@@ -25,7 +25,7 @@
   community.general.pacman:
     name: libmodule
     state: present
-    update_cache: true
+    update_cache: "{{ _aur_sync_libmodule.changed }}"
 
 - name: Build clightd into the local AUR repository
   ansible.builtin.command: "{{ aur_sync_command }} clightd"
@@ -39,7 +39,7 @@
   community.general.pacman:
     name: clightd
     state: present
-    update_cache: true
+    update_cache: "{{ _aur_sync_clightd.changed }}"
 
 - name: Build clight into the local AUR repository
   ansible.builtin.command: "{{ aur_sync_command }} clight"
@@ -53,7 +53,7 @@
   community.general.pacman:
     name: clight
     state: present
-    update_cache: true
+    update_cache: "{{ _aur_sync_clight.changed }}"
 
 - name: Disable clightd service
   ansible.builtin.systemd:

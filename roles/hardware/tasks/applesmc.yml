@@ -11,7 +11,7 @@
   community.general.pacman:
     name: mbpfan
     state: present
-    update_cache: true
+    update_cache: "{{ _aur_sync_mbpfan.changed }}"
 
 - name: Install mbpfan service override
   ansible.builtin.copy:

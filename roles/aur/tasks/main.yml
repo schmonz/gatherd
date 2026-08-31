@@ -53,11 +53,20 @@
 # a repo through its synced database copy, and the local one has just changed.
 # It reports changed only when the database contents actually differ, so a
 # converged run stays green.
+#
+# Gated on the build above rather than set to a bare `true`, because the module
+# refreshes BEFORE it looks at installed state: run() calls update_package_db()
+# first, and its fail() aborts the task without ever building the inventory. So
+# an unconditional refresh turns a no-op install of an already-installed package
+# into a network- and lock-dependent operation that can kill a whole REST
+# convergence -- which is what happened when a concurrent `pacman -Syu` held
+# /var/lib/pacman/db.lck and the play died installing a clight that was already
+# at 4.11-1. Nothing was built means nothing new to see, so nothing to refresh.
 - name: Install AUR packages
   community.general.pacman:
     name: "{{ aur_packages }}"
     state: present
-    update_cache: true
+    update_cache: "{{ _aur_sync.changed }}"
   become: true
   become_user: root
 

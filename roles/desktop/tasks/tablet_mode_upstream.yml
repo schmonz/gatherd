@@ -41,11 +41,17 @@
 # Gated on has_dual_accelerometer in addition to tablet_mode_supported: a
 # single-accelerometer machine has no second sensor for this rule to bind, so
 # it gets phase 1 tablet mode (manual trigger) and nothing more.
+#
+# force, because before the extraction gatherd copied this rule to the same
+# path as a regular file, and the file module refuses to replace a file with a
+# symlink without it -- which failed the whole REST convergence on every
+# machine that had run the old playbook.
 - name: Link the hinge-sensor udev rule
   ansible.builtin.file:
     src: "{{ tablet_mode_upstream_dir }}/udev/99-minibook-hinge-sensor.rules"
     dest: /etc/udev/rules.d/99-minibook-hinge-sensor.rules
     state: link
+    force: true
   become: true
   become_user: root
   when: tablet_mode_supported and has_dual_accelerometer

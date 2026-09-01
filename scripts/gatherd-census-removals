@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Report every task carrying a removal shape.
+
+The playbook accumulates tasks that exist only to carry already-converged
+machines past a change. Which of them are spent is not derivable from the code
+-- see docs/superpowers/specs/2026-09-01-spent-cleanup-detection-design.md --
+so this script deliberately classifies nothing. It produces the inventory that
+MIGRATIONS.md is seeded from, mechanically, because the hand-curated list it
+replaces was not reproducible and was wrong three times in nineteen.
+
+A shape is credited to the task that owns it, never to an enclosing block:.
+Crediting the parent is what an earlier grep-based attempt did, and it inflated
+the count with tasks that remove nothing.
+
+plans/ and docs/ are outside the scan set on purpose: plan documents quote task
+YAML verbatim and would register as phantom tasks.
+
+Usage: gatherd-census-removals [repo-root] [--ledger]   (exit 0; this reports)
+"""
+import sys
+from pathlib import Path
+
+import yaml
+
+NEST = ('block', 'rescue', 'always')
+PLAY_KEYS = ('tasks', 'pre_tasks', 'post_tasks')
+
+
+class LineLoader(yaml.SafeLoader):
+    """SafeLoader that records each mapping's source line."""
+
+
+def _construct_mapping(loader, node):
+    mapping = super(LineLoader, loader).construct_mapping(node, deep=True)
+    mapping['__line__'] = node.start_mark.line + 1
+    return mapping
+
+
+LineLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping)
+
+
+def _args(task):
+    return [v for v in task.values() if isinstance(v, dict)]
+
+
+SHAPES = (
+    ('state: absent', lambda t: any(a.get('state') == 'absent' for a in _args(t))),
+    ('force+link', lambda t: any(
+        a.get('state') == 'link' and a.get('force') is True for a in _args(t))),
+    ('unit off', lambda t: any(
+        a.get('enabled') is False or a.get('masked') is True for a in _args(t))),
+)
+
+
+def walk(tasks, path, found):
+    for task in tasks or []:
+        if not isinstance(task, dict):
+            continue
+        nested = [k for k in NEST if k in task]
+        for key in nested:
+            walk(task[key], path, found)
+        if nested:
+            continue
+        for label, matches in SHAPES:
+            if matches(task):
+                found.append((path, task.get('__line__'), label, task.get('name')))
+                break
+
+
+def scan(root):
+    found = []
+    paths = sorted(root.glob('roles/*/tasks/*.yml')) \
+        + sorted(root.glob('tasks/*.yml')) + sorted(root.glob('site-*.yml'))
+    for path in paths:
+        try:
+            doc = yaml.load(path.read_text(), Loader=LineLoader)
+        except (yaml.YAMLError, UnicodeDecodeError) as exc:
+            print(f'{path}: unreadable: {exc}', file=sys.stderr)
+            continue
+        if not isinstance(doc, list):
+            continue
+        rel = path.relative_to(root).as_posix()
+        walk(doc, rel, found)
+        for play in doc:
+            if isinstance(play, dict):
+                for key in PLAY_KEYS:
+                    walk(play.get(key), rel, found)
+    return sorted(found, key=lambda f: (f[0], f[1] or 0))
+
+
+def main():
+    argv = [a for a in sys.argv[1:] if a != '--ledger']
+    ledger = '--ledger' in sys.argv[1:]
+    root = Path(argv[0]) if argv else Path(__file__).resolve().parent.parent
+    for path, line, shape, name in scan(root):
+        if ledger:
+            print(f'- {path}:{line} — {name}\n  shape: {shape}')
+        else:
+            print(f'{path}:{line}\t{shape}\t{name}')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

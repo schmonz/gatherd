@@ -1,0 +1,72 @@
+#!/bin/sh
+# Unit tests for gatherd-census-removals.
+#
+# Fixtures pin the two things the walker must get right and that a naive
+# implementation gets wrong: a shape nested inside a block: must be credited to
+# the task that owns it rather than to the block parent, and the reported line
+# must be the task's own `- name:` line.
+#
+# Usage: tests/census-removals
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+CENSUS="$REPO/scripts/gatherd-census-removals"
+PASS=0
+FAIL=0
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/roles/demo/tasks"
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+assert_out() {
+    _d=$1; _want=$2; shift 2
+    _got=$("$@" 2>/dev/null || true)
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want [$_want] got [$_got])"; fi
+}
+
+cat > "$WORK/roles/demo/tasks/main.yml" <<'FIXTURE'
+---
+- name: Plain removal
+  ansible.builtin.file:
+    path: /tmp/gone
+    state: absent
+
+- name: Not a removal
+  ansible.builtin.file:
+    path: /tmp/here
+    state: touch
+
+- name: Block parent
+  block:
+    - name: Nested removal
+      ansible.builtin.file:
+        path: /tmp/nested
+        state: absent
+
+- name: Forced symlink
+  ansible.builtin.file:
+    src: /tmp/a
+    dest: /tmp/b
+    state: link
+    force: true
+
+- name: Masked unit
+  ansible.builtin.systemd:
+    name: demo.service
+    masked: true
+FIXTURE
+
+assert_out "reports every shape, credits the owning task, keeps line numbers" \
+"roles/demo/tasks/main.yml:2	state: absent	Plain removal
+roles/demo/tasks/main.yml:14	state: absent	Nested removal
+roles/demo/tasks/main.yml:19	force+link	Forced symlink
+roles/demo/tasks/main.yml:26	unit off	Masked unit" \
+    "$CENSUS" "$WORK"
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

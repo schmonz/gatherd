@@ -86,6 +86,29 @@ The post-setup notes are the living test suite for the playbook. TODO.md is not 
 
 Before calling a feature done, test it locally. The verify step documents what to check on a fresh repave; it is not a substitute for confirming the thing works right now.
 
+## Migrations
+
+A task that exists only to carry already-converged machines past a change gets
+an entry in `MIGRATIONS.md` when it is written. Same moment as adding a
+`verify_li` step: a change lands, its follow-up gets recorded.
+
+Regenerate the inventory with `scripts/gatherd-census-removals` to check nothing
+was missed. It reports and classifies nothing — which of these are spent is not
+derivable from the code, and hand classification was wrong three times in
+nineteen, once in the direction that regresses a fresh install.
+
+**Any unmeasured entry means the ledger is due for a measurement pass**, run
+against a snapshot of the Calamares-only base image from `tests/create-base`.
+Deliberately not a count over a threshold: unlike a `verify_li` step, which is
+spent once exercised and deleted, a measured entry stays, so a count would be
+permanently true and never clear — the same way the verify list grew past its
+threshold and stayed there.
+
+Retirement is never scheduled. Deleting one of these wrongly fails silently for
+nearly all of them: they are `state: absent` on files, so stale state just
+persists and `/etc/gatherd/last-run` still records `ok`. An entry becomes a
+deletion candidate only for someone already working in that file.
+
 ## Repave cadence
 
 Count the `verify_li` lines in `section_verify` in `scripts/gatherd-post-setup-notes`. If there are more than 10, suggest that it's time to repave and run through the verify checklist.

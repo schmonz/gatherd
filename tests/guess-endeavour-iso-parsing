@@ -1,0 +1,66 @@
+#!/bin/sh
+# Unit tests for the filename parsing in tests/guess-endeavour-iso.
+#
+# The regex silently stopped matching when EndeavourOS shipped Titan-Nova: it
+# hardcoded (-Neo)? from the release before. Nothing noticed until someone
+# needed an ISO. These fixtures pin every codename shape shipped so far, so the
+# next one that fails does so in a test rather than in a repave.
+#
+# Fixtures are served over file:// so the tests never touch the network.
+#
+# Usage: tests/guess-endeavour-iso-parsing
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+GUESS="$TESTSDIR/guess-endeavour-iso"
+PASS=0
+FAIL=0
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+# Runs the guesser against a fixture page, with the mirror HEAD check disabled.
+guess() {
+    printf '%s\n' "$2" > "$WORK/page.html"
+    EOS_PAGE_URL="file://$WORK/page.html" EOS_VERIFY=0 \
+        EOS_MIRROR_BASE="https://example.invalid/iso" "$GUESS" 2>/dev/null
+}
+
+assert_picks() {
+    _d=$1; _page=$2; _want="https://example.invalid/iso/$3"
+    if _got=$(guess "$_d" "$_page"); then :; else _got="(exit $?)"; fi
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want [$_want] got [$_got])"; fi
+}
+
+assert_picks "two-segment codename (Titan-Nova, the one that broke it)" \
+    'sha512sum EndeavourOS_Titan-Nova-2026.08.15.iso' \
+    'EndeavourOS_Titan-Nova-2026.08.15.iso'
+
+assert_picks "single-segment codename (Mercury)" \
+    'sha512sum EndeavourOS_Mercury-2024.05.01.iso' \
+    'EndeavourOS_Mercury-2024.05.01.iso'
+
+assert_picks "the codename the old pattern special-cased (Cassini-Neo)" \
+    'sha512sum EndeavourOS_Cassini-Neo-2023.05.28.iso' \
+    'EndeavourOS_Cassini-Neo-2023.05.28.iso'
+
+# Newest wins by date, not by string order: Titan sorts after Mercury
+# alphabetically, but the Mercury build here is a week newer.
+assert_picks "picks newest by date, not alphabetically" \
+    'EndeavourOS_Titan-Nova-2026.04.27.iso and EndeavourOS_Mercury-2026.05.01.iso' \
+    'EndeavourOS_Mercury-2026.05.01.iso'
+
+# A page with no ISO at all must fail loudly, which is how the breakage
+# surfaced in the first place.
+printf 'nothing here\n' > "$WORK/page.html"
+if EOS_PAGE_URL="file://$WORK/page.html" EOS_VERIFY=0 "$GUESS" >/dev/null 2>&1
+then bad "a page with no ISO exits nonzero"
+else ok "a page with no ISO exits nonzero"
+fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

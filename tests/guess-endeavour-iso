@@ -41,7 +41,11 @@ fetch_download_page() {
 # the current filename in multiple places (magnet link, sha512sum hint,
 # mirror table); dedupe and let the caller pick.
 iso_filename_candidates() {
-    grep -oE 'EndeavourOS_[A-Za-z][A-Za-z0-9]*(-Neo)?-[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.iso' \
+# Codename segments are open-ended: releases have shipped as Mercury-DATE,
+# Cassini-Neo-DATE and Titan-Nova-DATE. An earlier pattern hardcoded (-Neo)?
+# and silently stopped matching when Nova shipped, so accept any number of
+# -Word segments before the date rather than enumerating the ones seen so far.
+    grep -oE 'EndeavourOS_[A-Za-z][A-Za-z0-9]*(-[A-Za-z][A-Za-z0-9]*)*-[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.iso' \
         | sort -u
 }
 

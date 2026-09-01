@@ -392,16 +392,30 @@
       content: "--password-store=basic"
 
 # Vestigial: gatherd installs only helium-browser-bin (a Chromium fork with its
-# own config dir), no chromium/ungoogled-chromium, so these files were written
-# for a browser that isn't here. Remove them on already-provisioned machines.
+# own config dir), so on machines provisioned before that switch these files
+# were seeded for a browser gatherd no longer installs. Remove them there.
+- name: Check whether a real Chromium is installed
+  ansible.builtin.command: pacman -Qq chromium ungoogled-chromium ungoogled-chromium-bin
+  register: _chromium_installed
+  changed_when: false
+  failed_when: false
+
 - name: Remove vestigial Chromium browser config
+  # Only the three files gatherd itself seeded (a913393), never ~/.config/chromium
+  # itself: that directory is the browser's entire profile, and this task ran
+  # unconditionally on every converge, so a chromium installed later had its
+  # profile destroyed on the next run. Skipped outright when a Chromium is
+  # present, because these paths are then that browser's live config rather than
+  # gatherd's leftovers. rc is unreliable here (pacman -Qq exits nonzero when
+  # *any* named package is absent), so test for empty stdout instead.
   ansible.builtin.file:
     path: "{{ target_home }}/{{ item }}"
     state: absent
   loop:
     - .config/chromium/initial_preferences
+    - .config/chromium/Default/Preferences
     - .config/chromium-flags.conf
-    - .config/chromium
+  when: _chromium_installed.stdout | trim == ''
 
 - name: Seed Helium UI preferences on a fresh profile
   # system_theme 2 = Qt; dark mode follows color-scheme prefer-dark via the XDG

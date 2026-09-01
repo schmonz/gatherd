@@ -373,6 +373,7 @@ section_verify() {
     verify_li 'A verify step added after these notes already existed still reaches them, and one you delete stays deleted across logins.'
     verify_li 'A converged machine needs neither the network nor the pacman lock to stay converged: with `sudo touch /var/lib/pacman/db.lck` held, a converge is still green. `sudo rm -f /var/lib/pacman/db.lck` afterwards.'
     verify_li 'The doubt hooks are installed and the commit one fires only on commits: `echo '"'"'{"tool_input":{"command":"ls"}}'"'"' | ~/.local/bin/gatherd-doubt-commit-hook` prints nothing, and the same with `git commit -m x` prints a JSON reminder.'
+    verify_li 'A converge never touches a real Chromium profile: `sudo pacman -S --noconfirm chromium`, `mkdir -p ~/.config/chromium && echo x > ~/.config/chromium/History`, converge, and `History` is still there.'
 }
 
 # ---------------------------------------------------------------------------

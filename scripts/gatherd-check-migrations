@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Fail if a removal-shaped task is missing from MIGRATIONS.md, or vice versa.
+
+The ledger is only worth keeping if it is complete. Nothing else in the repo
+notices a migration written without an entry -- the spec lists that as a known
+limit -- and a census makes closing it cheap: the set of removal-shaped tasks
+and the set of ledger entries must be the same set.
+
+Matching is on (file, task name), never on line number. Any edit above a task
+shifts its line, and a gate that fails on unrelated edits is one people learn
+to ignore -- which is the failure mode this whole ledger exists to avoid. A
+drifted line is reported so it can be refreshed, but it is not a violation.
+
+Two violations, both asymmetric and both worth stopping for:
+  missing  -- a task nobody recorded; the gap the gate exists to close
+  orphaned -- an entry whose task moved, was renamed, or was deleted, so the
+              ledger now describes something that is not there
+
+Usage: gatherd-check-migrations [repo-root]   (exit 0 clean, 1 on violations)
+"""
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ENTRY = re.compile(r'^- (?P<path>[^\s:]+):(?P<line>\d+) — (?P<name>.+)$')
+
+
+def census(root):
+    """Return {(path, name): line} for every removal-shaped task."""
+    script = Path(__file__).resolve().parent / 'gatherd-census-removals'
+    out = subprocess.run(
+        [sys.executable, str(script), str(root)],
+        capture_output=True, text=True, check=True).stdout
+    found = {}
+    for row in out.splitlines():
+        where, _shape, name = row.split('\t')
+        path, line = where.rsplit(':', 1)
+        found[(path, name)] = int(line)
+    return found
+
+
+def ledger(path):
+    """Return {(path, name): line} for every entry in MIGRATIONS.md."""
+    entries = {}
+    if not path.exists():
+        return entries
+    for row in path.read_text().splitlines():
+        match = ENTRY.match(row)
+        if match:
+            entries[(match['path'], match['name'])] = int(match['line'])
+    return entries
+
+
+def main():
+    root = Path(sys.argv[1]) if sys.argv[1:] else \
+        Path(__file__).resolve().parent.parent
+    tasks = census(root)
+    entries = ledger(root / 'MIGRATIONS.md')
+
+    missing = sorted(set(tasks) - set(entries))
+    orphaned = sorted(set(entries) - set(tasks))
+    drifted = sorted(k for k in set(tasks) & set(entries)
+                     if tasks[k] != entries[k])
+
+    for path, name in missing:
+        print(f'missing: {path}:{tasks[(path, name)]} — {name}')
+    for path, name in orphaned:
+        print(f'orphaned: {path} — {name} (no such removal-shaped task)')
+    for key in drifted:
+        path, name = key
+        print(f'drifted: {path} — {name} '
+              f'(ledger says {entries[key]}, now at {tasks[key]})')
+
+    if missing or orphaned:
+        print(f'\n{len(missing)} missing, {len(orphaned)} orphaned. '
+              f'Regenerate with: scripts/gatherd-census-removals --ledger',
+              file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

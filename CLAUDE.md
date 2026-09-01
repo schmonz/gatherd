@@ -92,8 +92,12 @@ A task that exists only to carry already-converged machines past a change gets
 an entry in `MIGRATIONS.md` when it is written. Same moment as adding a
 `verify_li` step: a change lands, its follow-up gets recorded.
 
-Regenerate the inventory with `scripts/gatherd-census-removals` to check nothing
-was missed. It reports and classifies nothing — which of these are spent is not
+`scripts/gatherd-check-migrations` enforces that every removal-shaped task has
+an entry and every entry has a task, so a forgotten one is a hard failure rather
+than something nobody notices. It matches on file and task name, never on line
+number: any edit above a task shifts its line, and a gate that fails on
+unrelated edits is one people learn to ignore. Regenerate the inventory with
+`scripts/gatherd-census-removals`, which reports and classifies nothing — which of these are spent is not
 derivable from the code, and hand classification was wrong three times in
 nineteen, once in the direction that regresses a fresh install.
 

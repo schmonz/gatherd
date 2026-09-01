@@ -1,0 +1,87 @@
+#!/bin/sh
+# Unit tests for gatherd-check-migrations.
+#
+# The gate exists to make a forgotten ledger entry impossible to miss, so the
+# cases that matter are the two asymmetric ones: a censused task nobody
+# recorded, and a recorded entry whose task has gone. Line drift is deliberately
+# NOT a failure -- any edit above a task shifts it, and a gate that cries wolf
+# on unrelated edits is one people learn to ignore.
+#
+# Usage: tests/check-migrations
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+GATE="$REPO/scripts/gatherd-check-migrations"
+PASS=0
+FAIL=0
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/roles/demo/tasks"
+ln -s "$REPO/scripts" "$WORK/scripts"
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+cat > "$WORK/roles/demo/tasks/main.yml" <<'FIXTURE'
+---
+- name: First removal
+  ansible.builtin.file:
+    path: /tmp/one
+    state: absent
+
+- name: Second removal
+  ansible.builtin.file:
+    path: /tmp/two
+    state: absent
+FIXTURE
+
+ledger() { printf '# Migrations\n\n## Unmeasured\n\n%s\n' "$1" > "$WORK/MIGRATIONS.md"; }
+
+assert_rc() {
+    _d=$1; _want=$2
+    # Guarded by if so a nonzero exit is data, not a set -e abort.
+    if "$GATE" "$WORK" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want rc=$_want got rc=$_got)"; fi
+}
+
+assert_says() {
+    _d=$1; _want=$2
+    if grep -q "$_want" "$WORK/out"; then ok "$_d"; else bad "$_d (no '$_want' in output)"; fi
+}
+
+# 1. Complete ledger passes.
+ledger '- roles/demo/tasks/main.yml:2 — First removal
+  shape: state: absent
+- roles/demo/tasks/main.yml:7 — Second removal
+  shape: state: absent'
+assert_rc "complete ledger exits 0" 0
+
+# 2. Line drift alone is advisory, not a failure.
+ledger '- roles/demo/tasks/main.yml:999 — First removal
+  shape: state: absent
+- roles/demo/tasks/main.yml:7 — Second removal
+  shape: state: absent'
+assert_rc "line drift alone still exits 0" 0
+assert_says "line drift is reported" "drifted"
+
+# 3. A censused task with no entry fails.
+ledger '- roles/demo/tasks/main.yml:2 — First removal
+  shape: state: absent'
+assert_rc "missing entry exits 1" 1
+assert_says "missing entry is named" "Second removal"
+
+# 4. An entry whose task is gone fails.
+ledger '- roles/demo/tasks/main.yml:2 — First removal
+  shape: state: absent
+- roles/demo/tasks/main.yml:7 — Second removal
+  shape: state: absent
+- roles/demo/tasks/main.yml:99 — Vanished removal
+  shape: state: absent'
+assert_rc "orphaned entry exits 1" 1
+assert_says "orphaned entry is named" "Vanished removal"
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

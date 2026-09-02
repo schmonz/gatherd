@@ -375,6 +375,7 @@ section_verify() {
     verify_li 'The doubt hooks are installed and the commit one fires only on commits: `echo '"'"'{"tool_input":{"command":"ls"}}'"'"' | ~/.local/bin/gatherd-doubt-commit-hook` prints nothing, and the same with `git commit -m x` prints a JSON reminder.'
     verify_li 'A converge never touches a real Chromium profile: `sudo pacman -S --noconfirm chromium`, `mkdir -p ~/.config/chromium && echo x > ~/.config/chromium/History`, converge, and `History` is still there.'
     verify_li 'The migration ledger is complete: `/usr/local/lib/gatherd/scripts/gatherd-check-migrations /usr/local/lib/gatherd` exits `0`.'
+    verify_li 'The ADHD skill loads unasked: `ls ~/.claude/.i-have-adhd-always` exists, and a fresh `claude` session answers `/i-have-adhd` without a marketplace prompt.'
 }
 
 # ---------------------------------------------------------------------------

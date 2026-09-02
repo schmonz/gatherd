@@ -15,9 +15,29 @@ hardcoded_ssh_authorized_keys_dotfile: ssh-authorized-keys
 # such trigger — a standalone SKILL.md dropped into ~/.claude/skills/ is live
 # immediately. The marketplace NAME (the key, and the @suffix on the plugin) is
 # the `name` field from the marketplace's marketplace.json, not the repo slug.
-claude_plugin_marketplace_name: superpowers-marketplace
-claude_plugin_marketplace_repo: obra/superpowers-marketplace
-claude_plugin_name: superpowers
+# Shaped exactly as settings.json wants them, so the task merges rather than
+# transforms. The marketplace KEY is the `name` field from that marketplace's
+# marketplace.json, not the repo slug -- verified per entry, since the two
+# coincide for i-have-adhd and do not for superpowers.
+claude_marketplaces:
+  superpowers-marketplace:
+    source:
+      source: github
+      repo: obra/superpowers-marketplace
+  i-have-adhd:
+    source:
+      source: github
+      repo: ayghri/i-have-adhd
+
+# "<plugin>@<marketplace>", the key Claude Code uses in enabledPlugins.
+claude_enabled_plugins:
+  - superpowers@superpowers-marketplace
+  - i-have-adhd@i-have-adhd
+
+# i-have-adhd reads this flag at SessionStart and loads its ruleset without
+# anyone typing /i-have-adhd. A per-user file, not a setting, which is why it
+# is a separate task rather than another settings.json key.
+claude_adhd_always_on: true
 claude_skill_name: doubt-driven-development
 claude_skill_url: "https://raw.githubusercontent.com/addyosmani/agent-skills/main/skills/doubt-driven-development/SKILL.md"
 # wifi_networks is defined entirely in vault — SSIDs are personal data, not just PSKs.

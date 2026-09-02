@@ -33,9 +33,11 @@
     current: >-
       {{ (claude_settings_existing.content | b64decode | from_json)
          if claude_settings_existing.content is defined else {} }}
-    # Built as a single Jinja dict expression, not a YAML literal mapping, so the
-    # marketplace/plugin names used as KEYS actually expand. Templated keys in a
-    # plain YAML `vars:` mapping are left as literal "{{ ... }}" strings.
+    # Built as a single Jinja dict expression, not a YAML literal mapping, so
+    # any templated key actually expands; templated keys in a plain YAML `vars:`
+    # mapping are left as literal "{{ ... }}" strings. The marketplace and
+    # plugin data now lives in group_vars already shaped as settings.json wants
+    # it, so adding a plugin is a data change, not a template change.
     #
     # disableClaudeAiConnectors turns off the claude.ai account's auto-connected
     # MCP connectors (Gmail, Google Calendar, Google Drive, and any future ones),
@@ -45,14 +47,9 @@
       {{ {
            'disableClaudeAiConnectors': true,
            'outputStyle': 'Concise',
-           'extraKnownMarketplaces': {
-             claude_plugin_marketplace_name: {
-               'source': {'source': 'github', 'repo': claude_plugin_marketplace_repo}
-             }
-           },
-           'enabledPlugins': {
-             claude_plugin_name ~ '@' ~ claude_plugin_marketplace_name: true
-           },
+           'extraKnownMarketplaces': claude_marketplaces,
+           'enabledPlugins': dict(claude_enabled_plugins
+                                  | zip([true] * (claude_enabled_plugins | length))),
            'hooks': {
              'PreToolUse': [
                {'matcher': 'Bash',
@@ -64,3 +61,17 @@
              ]
            }
          } }}
+
+- name: Set whether the ADHD ruleset loads in every session
+  # i-have-adhd ships a SessionStart hook that loads its full ruleset when this
+  # flag exists, so /i-have-adhd need not be typed. It is a per-user marker
+  # file rather than a settings.json key, which is why it is its own task.
+  #
+  # preserve on both timestamps: a bare `touch` reports changed on every
+  # converge, and a task that is never green is one nobody reads.
+  ansible.builtin.file:
+    path: "{{ target_home }}/.claude/.i-have-adhd-always"
+    state: "{{ 'touch' if claude_adhd_always_on else 'absent' }}"
+    mode: '0644'
+    modification_time: preserve
+    access_time: preserve

@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Read, classify and record the checks in MIGRATIONS.md.
+
+Split out from the VM harness so the part that decides what a result *means*
+is testable without booting anything.
+
+The verdict mapping is the delicate half. A broken check -- missing binary,
+wrong regex dialect, a path that is not where it was assumed -- exits nonzero
+exactly as a genuine "the artifact is not here" does, and that answer is the one
+that would license deleting a task. test(1) and grep(1) both use 1 for a false
+result and >=2 for an actual error, so:
+
+    rc 0, no stderr -> present   the task still does work on a fresh install
+    rc 1, no stderr -> absent    the task does nothing there
+    anything else   -> error     recorded as unmeasured, never as absent
+
+Any stderr at all forces "error", because a check that warns is a check whose
+author was wrong about something.
+
+Usage:
+  gatherd-migration-checks list [repo-root]        emit "key\\tcheck" per entry
+  gatherd-migration-checks verdict <rc> <stderr>   classify one result
+  gatherd-migration-checks record [repo-root]      read "key\\tverdict" on stdin
+"""
+import datetime
+import re
+import sys
+from pathlib import Path
+
+ENTRY = re.compile(r'^- (?P<path>[^\s:]+):(?P<line>\d+) — (?P<name>.+)$')
+# Non-greedy, and spaces allowed: 'fresh-install expectation' is a field name,
+# while 'shape: state: absent' must keep 'shape' as the field. An earlier
+# [a-z-]+ silently stopped parsing an entry at its first multi-word field.
+FIELD = re.compile(r'^  (?P<field>[a-z][a-z -]*?): (?P<value>.*)$')
+
+
+def parse(text):
+    """Yield (key, fields, entry_line_index) for each ledger entry."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        match = ENTRY.match(line)
+        if not match:
+            continue
+        fields = {}
+        for row in lines[i + 1:]:
+            field = FIELD.match(row)
+            if not field:
+                break
+            fields[field['field']] = field['value']
+        yield f"{match['path']} — {match['name']}", fields, i
+
+
+def verdict(rc, stderr):
+    if stderr.strip():
+        return 'error'
+    if rc == 0:
+        return 'present'
+    if rc == 1:
+        return 'absent'
+    return 'error'
+
+
+def record(path, results):
+    lines = path.read_text().splitlines()
+    today = datetime.date.today().isoformat()
+    # Rewrite from the bottom so earlier indices stay valid.
+    for key, fields, index in sorted(parse(path.read_text()),
+                                     key=lambda e: -e[2]):
+        if key not in results:
+            continue
+        end = index + 1 + len(fields)
+        fields.pop('measured', None)
+        fields['measured'] = f'{today} {results[key]}'
+        order = ('shape', 'thing', 'check', 'fresh-install expectation',
+                 'measured')
+        keys = [k for k in order if k in fields] + \
+            [k for k in fields if k not in order]
+        lines[index + 1:end] = [f'  {k}: {fields[k]}' for k in keys]
+    path.write_text('\n'.join(lines) + '\n')
+
+
+def main():
+    if not sys.argv[1:]:
+        print(__doc__, file=sys.stderr)
+        return 2
+    mode = sys.argv[1]
+
+    if mode == 'verdict':
+        rc = int(sys.argv[2])
+        stderr = sys.argv[3] if len(sys.argv) > 3 else ''
+        print(verdict(rc, stderr))
+        return 0
+
+    root = Path(sys.argv[2]) if sys.argv[2:] else \
+        Path(__file__).resolve().parent.parent
+    ledger = root / 'MIGRATIONS.md'
+
+    if mode == 'list':
+        for key, fields, _ in parse(ledger.read_text()):
+            if 'check' in fields:
+                print(f"{key}\t{fields['check']}")
+        return 0
+
+    if mode == 'record':
+        results = {}
+        for row in sys.stdin.read().splitlines():
+            if '\t' in row:
+                key, value = row.split('\t', 1)
+                results[key] = value
+        record(ledger, results)
+        print(f'recorded {len(results)} result(s)', file=sys.stderr)
+        return 0
+
+    print(f'unknown mode: {mode}', file=sys.stderr)
+    return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main())

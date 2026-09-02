@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Run every MIGRATIONS.md check against a Calamares-only machine and record what
+# each one answers.
+#
+# The base image is the reference state the ledger asks about: tests/create-base
+# drives real Calamares and never runs gatherd's postinstall, so nothing gatherd
+# has ever done is present on it. A check that finds its target there is finding
+# upstream's work, which means the task is permanent rather than a migration.
+#
+# Boots a throwaway snapshot; the base image is never opened for write. Unlike
+# tests/test this never runs the playbook, so it needs no NFS host.
+#
+# Usage: tests/measure-migrations [--write]
+set -uo pipefail
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+VM_DIR="${GATHERD_VM_DIR:-$HOME/.local/share/gatherd}"
+BASE="$VM_DIR/eos-base.qcow2"
+DISK="$VM_DIR/measure.qcow2"
+KEY="$VM_DIR/key"
+PORT=2226
+QEMU_PID=""
+WRITE="${1:-}"
+
+cleanup() {
+    [[ -n "$QEMU_PID" ]] && kill "$QEMU_PID" 2>/dev/null
+    rm -f "$DISK"
+}
+trap cleanup EXIT
+
+[[ -f "$BASE" ]] || { echo "Base image not found: $BASE" >&2
+    echo "Run: tests/create-base /path/to/EndeavourOS.iso" >&2; exit 1; }
+
+rm -f "$DISK"
+qemu-img create -f qcow2 -b "$BASE" -F qcow2 "$DISK" >/dev/null
+qemu-system-x86_64 -enable-kvm -m 4096 -smp 2 \
+    -drive "file=$DISK,if=virtio,format=qcow2" \
+    -net nic,model=virtio -net "user,hostfwd=tcp::${PORT}-:22" \
+    -nographic </dev/null &>/dev/null &
+QEMU_PID=$!
+
+# -n is load-bearing: without it ssh reads the while-read loop's stdin and eats
+# the remaining checks, so only the first one ever runs.
+SSH=(ssh -n -p "$PORT" -i "$KEY" -o StrictHostKeyChecking=no
+     -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 -o BatchMode=yes
+     -q root@localhost)
+
+echo "Waiting for SSH..."
+for _ in $(seq 1 90); do "${SSH[@]}" true 2>/dev/null && break; sleep 2; done
+"${SSH[@]}" true 2>/dev/null || { echo "SSH never came up" >&2; exit 1; }
+
+# The ledger's checks say $TARGET_HOME rather than a literal path: a check must
+# not use ~, which resolves to /root here because checks run as root.
+TARGET_HOME=$("${SSH[@]}" "awk -F: '\$3>=1000 && \$3<65534 {print \$6; exit}' /etc/passwd")
+[[ -n "$TARGET_HOME" ]] || { echo "no target user on the image" >&2; exit 1; }
+echo "Reference machine: TARGET_HOME=$TARGET_HOME"
+echo
+
+RESULTS=$(mktemp); trap 'rm -f "$RESULTS"; cleanup' EXIT
+
+while IFS=$'\t' read -r key check; do
+    [[ -n "$key" ]] || continue
+    err=$("${SSH[@]}" "TARGET_HOME='$TARGET_HOME' sh -c $(printf '%q' "$check")" 2>&1 >/dev/null)
+    rc=$?
+    v=$("$REPO/scripts/gatherd-migration-checks" verdict "$rc" "$err")
+    printf '%-8s %s\n' "$v" "$key"
+    [[ -n "$err" ]] && printf '         stderr: %s\n' "$err"
+    printf '%s\t%s\n' "$key" "$v" >> "$RESULTS"
+done < <("$REPO/scripts/gatherd-migration-checks" list "$REPO")
+
+if [[ "$WRITE" == "--write" ]]; then
+    "$REPO/scripts/gatherd-migration-checks" record "$REPO" < "$RESULTS"
+else
+    echo
+    echo "(dry run; pass --write to record these into MIGRATIONS.md)"
+fi

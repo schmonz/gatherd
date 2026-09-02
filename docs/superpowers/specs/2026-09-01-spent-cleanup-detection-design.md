@@ -126,6 +126,11 @@ unattended, leaving at most the ~60s of `gatherd-prompt-vault-console`), and no
 contention with the 23 `verify_li` items a repave already carries. It is
 repeatable, so a check found wrong can be fixed and re-run.
 
+Every entry stays regardless of verdict, including one measured `present`.
+`scripts/gatherd-check-migrations` requires every removal-shaped task to have an
+entry, so the ledger is a classification record for all of them rather than a
+list of migrations only.
+
 A result that contradicts the stated expectation is the finding: it means either
 the check is wrong or the belief in the task's comment is. Both are worth
 knowing; neither is resolved by editing a comment to match, which an earlier

@@ -44,18 +44,33 @@ unexpected path) exits nonzero, which is the answer that licenses deletion.
 
 - roles/aur/tasks/slow.yml:9 — Remove the superseded claude-desktop-bin
   shape: state: absent
+  check: pacman -Qq claude-desktop-bin >/dev/null 2>&1
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-09-01 absent
 - roles/desktop/tasks/core.yml:40 — Remove obsolete per-user gatherd-askpass
   shape: state: absent
+  check: test -e "$TARGET_HOME/.local/bin/gatherd-askpass"
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-09-01 absent
 - roles/desktop/tasks/core.yml:45 — Remove obsolete environment.d askpass file
   shape: state: absent
+  check: test -e "$TARGET_HOME/.config/environment.d/50-gatherd-askpass.conf"
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-09-01 absent
 - roles/desktop/tasks/core.yml:50 — Remove obsolete environment.d sentinel file
   shape: state: absent
+  check: test -e "$TARGET_HOME/.config/environment.d/99-gatherd-env-sentinel.conf"
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-09-01 absent
 - roles/desktop/tasks/core.yml:79 — Remove stock swayidle entries superseded by our configuration
   shape: state: absent
 - roles/desktop/tasks/core.yml:104 — Remove EndeavourOS's polkit-gnome agent from sway autostart
   shape: state: absent
 - roles/desktop/tasks/core.yml:110 — Remove the now-orphaned polkit autostart comment
   shape: state: absent
+  check: grep -q "^# Auth with polkit" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
+  fresh-install expectation: present (permanent: upstream ships this line)
+  measured: 2026-09-01 present
 - roles/desktop/tasks/core.yml:166 — Remove network throughput widget from waybar center
   shape: state: absent
 - roles/desktop/tasks/core.yml:403 — Remove vestigial Chromium browser config
@@ -120,11 +135,26 @@ unexpected path) exits nonzero, which is the answer that licenses deletion.
   shape: force+link
 - roles/system/tasks/sudo.yml:60 — Remove superseded sudo timestamp drop-in
   shape: state: absent
+  check: test -e /etc/sudoers.d/gatherd-sudo-timestamp
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-09-01 absent
 - roles/system/tasks/user_path.yml:34 — Remove obsolete profile.d PATH file
   shape: state: absent
+  check: test -e /etc/profile.d/gatherd-local-bin.sh
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-09-01 absent
 - roles/system/tasks/user_path.yml:40 — Remove obsolete profile.d Go file
   shape: state: absent
+  check: test -e /etc/profile.d/gatherd-go.sh
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-09-01 absent
 - roles/system/tasks/user_path.yml:46 — Remove obsolete environment.d PATH file
   shape: state: absent
+  check: test -e /etc/environment.d/10-gatherd-local-bin.conf
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-09-01 absent
 - roles/system/tasks/user_path.yml:52 — Remove obsolete environment.d Go file
   shape: state: absent
+  check: test -e /etc/environment.d/10-gatherd-go.conf
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-09-01 absent

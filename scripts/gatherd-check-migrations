@@ -42,13 +42,17 @@ def census(root):
 
 def ledger(path):
     """Return {(path, name): line} for every entry in MIGRATIONS.md."""
+    # A task whose loop removes several things of different provenance gets one
+    # entry per thing, all sharing the task's key. Keep the first line seen and
+    # let the key repeat: the gate compares which tasks are covered, not how
+    # many lines cover them.
     entries = {}
     if not path.exists():
         return entries
     for row in path.read_text().splitlines():
         match = ENTRY.match(row)
         if match:
-            entries[(match['path'], match['name'])] = int(match['line'])
+            entries.setdefault((match['path'], match['name']), int(match['line']))
     return entries
 
 

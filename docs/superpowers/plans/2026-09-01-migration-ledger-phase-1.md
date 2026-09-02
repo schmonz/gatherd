@@ -385,21 +385,36 @@ git commit -m "Record the rule for migration ledger entries"
 
 ---
 
-## Not in this plan
+## Phase 2, since completed
 
-**Phase 2 — the measurement pass — is blocked and deliberately excluded.** It
-needs a snapshot of `$GATHERD_VM_DIR/eos-base.qcow2`, and that image does not
-exist on this machine (`~/.local/share/gatherd/` holds only `icloud-backup`).
-Building it means `tests/create-base <ISO>`: a multi-GB EndeavourOS ISO plus a
-human driving Calamares interactively. Until it exists, the runner cannot be
-tested, so writing it would mean shipping unverified code — which is what the
-whole spec exists to avoid.
+Phase 2 was excluded from this plan because it needed a snapshot of
+`$GATHERD_VM_DIR/eos-base.qcow2`, which did not exist when the plan was written.
+The image was provisioned on 2026-09-01 with `tests/create-base` and Phase 2
+landed the same day, so that exclusion no longer holds and is recorded here
+rather than left standing as a false statement.
 
-Phase 2 covers: a runner that boots a snapshot and executes each entry's check;
-authoring and calibrating the checks; and recording results back into
-`MIGRATIONS.md`.
+What it added: `tests/measure-migrations` boots a throwaway snapshot and runs
+each check; `scripts/gatherd-migration-checks` holds the verdict mapping, split
+out so it is testable without booting anything; the looping tasks were split
+into one entry per removed thing, taking 43 censused tasks to 67 entries; and
+all 67 were measured.
 
-**Splitting loop tasks into per-thing entries is Phase 2 work.** The spec
+Results worth carrying forward: 56 absent, 10 present, 1 unmeasurable. The ten
+`present` entries are tasks that do real work on every fresh install, so
+retiring any of them would regress it. The unmeasurable one is `Disable clightd
+service`, where clightd is not installed and `systemctl is-enabled` returns
+`not-found` with rc 4 — recorded as an error rather than as absent, since absent
+is the verdict that licenses deletion. It needs a machine with the ambient-light
+sensor.
+
+Three stated expectations were contradicted by measurement, all of them a belief
+that upstream ships something it does not: the Sway edition installs no firefox,
+no file under `/etc/pam.d` mentions keyring, and there is no `gparted.desktop`.
+
+## Still not in this plan
+
+
+**Splitting loop tasks into per-thing entries was Phase 2 work, now done.** The spec
 requires one entry per removed *thing*; the census necessarily emits one per
 *task*. Several tasks loop over items of mixed provenance — `roles/desktop/
 tasks/core.yml` loops eight autostart regexps in one task and four in another,
@@ -410,9 +425,8 @@ is correct: an unmeasured per-task entry is an honest record of what was
 censused, and splitting early would mean guessing the provenance of items whose
 provenance is exactly what the measurement determines.
 
-**A completeness gate is not included, and is worth a decision later.** With a
-mechanical census, a check that every censused task has a ledger entry would be
-cheap, and would close the "a migration written with no entry is invisible" gap
-the spec lists as a known limit. It is omitted here because the spec does not
-specify it, and because it would fail on day one for all 43 entries until the
-ledger is populated.
+**The completeness gate was added after this plan was written**, as
+`scripts/gatherd-check-migrations`. It closes the "a migration written with no
+entry is invisible" gap the spec lists as a known limit. The concern that it
+would fail on day one proved wrong: the ledger was seeded from the same census,
+so the two sets matched and the gate was green from the moment it existed.

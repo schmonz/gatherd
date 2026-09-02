@@ -52,7 +52,12 @@
     creates: "{{ target_home }}/.local/share/ice/icons/{{ item.codename }}.png"
   loop: "{{ web_apps }}"
   register: _favicon_dl
-  changed_when: _favicon_dl.rc == 0
+  # rc alone is not enough: a command skipped by `creates:` also returns rc 0,
+  # so `rc == 0` reported changed on every converge even though nothing ran.
+  # `start` is null exactly when the command did not run, which separates a
+  # real success from a skip; rc still separates success from failure, which
+  # is what this condition was added for given failed_when: false.
+  changed_when: _favicon_dl.rc == 0 and _favicon_dl.start is not none
   failed_when: false
 
 - name: Report web app favicons that could not be fetched or converted
@@ -83,7 +88,12 @@
   loop_control:
     label: "{{ item.name }}"
   register: _web_app_extension_dl
-  changed_when: _web_app_extension_dl.rc == 0
+  # rc alone is not enough: a command skipped by `creates:` also returns rc 0,
+  # so `rc == 0` reported changed on every converge even though nothing ran.
+  # `start` is null exactly when the command did not run, which separates a
+  # real success from a skip; rc still separates success from failure, which
+  # is what this condition was added for given failed_when: false.
+  changed_when: _web_app_extension_dl.rc == 0 and _web_app_extension_dl.start is not none
   failed_when: false
 
 - name: Report web app browser extensions that could not be installed
@@ -112,7 +122,12 @@
   loop_control:
     label: "{{ item.0.codename }}/{{ item.1.slug }}"
   register: _speech_polyfill_dl
-  changed_when: _speech_polyfill_dl.rc == 0
+  # rc alone is not enough: a command skipped by `creates:` also returns rc 0,
+  # so `rc == 0` reported changed on every converge even though nothing ran.
+  # `start` is null exactly when the command did not run, which separates a
+  # real success from a skip; rc still separates success from failure, which
+  # is what this condition was added for given failed_when: false.
+  changed_when: _speech_polyfill_dl.rc == 0 and _speech_polyfill_dl.start is not none
   failed_when: false
 
 - name: Report Waterfox add-on downloads that failed
@@ -141,7 +156,12 @@
   loop_control:
     label: "{{ item.codename }}"
   register: _speech_model_warm
-  changed_when: _speech_model_warm.rc == 0
+  # rc alone is not enough: a command skipped by `creates:` also returns rc 0,
+  # so `rc == 0` reported changed on every converge even though nothing ran.
+  # `start` is null exactly when the command did not run, which separates a
+  # real success from a skip; rc still separates success from failure, which
+  # is what this condition was added for given failed_when: false.
+  changed_when: _speech_model_warm.rc == 0 and _speech_model_warm.start is not none
   failed_when: false
 
 - name: Re-create web app desktop entries now the extensions are on disk

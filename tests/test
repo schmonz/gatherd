@@ -78,7 +78,12 @@ done
 "${SSH[@]}" 'sed -i "s/-fLC - --retry/-fLC - --max-time 120 --retry/g" /etc/makepkg.conf'
 
 "${SSH[@]}" mkdir -p /usr/local/lib/gatherd
-tar -C "$REPO" --exclude='.git' --exclude='tests' -c . \
+# .git ships deliberately: postinstall gives a real machine the repo by cloning
+# it, and site-core.yml's "Read deployed git HEAD" runs git rev-parse against
+# that clone to stamp /etc/gatherd/core-complete. Excluding .git made the CORE
+# play fail under any_errors_fatal, so this test could not get past it from
+# 70edd16 (2026-05-28) until the exclusion was dropped. Costs ~6 MiB packed.
+tar -C "$REPO" --exclude='tests' -c . \
     | "${SSH[@]}" tar -xC /usr/local/lib/gatherd
 
 "${SSH[@]}" "printf 'changeme\n' > /usr/local/lib/gatherd/.vault_pass"

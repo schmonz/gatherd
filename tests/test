@@ -83,8 +83,13 @@ done
 # that clone to stamp /etc/gatherd/core-complete. Excluding .git made the CORE
 # play fail under any_errors_fatal, so this test could not get past it from
 # 70edd16 (2026-05-28) until the exclusion was dropped. Costs ~6 MiB packed.
+# --no-same-owner because tar extracting as root would otherwise restore the
+# archive's uid, leaving the tree owned by the host user. git then refuses with
+# "detected dubious ownership" (rc 128) and CORE's any_errors_fatal ends the
+# play. postinstall clones as root on a real machine, so root-owned is what this
+# is modelling.
 tar -C "$REPO" --exclude='tests' -c . \
-    | "${SSH[@]}" tar -xC /usr/local/lib/gatherd
+    | "${SSH[@]}" tar --no-same-owner -xC /usr/local/lib/gatherd
 
 "${SSH[@]}" "printf 'changeme\n' > /usr/local/lib/gatherd/.vault_pass"
 "${SSH[@]}" ansible-galaxy collection install --no-cache \

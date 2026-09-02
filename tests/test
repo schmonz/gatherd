@@ -107,9 +107,23 @@ echo "=== Run 2 (idempotency check) ==="
 run2_log=$(mktemp)
 "${SSH[@]}" "cd /usr/local/lib/gatherd && ansible-playbook -e sway_guard_override=true site-core.yml site-async.yml" | tee "$run2_log"
 
-if grep -qE 'changed=0[[:space:]].*failed=0' "$run2_log"; then
-    echo "PASS: idempotent"
-else
-    echo "FAIL: second run has unexpected changes or failures"
+# One PLAY RECAP per playbook, so run 2 emits two. A grep for a clean recap
+# passes as soon as *any* of them is clean, which let site-async.yml report
+# changed=5 while site-core.yml's changed=0 satisfied the test. Require every
+# recap to be clean, and require the expected number of them, so a run that
+# dies before emitting one cannot pass by silence either.
+expected_recaps=2
+recaps=$(grep -cE '^localhost +:' "$run2_log")
+dirty=$(grep -E '^localhost +:' "$run2_log" | grep -vcE 'changed=0[[:space:]].*failed=0[[:space:]]')
+
+if [[ "$recaps" -ne "$expected_recaps" ]]; then
+    echo "FAIL: expected $expected_recaps play recaps in run 2, saw $recaps"
+    grep -E '^localhost +:' "$run2_log"
     exit 1
+elif [[ "$dirty" -ne 0 ]]; then
+    echo "FAIL: $dirty of $recaps run-2 recaps report changes or failures"
+    grep -E '^localhost +:' "$run2_log" | grep -vE 'changed=0[[:space:]].*failed=0[[:space:]]'
+    exit 1
+else
+    echo "PASS: idempotent ($recaps clean recaps)"
 fi

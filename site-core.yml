@@ -103,6 +103,13 @@
       register: _gatherd_head
       changed_when: false
       become: true
+      # As root, not the play's target_user: setup_dir is a root-owned clone
+      # (postinstall clones as root), and git refuses to read a repository owned
+      # by someone else -- "detected dubious ownership", rc 128. On an
+      # already-converged machine that is masked by safe.directory=* arriving in
+      # the user's dotfiles, but dotfiles are REST and this is CORE, so a
+      # genuinely fresh machine has no such exception yet.
+      become_user: root
 
     - name: Mark core setup complete
       # Sentinel records the HEAD that ran to completion; gatherd-needs-run

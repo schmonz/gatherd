@@ -113,8 +113,10 @@ run2_log=$(mktemp)
 # recap to be clean, and require the expected number of them, so a run that
 # dies before emitting one cannot pass by silence either.
 expected_recaps=2
-recaps=$(grep -cE '^localhost +:' "$run2_log")
-dirty=$(grep -E '^localhost +:' "$run2_log" | grep -vcE 'changed=0[[:space:]].*failed=0[[:space:]]')
+# || true on both: grep -c exits 1 when it counts zero, and under set -e that
+# aborts the script -- so the check died precisely when the run was clean.
+recaps=$(grep -cE '^localhost +:' "$run2_log" || true)
+dirty=$(grep -E '^localhost +:' "$run2_log" | grep -vcE 'changed=0[[:space:]].*failed=0[[:space:]]' || true)
 
 if [[ "$recaps" -ne "$expected_recaps" ]]; then
     echo "FAIL: expected $expected_recaps play recaps in run 2, saw $recaps"

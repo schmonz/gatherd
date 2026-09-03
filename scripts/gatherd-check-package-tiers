@@ -26,6 +26,7 @@ ALLOWED = {
     'base-devel': 'build prerequisite, not a package set',
     'nowayprompt': 'vendored PKGBUILD, not from a repo or the AUR (packaging/nowayprompt)',
     'firefox': 'removal, not an install',
+    'claude-desktop-bin': 'removal, not an install (superseded by claude-desktop)',
     'polkit-gnome': 'removal, not an install',
     # Hardware-gated: each sits beside its has_* gate in its own tiny task file,
     # and being per-machine a generic cache stick cannot predict it anyway.

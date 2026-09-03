@@ -184,37 +184,3 @@
     fwupdmgr get-updates || true
     fwupdmgr update || true
   changed_when: false
-
-# KOReader probes for e-reader hardware before falling back to its desktop
-# build, and one of the Kobo markers it looks for is a bare /usr/bin/hwdetect.
-# On Arch that path belongs to the `hwdetect` package (it generates module
-# arrays for mkinitcpio.conf) and has nothing to do with e-readers, so KOReader
-# takes the Kobo branch, calls getCodeName() against hardware that is not
-# there, and dies on `bad argument #1 to 'sub' (string expected, got nil)`.
-# It presents as KOReader being broken rather than misdetecting the machine.
-#
-# The other two Kobo markers are genuinely Kobo-specific and are left alone, so
-# removing this one clause lets the probe fall through to SDL as intended.
-# Reapplied on every converge on purpose: a koreader-bin upgrade restores the
-# stock file, and the failure is a hard crash at startup rather than anything
-# subtle.
-#
-# TEMPORARY, with a known end. Upstream deleted the whole filesystem-probing
-# approach in koreader e9c0a6e39 ("device: get rid of probing code",
-# 2026-08-05) in favour of a platform string baked in at build time. That is
-# four days AFTER v2026.07.1 (2026-08-01), the newest release and what
-# koreader-bin packages, so no released build has it yet. Once the installed
-# koreader carries the fix this task stops matching and can be deleted; until
-# then it is doing real work. Nothing to report upstream - it is already
-# fixed there.
-- name: Check whether KOReader is installed
-  ansible.builtin.stat:
-    path: /usr/lib/koreader/frontend/device.lua
-  register: koreader_device_lua
-
-- name: Stop KOReader mistaking an Arch laptop for a Kobo e-reader
-  ansible.builtin.replace:
-    path: /usr/lib/koreader/frontend/device.lua
-    regexp: '^(\s*local kobo_test_stat = .*hwdetect\.sh"\)) or lfs\.attributes\("/usr/bin/hwdetect"\)\s*$'
-    replace: '\1'
-  when: koreader_device_lua.stat.exists

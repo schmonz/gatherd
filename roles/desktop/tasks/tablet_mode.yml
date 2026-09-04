@@ -15,6 +15,24 @@
   loop:
     - gatherd-music-index
     - gatherd-music-stand
+    - gatherd-musicscores-fetch
+
+# gatherd-music-stand points here unconditionally, so it must exist even on a
+# machine where a fetch has never once succeeded -- the fetch only creates it
+# behind a reachable source.
+- name: Create the sheet-music directory
+  ansible.builtin.file:
+    path: "{{ music_stand_root }}"
+    state: directory
+    mode: '0755'
+
+# gatherd-musicscores-fetch reads this rather than the playbook's own vars: it
+# runs at login as a plain script, long after Ansible has gone.
+- name: Configure the sheet-music source
+  ansible.builtin.template:
+    src: musicscores.conf.j2
+    dest: "{{ target_home }}/.config/gatherd/musicscores.conf"
+    mode: '0644'
 
 # The mechanism's own install.sh would create this, but it runs in REST and
 # this is CORE: the config has to land in a directory that exists before the
@@ -77,3 +95,8 @@
     marker: "# {mark} ANSIBLE MANAGED BLOCK: music stand"
     block: |
       for_window [app_id="{{ music_stand_app_id }}"] inhibit_idle visible
+
+- name: Remove the hand-written forscore-sync superseded by gatherd-musicscores-fetch
+  ansible.builtin.file:
+    path: "{{ target_home }}/.local/bin/forscore-sync"
+    state: absent

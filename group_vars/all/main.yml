@@ -173,6 +173,9 @@ rest_packages:
   # cloud sync. Was in aur_slow_packages, but rclone has been in [extra] for a
   # while; yay installed it from there regardless of which list named it.
   - rclone
+  # sheet-music mirror (gatherd-musicscores-fetch). Present transitively on every
+  # machine so far, which is exactly why it went undeclared for so long.
+  - rsync
   # version control + /etc tracking
   - etckeeper
   - git
@@ -623,6 +626,13 @@ tablet_mode_hinge_motion_hold_seconds: 3.0
 tablet_mode_power_menu: "{{ target_home }}/.config/sway/scripts/power_menu.sh"
 tablet_mode_rotation_reference_deg: 267.0
 music_stand_root: "{{ target_home }}/Documents/forscore"
+# Where the scores come from. forScore's iOS/macOS container on the Mac is the
+# only writer, so gatherd-musicscores-fetch pulls and never pushes. Trailing
+# slash on the path is load-bearing: rsync copies the directory's CONTENTS with
+# it and the directory itself without it. An audio-library sibling would add
+# musicaudio_* here and reuse the fetch script's shape unchanged.
+musicscores_source_host: magnetic-babysitter
+musicscores_source_path: "Library/Containers/com.mgsdevelopment.forscore/Data/Documents/"
 # music_stand_viewer, music_stand_app_id and music_stand_viewer_flag must
 # all three change together: the app_id is what
 # roles/desktop/tasks/tablet_mode.yml's for_window rule (idle-inhibit while

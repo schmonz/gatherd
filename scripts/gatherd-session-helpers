@@ -97,6 +97,11 @@ run "$bin/gatherd-prompt-postsetup"
 run "$bin/gatherd-prompt-vault"
 run "$bin/gatherd-prompt-pia"
 run "$bin/gatherd-prompt-icloud"
+# One-shot, not a watcher: it rate-limits itself and exits. Login only, unlike
+# iCloud's extra unlock trigger — the Mac it pulls from is usually asleep, and
+# scores change on the order of weeks, so retrying on every unlock would buy
+# nothing but wakeups.
+run "$bin/gatherd-musicscores-fetch --if-due"
 run "$bin/gatherd-prompt-lastrun"
 run "env XDG_CURRENT_DESKTOP=GNOME $bin/gatherd-systray 1password --silent"
 # Stash LocalSend's startup-window flash before it reaches the screen. Must be

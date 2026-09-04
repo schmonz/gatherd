@@ -376,6 +376,7 @@ section_verify() {
     verify_li 'A converge never touches a real Chromium profile: `sudo pacman -S --noconfirm chromium`, `mkdir -p ~/.config/chromium && echo x > ~/.config/chromium/History`, converge, and `History` is still there.'
     verify_li 'The migration ledger is complete: `/usr/local/lib/gatherd/scripts/gatherd-check-migrations /usr/local/lib/gatherd` exits `0`.'
     verify_li 'The ADHD skill loads unasked: `ls ~/.claude/.i-have-adhd-always` exists, and a fresh `claude` session answers `/i-have-adhd` without a marketplace prompt.'
+    verify_li 'Sheet music fetches itself: `rm -f ~/.local/state/gatherd/musicscores-fetch.stamp && gatherd-musicscores-fetch && cat ~/.local/state/gatherd/musicscores-fetch.stamp` prints a timestamp (no stamp means no fetch happened, whatever the exit code), and `ls ~/Documents/forscore/*.pdf | wc -l` matches forScore. If the Mac cannot be logged into it says so rather than exiting quietly.'
     verify_li 'Claude Desktop signs in once and stays signed in: open Claude from the app menu and `pgrep -af "^/usr/lib/claude-desktop/claude-desktop --password-store=gnome-libsecret"` prints it (that flag is only there if the launch went through our wrapper). Quit it, open it again: still signed in, no "Your sign-in won'"'"'t be saved on this device" toast.'
 }
 

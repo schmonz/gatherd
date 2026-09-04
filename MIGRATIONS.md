@@ -193,13 +193,25 @@ unexpected path) exits nonzero, which is the answer that licenses deletion.
   check: grep -qE "^exec (.*/)?gatherd-polkit-agent$" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (pure migration: gatherd's own former helper)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/tablet_mode.yml:52 — Unbind the old tablet mode and music stand keystrokes in sway
+- roles/desktop/tasks/tablet_mode.yml:99 — Remove the hand-written forscore-sync superseded by gatherd-musicscores-fetch
+  shape: state: absent
+  thing: forscore-sync
+  check: test -e "$TARGET_HOME/.local/bin/forscore-sync"
+  fresh-install expectation: absent (pure migration: never shipped by gatherd or anything else — hand-written into ~/.local/bin on 2026-08-15, superseded by gatherd-musicscores-fetch)
+  measured: 2026-09-04 present on this machine (the only one it was ever written on); absent by construction anywhere else
+- roles/desktop/tasks/tablet_mode.yml:70 — Unbind the old tablet mode and music stand keystrokes in sway
   shape: state: absent
   thing: $mod+t binding
   check: grep -qE "^[[:space:]]*bindsym[[:space:]]+\$mod\+t[[:space:]]" "$TARGET_HOME/.config/sway/config.d/default"
   fresh-install expectation: absent (pure migration: gatherd's own former binding)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/tablet_mode.yml:52 — Unbind the old tablet mode and music stand keystrokes in sway
+- roles/desktop/tasks/tablet_mode.yml:99 — Remove the hand-written forscore-sync superseded by gatherd-musicscores-fetch
+  shape: state: absent
+  thing: forscore-sync
+  check: test -e "$TARGET_HOME/.local/bin/forscore-sync"
+  fresh-install expectation: absent (pure migration: never shipped by gatherd or anything else — hand-written into ~/.local/bin on 2026-08-15, superseded by gatherd-musicscores-fetch)
+  measured: 2026-09-04 present on this machine (the only one it was ever written on); absent by construction anywhere else
+- roles/desktop/tasks/tablet_mode.yml:70 — Unbind the old tablet mode and music stand keystrokes in sway
   shape: state: absent
   thing: $mod+Shift+t binding
   check: grep -qE "^[[:space:]]*bindsym[[:space:]]+\$mod\+Shift\+t[[:space:]]" "$TARGET_HOME/.config/sway/config.d/default"

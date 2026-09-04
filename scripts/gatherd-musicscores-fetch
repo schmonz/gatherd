@@ -1,0 +1,228 @@
+#!/bin/sh
+# Fetch the sheet-music library down from forScore on the Mac.
+#
+# Pull only, never push -- which is why this is "fetch" and not "sync". forScore
+# is the only thing that ever writes these files; this machine's copy is a
+# read-only mirror that gatherd-music-index reads and gatherd-music-stand
+# displays. There is no local edit to lose and so no conflict to resolve, which
+# is why this is rsync and not the bisync gatherd-icloud-sync needs.
+#
+# Named for the collection, not the mechanism, so an audio-library sibling can
+# sit beside it as gatherd-musicaudio-fetch. It would need its own dest var --
+# this one borrows music_stand_root, which belongs to the music stand rather
+# than to the fetch.
+#
+# Trigger-agnostic, same as gatherd-icloud-sync: the flock and the --if-due
+# rate limit live here rather than in each caller, so adding a trigger stays a
+# one-liner.
+#
+# Usage:
+#   gatherd-musicscores-fetch                fetch now
+#   gatherd-musicscores-fetch --if-due       no-op unless the rate-limit interval elapsed
+#   gatherd-musicscores-fetch --allow-prune  accept a mass deletion the guard refused
+
+set -eu
+
+CONF="${GATHERD_MUSICSCORES_CONF:-$HOME/.config/gatherd/musicscores.conf}"
+STATE="${GATHERD_MUSICSCORES_STATE:-$HOME/.local/state/gatherd}"
+MIN_INTERVAL="${GATHERD_MUSICSCORES_MIN_INTERVAL:-3600}"
+
+STAMP="$STATE/musicscores-fetch.stamp"
+SEEN="$STATE/musicscores-first-attempt.stamp"
+NOTIFIED="$STATE/musicscores-notified.stamp"
+NOTIFY_INTERVAL=86400
+# How long an unreachable source may stay unreachable before it stops being an
+# asleep laptop and starts being something a human must fix. A policy choice,
+# not a measurement: the Mac sleeps, so days of silence are expected and two
+# weeks of it is not.
+STALE_AFTER=1209600
+
+[ -r "$CONF" ] || { echo "gatherd-musicscores-fetch: no config at $CONF" >&2; exit 1; }
+# shellcheck disable=SC1090
+. "$CONF"
+
+mkdir -p "$STATE"
+
+if_due=0
+allow_prune=0
+while [ $# -gt 0 ]; do
+    case $1 in
+        --if-due)      if_due=1 ;;
+        --allow-prune) allow_prune=1 ;;
+        *)             echo "gatherd-musicscores-fetch: unknown option $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+
+# Interactive runs talk to the terminal; triggered ones talk to the
+# notification daemon, and then only about states a human has to resolve.
+#
+# notify-send is called inside an if rather than after a && so that its failure
+# cannot abort the script: under `set -e` a failing && list is fatal, and
+# notify-send does fail (autolaunch error) whenever there is no session bus.
+# That would swallow the caller's real exit code and skip the throttle stamp,
+# so the next run would notify again.
+say() {
+    if [ -t 2 ]; then
+        printf 'gatherd-musicscores-fetch: %s\n' "$1" >&2
+    else
+        _now=$(date +%s)
+        _last=0
+        [ -f "$NOTIFIED" ] && _last=$(cat "$NOTIFIED" 2>/dev/null || echo 0)
+        if [ $((_now - _last)) -ge "$NOTIFY_INTERVAL" ]; then
+            if command -v notify-send >/dev/null 2>&1; then
+                notify-send "Sheet music" "$1" || true
+            fi
+            echo "$_now" > "$NOTIFIED"
+        fi
+    fi
+}
+
+# One flag list, two call sites (the dry run and the real fetch), so they can
+# never drift apart. A function and not a variable: an unquoted flag string
+# would word-split as intended but ALSO glob-expand --exclude=._* against the
+# current directory.
+fetch_scores() {
+    rsync -rlt --delete-delay --exclude='.DS_Store' --exclude='._*' "$@" \
+        "$MUSICSCORES_SOURCE_HOST:$MUSICSCORES_SOURCE_PATH" "$MUSICSCORES_DEST/"
+}
+
+due() {
+    [ "$if_due" -eq 1 ] || return 0
+    [ -f "$STAMP" ] || return 0
+    _now=$(date +%s)
+    _then=$(cat "$STAMP" 2>/dev/null || echo 0)
+    [ $((_now - _then)) -ge "$MIN_INTERVAL" ]
+}
+
+# Baseline for the staleness escalation: the last success if there is one, else
+# the first time this script ever ran. Keying on the stamp alone would disarm
+# the escalation permanently on a machine that has NEVER fetched -- which is
+# precisely the fresh-repave machine this script exists to serve.
+stale() {
+    _base=0
+    if [ -f "$STAMP" ]; then
+        _base=$(cat "$STAMP" 2>/dev/null || echo 0)
+    elif [ -f "$SEEN" ]; then
+        _base=$(cat "$SEEN" 2>/dev/null || echo 0)
+    fi
+    [ "$_base" -gt 0 ] || return 1
+    _now=$(date +%s)
+    [ $((_now - _base)) -ge "$STALE_AFTER" ]
+}
+
+# Only a host that is genuinely not answering is allowed to be silent. Every
+# other ssh failure is permanent until a human acts, and lumping those in with
+# "asleep" is how a broken key stays invisible for months. Same reasoning as
+# gatherd-icloud-sync's not_ready(), and the same direction of default: an
+# unrecognised error is LOUD, because a new silent failure mode is worse than a
+# spurious notification.
+host_is_merely_down() {
+    case $1 in
+        *"Connection timed out"*|\
+        *"Operation timed out"*|\
+        *"Connection refused"*|\
+        *"No route to host"*|\
+        *"Network is unreachable"*|\
+        *"Could not resolve hostname"*|\
+        *"Name or service not known"*) return 0 ;;
+    esac
+    return 1
+}
+
+# rsync is in rest_packages, and CORE (which installs this script) runs before
+# any package does, so a fresh machine has a window with none on PATH. Same
+# shape as gatherd-icloud-sync's rclone check: exit quietly, next trigger retries.
+command -v rsync >/dev/null 2>&1 || exit 0
+
+due || exit 0
+
+[ -f "$SEEN" ] || date +%s > "$SEEN"
+
+probe_rc=0
+probe=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$MUSICSCORES_SOURCE_HOST" true 2>&1) || probe_rc=$?
+if [ "$probe_rc" -ne 0 ]; then
+    if host_is_merely_down "$probe"; then
+        if stale; then
+            say "$MUSICSCORES_SOURCE_HOST has not answered in over two weeks; the scores are stale. Is it on the tailnet?"
+            exit 1
+        fi
+        exit 0
+    fi
+    # Reachable but refusing us: a rejected key, an untrusted or changed host
+    # key, a renamed account. None of these clear on their own.
+    say "cannot log in to $MUSICSCORES_SOURCE_HOST: ${probe:-ssh exit $probe_rc}. Check the 1Password SSH agent is unlocked and holds the key, and that the host key is trusted."
+    exit 1
+fi
+
+mkdir -p "$STATE/locks" "$MUSICSCORES_DEST"
+
+(
+    exec 9>"$STATE/locks/musicscores-fetch.lock"
+    _flock_rc=0
+    flock -n 9 || _flock_rc=$?
+    if [ "$_flock_rc" -ne 0 ]; then
+        # exit 1 is "already locked" -- another trigger is doing the work, so
+        # there is nothing to add. Worth a word to a human who typed the
+        # command and would otherwise see it do nothing at all.
+        if [ "$_flock_rc" -eq 1 ]; then
+            [ -t 2 ] && say "another fetch is already running; nothing to do"
+            exit 0
+        fi
+        exit "$_flock_rc"
+    fi
+
+    # Never let one fetch delete more than half of what is already mirrored.
+    # The catastrophic case is a source that has gone empty -- a forScore
+    # reinstall, a container reset, a restore that has not finished -- which
+    # plain --delete would faithfully reproduce as an empty mirror, at exit 0,
+    # stamped as a success. The cap is derived from the mirror rather than
+    # picked out of the air, with a floor so a small library can still prune.
+    #
+    # Counted in a --dry-run pass rather than left to --max-delete, because
+    # --max-delete deletes up to the cap and only THEN stops: measured, a cap of
+    # 10 against an emptied 20-file mirror destroyed 10 scores before refusing.
+    # A refusal that has already eaten half the library is not a refusal. The
+    # dry run costs one extra file-list exchange and makes "nothing was deleted"
+    # literally true.
+    _have=$(find "$MUSICSCORES_DEST" -type f ! -name '.*' 2>/dev/null | wc -l)
+    _max_delete=$((_have / 2))
+    [ "$_max_delete" -lt 5 ] && _max_delete=5
+
+    _log="$STATE/rsync-musicscores.log"
+
+    _would_delete=$(fetch_scores --dry-run --out-format='%o %n' 2>/dev/null \
+        | grep -c '^del\.' || true)
+
+    # Two rules, because neither covers the other. The proportional one lets a
+    # big library prune freely but is meaningless for a small one, where the
+    # floor of 5 would happily allow a 2-file mirror to be erased -- measured.
+    # So an absolute rule as well: emptying a mirror that had anything in it is
+    # never routine, at any size.
+    _refuse=0
+    [ "$_would_delete" -gt "$_max_delete" ] && _refuse=1
+    [ "$_have" -gt 0 ] && [ "$_would_delete" -ge "$_have" ] && _refuse=1
+
+    # The remedy has to be a real command. Without an override the advice would
+    # be "run it again", which hits this same guard and refuses again.
+    if [ "$_refuse" -eq 1 ] && [ "$allow_prune" -eq 0 ]; then
+        say "refused: this fetch would delete $_would_delete of the $_have mirrored scores. Nothing was changed. If forScore really did lose them, accept it with: gatherd-musicscores-fetch --allow-prune"
+        exit 25
+    fi
+
+    _rc=0
+    fetch_scores --log-file "$_log" || _rc=$?
+
+    case $_rc in
+        0)  ;;
+        24) # Source files vanished mid-transfer: forScore was writing while we
+            # read. Routine, and everything else did transfer, so treat it as a
+            # success -- holding the stamp back would defeat --if-due and make
+            # every later login re-run a full fetch.
+            _rc=0 ;;
+        *)  say "rsync from $MUSICSCORES_SOURCE_HOST failed (exit $_rc); see $_log"
+            exit "$_rc" ;;
+    esac
+
+    date +%s > "$STAMP"
+)

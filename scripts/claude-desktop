@@ -1,0 +1,37 @@
+#!/bin/sh
+# Shadows /usr/bin/claude-desktop on PATH (pam_env puts ~/.local/bin first) so
+# the app menu reaches it: com.anthropic.Claude.desktop's Exec line is a bare
+# `claude-desktop`, and that name is the only hook we get short of editing a
+# packaged file upstream rewrites on every release.
+#
+# Why: Claude Desktop is Electron, and Chromium picks its safeStorage backend by
+# sniffing XDG_CURRENT_DESKTOP -- which greetd's sway session leaves unset. Unset
+# selects basic_text, and so does "sway"; both measured with a six-line electron42
+# probe against the same Electron major the app bundles. basic_text makes
+# safeStorage.isEncryptionAvailable() false, so the app re-asks for a sign-in on
+# every start.
+#
+# --password-store is deliberately narrower than the env var: 1Password gets
+# `env XDG_CURRENT_DESKTOP=GNOME` (975088a, which patched a sway autostart line in
+# roles/desktop/tasks/main.yml; that call lives today at
+# scripts/gatherd-session-helpers:101), and that lies to every Chromium path that
+# branches on desktop environment -- file dialogs, window decorations, portal
+# assumptions. This switch moves only the keyring backend, which is the whole bug.
+#
+# What this buys is sign-in PERSISTENCE, not confidentiality. keyring.yml plants a
+# deliberately passwordless login keyring, so gnome_libsecret keeps the encryption
+# key in a plaintext INI beside the ciphertext. Both backends are readable by
+# anything running as this user; only one of them survives a restart.
+#
+# Absolute path, because /usr/bin/claude-desktop is only a symlink here and
+# resolving through PATH would re-enter this wrapper. CORE installs this file but
+# the AUR package is REST/slow, so between first boot and the end of the async run
+# this name resolves to a wrapper whose target does not exist yet -- say so on
+# stderr rather than exec'ing into a bare 127 that a launcher silently discards.
+real=/usr/lib/claude-desktop/claude-desktop
+if [ ! -x "$real" ]; then
+    echo "claude-desktop: $real is not installed yet (the AUR package lands in the async tier)" >&2
+    exit 127
+fi
+
+exec "$real" --password-store=gnome-libsecret "$@"

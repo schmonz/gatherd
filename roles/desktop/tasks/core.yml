@@ -570,6 +570,15 @@
     mode: '0755'
     remote_src: true
 
+- name: Install the claude-desktop keyring wrapper
+  # Shadows /usr/bin/claude-desktop on PATH so the app-menu entry reaches it.
+  # See the script for why it is not named gatherd-*.
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/claude-desktop"
+    dest: "{{ target_home }}/.local/bin/claude-desktop"
+    mode: '0755'
+    remote_src: true
+
 - name: Install gatherd-session-helpers supervisor script
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-session-helpers"

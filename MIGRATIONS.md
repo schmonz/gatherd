@@ -109,85 +109,85 @@ unexpected path) exits nonzero, which is the answer that licenses deletion.
   check: test -e "$TARGET_HOME/.config/chromium-flags.conf"
   fresh-install expectation: absent (pure migration: gatherd seeded it in a913393)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:687 — Remove the obsolete ssh host-key float rule
+- roles/desktop/tasks/core.yml:696 — Remove the obsolete ssh host-key float rule
   shape: state: absent
   thing: gatherd-hostkey-verify float rule
   check: grep -q "gatherd-hostkey-verify" "$TARGET_HOME/.config/sway/config.d/application_defaults"
   fresh-install expectation: absent (pure migration: gatherd's own former rule)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:833 — Remove sway-install.sh stray gparted desktop entry
+- roles/desktop/tasks/core.yml:842 — Remove sway-install.sh stray gparted desktop entry
   shape: state: absent
   thing: gparted.desktop
   check: test -e "$TARGET_HOME/.local/share/applications/gparted.desktop"
   fresh-install expectation: absent (measured 2026-09-01: the Sway edition's .local/share/applications is populated at install but ships no gparted.desktop; the earlier 'upstream leaves it' belief was wrong)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:838 — Remove obsolete gnome-keyring --unlock autostart lines
+- roles/desktop/tasks/core.yml:847 — Remove obsolete gnome-keyring --unlock autostart lines
   shape: state: absent
   thing: gnome-keyring-daemon --unlock
   check: grep -q "gnome-keyring-daemon --unlock" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (pure migration: gatherd added it in 58f3522, dropped in e3b0612)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:844 — Remove obsolete systray autostart entries
+- roles/desktop/tasks/core.yml:853 — Remove obsolete systray autostart entries
   shape: state: absent
   thing: gatherd-launch-systray
   check: grep -qE "^exec (.*/)?gatherd-launch-systray$" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (pure migration: gatherd's own former helper)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:844 — Remove obsolete systray autostart entries
+- roles/desktop/tasks/core.yml:853 — Remove obsolete systray autostart entries
   shape: state: absent
   thing: gatherd-systray-1password
   check: grep -qE "^exec (.*/)?gatherd-systray-1password$" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (pure migration: gatherd's own former helper)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:844 — Remove obsolete systray autostart entries
+- roles/desktop/tasks/core.yml:853 — Remove obsolete systray autostart entries
   shape: state: absent
   thing: gatherd-systray-localsend
   check: grep -qE "^exec (.*/)?gatherd-systray-localsend$" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (pure migration: gatherd's own former helper)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:844 — Remove obsolete systray autostart entries
+- roles/desktop/tasks/core.yml:853 — Remove obsolete systray autostart entries
   shape: state: absent
   thing: gatherd-systray-tailscale
   check: grep -qE "^exec (.*/)?gatherd-systray-tailscale$" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (pure migration: gatherd's own former helper)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:844 — Remove obsolete systray autostart entries
+- roles/desktop/tasks/core.yml:853 — Remove obsolete systray autostart entries
   shape: state: absent
   thing: gatherd-systray-updater
   check: grep -qE "^exec (.*/)?gatherd-systray-updater$" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (pure migration: gatherd's own former helper)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:844 — Remove obsolete systray autostart entries
+- roles/desktop/tasks/core.yml:853 — Remove obsolete systray autostart entries
   shape: state: absent
   thing: gatherd-systray-jetbrains
   check: grep -qE "^exec (.*/)?gatherd-systray-jetbrains$" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (pure migration: gatherd's own former helper)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:844 — Remove obsolete systray autostart entries
+- roles/desktop/tasks/core.yml:853 — Remove obsolete systray autostart entries
   shape: state: absent
   thing: gatherd-wait-sni
   check: grep -qE "^exec (.*/)?gatherd-wait-sni$" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (pure migration: gatherd's own former helper)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:867 — Remove per-helper autostart entries now launched by the session supervisor
+- roles/desktop/tasks/core.yml:876 — Remove per-helper autostart entries now launched by the session supervisor
   shape: state: absent
   thing: ^exec conky$
   check: grep -qE "^exec conky$" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (pure migration: gatherd's own former line)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:867 — Remove per-helper autostart entries now launched by the session supervisor
+- roles/desktop/tasks/core.yml:876 — Remove per-helper autostart entries now launched by the session supervisor
   shape: state: absent
   thing: gatherd-prompt-* helpers
   check: grep -qE "^exec (.*/)?gatherd-prompt-(captiveportal|1password|tailscale|postsetup|vault|pia)$" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (pure migration: gatherd's own former helpers)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:867 — Remove per-helper autostart entries now launched by the session supervisor
+- roles/desktop/tasks/core.yml:876 — Remove per-helper autostart entries now launched by the session supervisor
   shape: state: absent
   thing: gatherd-systray invocations
   check: grep -qE "^exec .*gatherd-systray " "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (pure migration: gatherd's own former helper)
   measured: 2026-09-01 absent
-- roles/desktop/tasks/core.yml:867 — Remove per-helper autostart entries now launched by the session supervisor
+- roles/desktop/tasks/core.yml:876 — Remove per-helper autostart entries now launched by the session supervisor
   shape: state: absent
   thing: gatherd-polkit-agent
   check: grep -qE "^exec (.*/)?gatherd-polkit-agent$" "$TARGET_HOME/.config/sway/config.d/autostart_applications"

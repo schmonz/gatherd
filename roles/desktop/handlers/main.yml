@@ -13,3 +13,17 @@
     - udevadm control --reload-rules
     - udevadm trigger --action=add --subsystem-match=i2c
   changed_when: false
+
+- name: Reload waybar
+  # SIGUSR2 is waybar's reload action by default (on-sigusr2, man 5 waybar), so
+  # a config or CSS change lands in the running bar instead of waiting for the
+  # next login. Unlike the core.yml waybar patches, this role's REST tasks run
+  # with a session already up.
+  #
+  # failed_when false because pkill exits 1 when it matches nothing, which is
+  # the normal case for a headless converge or a run before the bar starts --
+  # not a failure worth taking the desktop tier down for.
+  ansible.builtin.command: pkill -SIGUSR2 waybar
+  register: _waybar_reload
+  changed_when: _waybar_reload.rc == 0
+  failed_when: false

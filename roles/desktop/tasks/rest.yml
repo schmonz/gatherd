@@ -12,6 +12,9 @@
 - name: Pre-fetch Vencord so Vesktop's first launch needs no network
   ansible.builtin.include_tasks: vesktop_vencord.yml
 
+- name: Show Claude Code usage in waybar
+  ansible.builtin.include_tasks: waybar_claude_usage.yml
+
 - name: Configure xed font size for 80-col two-up layout
   ansible.builtin.shell: |
     font="JetBrains Mono {{ foot_font_size }}"

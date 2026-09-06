@@ -290,6 +290,11 @@ aur_packages:
   - koreader-bin
   # polkit agent that drives any prompt command (we point it at fuzzel)
   - cmd-polkit-git
+  # Claude Code usage meter for waybar: 5h session and 7d rolling utilization,
+  # read from the OAuth usage API rather than counted locally. Fast tier because
+  # it is a single Python script with no build step, and because the desktop
+  # REST tasks that patch it into the bar are gated on the binary existing.
+  - claude-usage-waybar
   # Firefox fork, for the one web app whose speaking exercises Helium cannot do.
   # Fast tier despite its size, because the speech-model warm in the desktop
   # REST tasks needs the browser to exist. Roles run before tasks within the

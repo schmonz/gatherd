@@ -380,6 +380,7 @@ section_verify() {
     verify_li 'Claude Desktop signs in once and stays signed in: open Claude from the app menu and `pgrep -af "^/usr/lib/claude-desktop/claude-desktop --password-store=gnome-libsecret"` prints it (that flag is only there if the launch went through our wrapper). Quit it, open it again: still signed in, no "Your sign-in won'"'"'t be saved on this device" toast.'
     verify_li 'Every configured pacman repo has a sync database, so a plain `pacman -S` works: `pacman -Sp bash` prints `bash`, not `could not find database`.'
     verify_li 'One failing tier no longer takes the rest down: `sudo mv /usr/bin/tailscale{,.bak}`, then `sudo rm -f /etc/gatherd/async-complete && sudo systemctl start gatherd-async.service`. Every other tier converges and the run ends `1 REST tier(s) did not converge: tailscale (Set tailscale operator)`, with no `async-complete` written. Restore the binary, start it again, and the sentinel is back.'
+    verify_li 'Claude Code usage rides in waybar between the idle inhibitor and the CPU meter, reading `C n% . n%`; hovering breaks out 5h and 7d with reset countdowns, and clicking opens the usage dashboard.'
 }
 
 # ---------------------------------------------------------------------------

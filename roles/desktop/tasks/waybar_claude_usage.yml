@@ -1,0 +1,87 @@
+---
+# Claude Code usage in the bar: 5h session and 7d rolling utilization side by
+# side, with a per-model breakdown in the tooltip. It reads the OAuth token
+# `claude login` already wrote to ~/.claude/.credentials.json and asks
+# Anthropic's usage API, so there is no API key to configure and nothing kept on
+# disk here -- the module holds no state between polls.
+#
+# REST rather than CORE, unlike every other waybar patch in core.yml: the module
+# is inert without its AUR package, and CORE installs nothing. The aur role runs
+# earlier in the same User play, so the binary is already on disk by the time
+# this runs -- the same ordering waterfox relies on, for the same reason.
+
+# Gated on the binary rather than assumed. Tier failures are isolated now, so
+# "the aur tier failed but the desktop tier still ran" is a state that genuinely
+# occurs, and writing the module in anyway would leave a permanently empty slot
+# in the bar. Skipping instead costs nothing: the next converge adds it once the
+# package lands.
+- name: Check whether the Claude usage monitor is installed
+  ansible.builtin.stat:
+    path: /usr/bin/claude-usage-waybar
+  register: _claude_usage_waybar
+
+- name: Add the Claude usage widget to waybar modules-right
+  # Between idle_inhibitor and cpu, so it sits with the other live meters rather
+  # than off in the status cluster with the clock and tray.
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/waybar/config"
+    insertafter: '"idle_inhibitor",'
+    line: '        "custom/claude-usage",'
+    # Anchored to the array-entry form (trailing comma, no colon). A bare
+    # '"custom/claude-usage"' also matches the key of the settings block below,
+    # and lineinfile rewrites the LAST match -- so it turned that key into an
+    # array entry on every run, which blockinfile then repaired, leaving both
+    # tasks changed forever and the file briefly invalid. The mpris pair above
+    # escapes this only because its block happens to sit above modules-right.
+    regexp: '^\s*"custom/claude-usage",'
+  when: _claude_usage_waybar.stat.exists
+  notify: Reload waybar
+
+- name: Add the Claude usage widget config to waybar
+  # Upstream's suggested block with its font-size dropped: gatherd sizes the
+  # whole bar from foot_font_size, and a hardcoded 11px would fight that on
+  # every panel whose scaling is not the author's.
+  ansible.builtin.blockinfile:
+    path: "{{ target_home }}/.config/waybar/config"
+    insertbefore: '"cpu":'
+    marker: "// {mark} ANSIBLE MANAGED BLOCK: claude-usage"
+    block: |2
+          "custom/claude-usage": {
+              "exec": "claude-usage-waybar",
+              "return-type": "json",
+              "format": "{}",
+              "interval": 300,
+              "signal": 8,
+              "tooltip": true,
+              "on-click": "xdg-open https://console.anthropic.com/settings/usage"
+          },
+  when: _claude_usage_waybar.stat.exists
+  notify: Reload waybar
+
+- name: Add the Claude usage widget to the waybar CSS module list
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/waybar/style.css"
+    insertafter: '#idle_inhibitor,'
+    regexp: '#custom-claude-usage,'
+    line: '#custom-claude-usage,'
+  when: _claude_usage_waybar.stat.exists
+  notify: Reload waybar
+
+- name: Add the Claude usage widget thresholds to waybar CSS
+  # orange and red, not upstream's hex pair: this module sits between #cpu and
+  # #memory and means the same thing they do, so it should warn in the same
+  # colours rather than introduce a second vocabulary for "getting full".
+  ansible.builtin.blockinfile:
+    path: "{{ target_home }}/.config/waybar/style.css"
+    insertbefore: '^#memory \{'
+    marker: "/* {mark} ANSIBLE MANAGED BLOCK: claude-usage */"
+    block: |
+      #custom-claude-usage.warning {
+          color: orange;
+      }
+
+      #custom-claude-usage.critical {
+          color: red;
+      }
+  when: _claude_usage_waybar.stat.exists
+  notify: Reload waybar

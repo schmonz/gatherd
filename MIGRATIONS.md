@@ -283,7 +283,7 @@ unexpected path) exits nonzero, which is the answer that licenses deletion.
   check: test -e /var/cache/gatherd-aur/gatherd-aur.db
   fresh-install expectation: absent (permanent config, not a migration: force:true is the ordinary symlink idiom here)
   measured: 2026-09-01 absent
-- roles/system/tasks/aurutils.yml:148 — Remove aurutils artifacts from earlier builds
+- roles/system/tasks/aurutils.yml:172 — Remove aurutils artifacts from earlier builds
   shape: state: absent
   thing: stale build artifacts
   check: test -d /var/cache/gatherd-aur

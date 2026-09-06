@@ -3,14 +3,29 @@
 # already delivered a usable session, so a captive portal can be cleared and a
 # failure is recoverable rather than a lockout.
 #
-# The REST plays deliberately carry no any_errors_fatal: one package that will
-# not install must not abort the remainder of a post-login convergence. CORE
-# keeps it, because CORE is small, local, and gates the greeter.
+# Every tier below runs inside a block/rescue, and that is load-bearing, not
+# decoration. Ansible has no play-level "keep going" switch: when a task fails
+# it marks the host failed and skips every remaining task AND every remaining
+# play. any_errors_fatal does not change that -- it only decides whether the
+# OTHER hosts are aborted alongside the failed one, and localhost is the only
+# host here. So the "REST deliberately carries no any_errors_fatal" that used to
+# head this file bought exactly nothing, and the resilience it claimed never
+# existed: one missing pacman database in the hardware role cost a repave its
+# dotfiles, its AUR packages (autofs included, so the NFS mount too), Claude
+# Code, the waybar configuration and both slow tiers, none of which had anything
+# to do with the failure.
+#
+# A rescue records the tier and lets the run continue. The final play reports
+# every tier that failed and writes the completion sentinel only when none did.
 - name: Detect target user and hardware
   hosts: localhost
   connection: local
   gather_facts: true
   become: true
+  # No rescue, and this one really does abort the run: every tier below is
+  # written against these facts, so converging anything without them would be
+  # guesswork. (any_errors_fatal is redundant with the single-host default for
+  # the reason above; kept because it states the intent.)
   any_errors_fatal: true
 
   pre_tasks:
@@ -33,13 +48,27 @@
   # local repository they build into.
   tasks:
     - name: Converge the network-dependent system tier
-      ansible.builtin.import_role:
-        name: system
-        tasks_from: rest
+      vars:
+        gatherd_tier: system
+      block:
+        - name: Import the network-dependent system tasks
+          ansible.builtin.import_role:
+            name: system
+            tasks_from: rest
+      rescue:
+        - name: Record the system tier failure
+          ansible.builtin.include_tasks: tasks/record_tier_failure.yml
 
     - name: Converge hardware-specific configuration
-      ansible.builtin.import_role:
-        name: hardware
+      vars:
+        gatherd_tier: hardware
+      block:
+        - name: Import the hardware role
+          ansible.builtin.import_role:
+            name: hardware
+      rescue:
+        - name: Record the hardware tier failure
+          ansible.builtin.include_tasks: tasks/record_tier_failure.yml
 
 
 - name: User configuration
@@ -54,49 +83,101 @@
     GOPATH: "{{ target_home }}/.local/share/go"
     GOBIN: "{{ target_home }}/.local/bin"
 
-  roles:
-    - dotfiles
-    - aur
-    - claude_code
-
+  # These four were a roles: block. They are import_role tasks now for the same
+  # reason play 2 imports its two: a role listed in roles: cannot be wrapped in
+  # a block, and each of these has to be able to fail without taking the other
+  # three with it. Order is unchanged -- roles: ran in this order, ahead of the
+  # desktop import that was already a task.
   tasks:
+    - name: Converge dotfiles
+      vars:
+        gatherd_tier: dotfiles
+      block:
+        - name: Import the dotfiles role
+          ansible.builtin.import_role:
+            name: dotfiles
+      rescue:
+        - name: Record the dotfiles tier failure
+          ansible.builtin.include_tasks: tasks/record_tier_failure.yml
+
+    - name: Converge AUR packages
+      vars:
+        gatherd_tier: aur
+      block:
+        - name: Import the aur role
+          ansible.builtin.import_role:
+            name: aur
+      rescue:
+        - name: Record the aur tier failure
+          ansible.builtin.include_tasks: tasks/record_tier_failure.yml
+
+    - name: Converge Claude Code
+      vars:
+        gatherd_tier: claude_code
+      block:
+        - name: Import the claude_code role
+          ansible.builtin.import_role:
+            name: claude_code
+      rescue:
+        - name: Record the claude_code tier failure
+          ansible.builtin.include_tasks: tasks/record_tier_failure.yml
+
     - name: Converge the network-dependent desktop tier
-      ansible.builtin.import_role:
-        name: desktop
-        tasks_from: rest
+      vars:
+        gatherd_tier: desktop
+      block:
+        - name: Import the network-dependent desktop tasks
+          ansible.builtin.import_role:
+            name: desktop
+            tasks_from: rest
+      rescue:
+        - name: Record the desktop tier failure
+          ansible.builtin.include_tasks: tasks/record_tier_failure.yml
 
   post_tasks:
-    - name: Build thinkfan into the local AUR repository
-      ansible.builtin.command: "{{ aur_sync_command }} thinkfan"
-      environment: "{{ aur_build_environment }}"
-      register: _aur_sync_thinkfan
-      changed_when: "'there is nothing to do' not in _aur_sync_thinkfan.stderr"
+    - name: Configure ThinkPad fan control
+      vars:
+        gatherd_tier: thinkfan
       when: has_thinkpad_hardware
+      block:
+        - name: Build thinkfan into the local AUR repository
+          ansible.builtin.command: "{{ aur_sync_command }} thinkfan"
+          environment: "{{ aur_build_environment }}"
+          register: _aur_sync_thinkfan
+          changed_when: "'there is nothing to do' not in _aur_sync_thinkfan.stderr"
 
-    - name: Install thinkfan
-      community.general.pacman:
-        name: thinkfan
-        state: present
-        update_cache: true
-      when: has_thinkpad_hardware
-      become: true
-      become_user: root
+        - name: Install thinkfan
+          community.general.pacman:
+            name: thinkfan
+            state: present
+            update_cache: true
+          become: true
+          become_user: root
 
-    - name: Enable thinkfan service
-      ansible.builtin.systemd:
-        name: thinkfan
-        enabled: true
-        # thinkpad_acpi must load with fan_control=1 (set by modprobe.d) before
-        # thinkfan can start; that requires a reboot after first run.
-      when: has_thinkpad_hardware
-      become: true
-      become_user: root
+        - name: Enable thinkfan service
+          ansible.builtin.systemd:
+            name: thinkfan
+            enabled: true
+            # thinkpad_acpi must load with fan_control=1 (set by modprobe.d)
+            # before thinkfan can start; that requires a reboot after first run.
+          become: true
+          become_user: root
+      rescue:
+        - name: Record the thinkfan tier failure
+          ansible.builtin.include_tasks: tasks/record_tier_failure.yml
 
-    - name: Set tailscale operator
-      ansible.builtin.command: "tailscale set --operator={{ target_user }}"
-      changed_when: false
-      become: true
-      become_user: root
+    - name: Configure the tailscale operator
+      vars:
+        gatherd_tier: tailscale
+      block:
+        - name: Set tailscale operator
+          ansible.builtin.command: "tailscale set --operator={{ target_user }}"
+          changed_when: false
+          become: true
+          become_user: root
+      rescue:
+        - name: Record the tailscale tier failure
+          ansible.builtin.include_tasks: tasks/record_tier_failure.yml
 
 
 - name: Slow system packages
@@ -106,8 +187,15 @@
   become: true
 
   tasks:
-    - name: Install slow packages
-      ansible.builtin.include_tasks: roles/system/tasks/slow.yml
+    - name: Converge slow system packages
+      vars:
+        gatherd_tier: slow system packages
+      block:
+        - name: Install slow packages
+          ansible.builtin.include_tasks: roles/system/tasks/slow.yml
+      rescue:
+        - name: Record the slow system package tier failure
+          ansible.builtin.include_tasks: tasks/record_tier_failure.yml
 
 
 - name: Slow AUR packages
@@ -133,23 +221,54 @@
   # password, and tests/test — which seeds a dummy one — could not run REST at all.
 
   tasks:
-    - name: Install slow AUR packages
-      ansible.builtin.include_tasks: roles/aur/tasks/slow.yml
+    - name: Converge slow AUR packages
+      vars:
+        gatherd_tier: slow AUR packages
+      block:
+        - name: Install slow AUR packages
+          ansible.builtin.include_tasks: roles/aur/tasks/slow.yml
+      rescue:
+        - name: Record the slow AUR package tier failure
+          ansible.builtin.include_tasks: tasks/record_tier_failure.yml
 
-  post_tasks:
+
+# Split out of the slow-AUR play so the run's outcome is decided in exactly one
+# place, after every tier has had its turn: no earlier play can see the full
+# list of what failed.
+- name: Record the outcome of the REST tiers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+
+  tasks:
     - name: Read deployed git HEAD  # noqa: command-instead-of-module
       ansible.builtin.command: "git -C {{ setup_dir }} rev-parse HEAD"
       register: _gatherd_head
       changed_when: false
-      become: true
-      become_user: root
+      when: gatherd_failed_tiers | default([]) | length == 0
 
     - name: Mark slow setup complete
       # Sentinel records the HEAD that ran to completion; gatherd-needs-run
       # re-runs the play when HEAD later changes (e.g. after a git pull).
+      #
+      # Deliberately not written when a tier failed. The sentinel is what tells
+      # gatherd-needs-run there is nothing left to do, so stamping it on a
+      # partial converge would make the missing half permanent until HEAD moved.
       ansible.builtin.copy:
         dest: /etc/gatherd/async-complete
         content: "{{ _gatherd_head.stdout }}\n"
         mode: '0644'
-      become: true
-      become_user: root
+      when: gatherd_failed_tiers | default([]) | length == 0
+
+    - name: Fail because some REST tiers did not converge
+      # The non-zero exit is what makes gatherd-async.service report 'failed',
+      # which is in turn what gatherd-show-slow-progress reads to tell the user
+      # at login. Every other tier has already converged by the time we get here.
+      ansible.builtin.fail:
+        msg: |-
+          {{ gatherd_failed_tiers | length }} REST tier(s) did not converge:
+            {{ gatherd_failed_tiers | join('\n  ') }}
+          Every other tier finished. Re-run with:
+            sudo systemctl start gatherd-async.service
+      when: gatherd_failed_tiers | default([]) | length > 0

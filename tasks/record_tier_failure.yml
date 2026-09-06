@@ -1,0 +1,19 @@
+---
+# Shared rescue body for the REST tiers in site-async.yml. Records which tier
+# failed and which task failed it, so the run can carry on into the next tier
+# and still report accurately at the end.
+#
+# A fact, not a file: facts persist across plays within one ansible-playbook
+# invocation, which is exactly the span the REST tiers occupy, and there is
+# nothing to clean up on the success path.
+#
+# gatherd_tier comes from vars: on the calling block, which is in scope for the
+# block's rescue as well as its body.
+- name: "Record the failed tier: {{ gatherd_tier }}"
+  ansible.builtin.set_fact:
+    gatherd_failed_tiers: >-
+      {{ gatherd_failed_tiers | default([])
+         + [gatherd_tier ~ ' (' ~ ansible_failed_task.name ~ ')'] }}
+  # The user plays become target_user via su; set_fact needs no privilege at
+  # all, and asking for one here would su for nothing.
+  become: false

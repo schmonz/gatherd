@@ -85,6 +85,30 @@
       Server = file://{{ aur_repo_dir }}
   notify: Etckeeper commit
 
+# Registering a repo does not create its sync database, and pacman refuses to
+# prepare ANY transaction while a configured repo's database is missing -- even
+# one that has nothing to do with that repo. `pacman -S <anything>` dies with
+# "failed to prepare transaction (could not find database)". So without this,
+# the next plain `pacman -S` in the run fails, and on a fresh machine that is
+# whatever the hardware role installs first. That is why the VM test never saw
+# it: every package task in the hardware role is gated on hardware the VM does
+# not have, and every AUR install task passes `update_cache:`, which syncs as a
+# side effect and papered over the gap on the paths the test does reach.
+#
+# Guarded on the sync database rather than on the blockinfile above having
+# changed: a machine that registered the repo and then failed before syncing --
+# i.e. every machine this has already bitten -- has an unchanged pacman.conf,
+# so a changed-guarded sync would never repair it.
+- name: Check for the local AUR repository's sync database
+  ansible.builtin.stat:
+    path: "/var/lib/pacman/sync/{{ aur_repo_name }}.db"
+  register: _aur_repo_sync_db
+
+- name: Populate the local AUR repository's sync database
+  community.general.pacman:
+    update_cache: true
+  when: not _aur_repo_sync_db.stat.exists
+
 - name: Read the pinned aurutils pkgver from the vendored PKGBUILD  # noqa: command-instead-of-module
   ansible.builtin.command: "grep -m1 -oP '(?<=^pkgver=).*' {{ setup_dir }}/packaging/aurutils/PKGBUILD"
   register: _aurutils_pkgver

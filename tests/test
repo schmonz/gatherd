@@ -101,6 +101,45 @@ echo "=== Run 1 ==="
 # Both tiers, in boot order: CORE gates the greeter, REST converges post-login.
 "${SSH[@]}" "cd /usr/local/lib/gatherd && ansible-playbook -e sway_guard_override=true site-core.yml site-async.yml"
 
+# ── Health assertions ─────────────────────────────────────────────────────────
+#
+# Run 1 exiting 0 is not the same as run 1 leaving a working machine, and the
+# idempotency check below cannot tell the difference: it compares run 2 against
+# run 1, so anything both runs get wrong is invisible to it. This is where an
+# invariant that must hold AFTER a converge gets checked directly, rather than
+# inferred from some later task happening to work.
+#
+# First member: pacman must still be able to prepare a transaction. Registering
+# a repository in /etc/pacman.conf without downloading its database wedges every
+# subsequent `pacman -S`, whatever the package, with "failed to prepare
+# transaction (could not find database)". That shipped and reached a real
+# machine, because the first task to trip over it was gated on
+# `has_screen_backlight` -- and this VM has no backlight, so neither run touched
+# it while every path they did take passed `update_cache:` and silently repaired
+# the state on the way past.
+echo "=== Health assertions ==="
+
+health_rc=0
+"${SSH[@]}" sh -s <<'REMOTE' || health_rc=$?
+set -u
+if pacman -Sp --print-format '%n' bash >/dev/null 2>/tmp/gatherd-pacman-check; then
+    exit 0
+fi
+echo "pacman cannot prepare a transaction:"
+sed 's/^/  /' /tmp/gatherd-pacman-check
+echo "repositories in /etc/pacman.conf with no database in /var/lib/pacman/sync:"
+sed -n 's/^\[\(.*\)\]$/\1/p' /etc/pacman.conf | grep -vx options | while read -r repo; do
+    [ -f "/var/lib/pacman/sync/$repo.db" ] || echo "  $repo"
+done
+exit 1
+REMOTE
+
+if [[ "$health_rc" -ne 0 ]]; then
+    echo "FAIL: run 1 left the machine unable to install any package"
+    exit 1
+fi
+echo "PASS: pacman can prepare a transaction"
+
 # ── Run 2: idempotency check ──────────────────────────────────────────────────
 
 echo "=== Run 2 (idempotency check) ==="

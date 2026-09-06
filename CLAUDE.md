@@ -53,9 +53,20 @@ completes, in the background. Five plays:
 4. **Slow system packages** — `roles/system/tasks/slow.yml`
 5. **Slow AUR packages** — `roles/aur/tasks/slow.yml`
 
-The REST plays deliberately carry **no `any_errors_fatal`**: one package that
-won't install must not abort the rest of a post-login convergence. CORE keeps it.
-Writes `/etc/gatherd/async-complete` when done.
+Each REST tier runs inside its own `block`/`rescue`. A tier that fails is
+recorded (`tasks/record_tier_failure.yml`) and the run carries on into the next
+one; a final play names every tier that failed, exits non-zero so the unit
+reports `failed`, and writes `/etc/gatherd/async-complete` only when none did.
+
+**That structure is the resilience — omitting `any_errors_fatal` is not.** On a
+failed task Ansible skips every remaining task *and every remaining play* for
+that host; `any_errors_fatal` only decides whether the *other* hosts are aborted
+alongside it, so with localhost as the only host it changes nothing either way.
+This file claimed the opposite for a long time, and the claim cost a repave:
+one missing pacman database in the hardware role took out dotfiles, every AUR
+package (autofs included, so the NFS mount with it), Claude Code, the waybar
+configuration and both slow tiers. CORE keeps `any_errors_fatal` for the same
+reason it always did — as a statement of intent, not a mechanism.
 
 ## Finishing a TODO item
 
@@ -135,6 +146,28 @@ meaningful:
    brings its own step.
 
 Skipping step 2 is why the count went 9 to 22 without ever coming down.
+
+## Testing
+
+`tests/test` boots one VM from one snapshot and, historically, asserted one
+thing: that run 2 is clean. Both halves of that are narrower than they look, and
+knowing how is the difference between a green test and a working machine.
+
+**One hardware profile.** The VM has no backlight, no keyboard LED, no ThinkPad
+EC, no Apple SMC, no fingerprint reader, no IR receiver and no rotated panel, so
+every `when: has_*` task is dead code in the test. The `hardware` role is very
+nearly untested, and a change there is reviewed by reading and by the next
+repave — nothing else. Weigh those changes accordingly, and when a change has an
+ungated place it could live, prefer that place.
+
+**Idempotency is a weak oracle.** It compares run 2 against run 1, so anything
+both runs get wrong is invisible to it: a machine can pass two clean runs and
+still be broken. The health-assertion section exists for the other half —
+invariants that must hold *after* a converge, checked directly rather than
+inferred from some later task happening to work. Anything that changes global
+state (`/etc/pacman.conf`, PAM, systemd defaults) should arrive with one, because
+the thing that eventually depends on that state may well be hardware-gated and
+therefore invisible here.
 
 ## Code style
 

@@ -168,12 +168,11 @@ start_when nowayprompt "$bin/gatherd-prompt-vault"
     # spares it and we reap it on logout — a standalone exec sat in its own group and
     # the sweep SIGKILL'd the fresh agent every login (its `cmd-polkit-agent -c
     # .../gatherd-polkit-agent` cmdline matches the gatherd- glob). Launched first as
-    # a best effort, not a guarantee: nothing enforces registration order among the
-    # 16 members below, which all fire within milliseconds of barrier release
-    # (measured in the sandbox smoke test: the 16 start_later forks spanned
-    # ~12ms end to end) rather than spread across a slow login the way they
-    # used to be. cmd-polkit registers quickly regardless; a prompt raised
-    # before it does gets a bare denial instead of a UI.
+    # a best effort, not a guarantee: nothing enforces registration order among
+    # the 16 members below, which all now fire in a tight cluster at barrier
+    # release, rather than spread across a slow login the way they used to be.
+    # cmd-polkit registers quickly regardless; a prompt raised before it does
+    # gets a bare denial instead of a UI.
     start_later "$bin/gatherd-polkit-agent"
     # wayvnc as a cohort child, not a plain sway `exec`: a plain exec would orphan on
     # logout (sway reaps nothing) and keep holding 127.0.0.1:5900, so the next

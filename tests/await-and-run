@@ -1,0 +1,87 @@
+#!/bin/sh
+# Unit tests for gatherd-await-and-run's vault gating.
+#
+# The bug being closed: the runner waited for /usr/local/lib/gatherd/.vault_pass
+# before running ANY playbook, and gatherd-async.service routes site-async.yml
+# through it -- a playbook that states outright it reads nothing from the vault.
+# So REST was hostage to a password it never used, and the in-session prompt that
+# would collect that password renders through nowayprompt, which REST installs.
+#
+# ansible-playbook is stubbed: these test the gating, not Ansible.
+#
+# Usage: tests/await-and-run
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+RUNNER="$REPO/scripts/gatherd-await-and-run"
+PASS=0
+FAIL=0
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+assert() { _d=$1; shift; if [ "$@" ]; then ok "$_d"; else bad "$_d"; fi; }
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/gatherd/scripts" "$WORK/gatherd/vault" "$WORK/stub" "$WORK/etc"
+
+cp "$REPO/scripts/gatherd-needs-run" "$WORK/gatherd/scripts/"
+git -C "$WORK/gatherd" init -q
+git -C "$WORK/gatherd" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+
+: > "$WORK/gatherd/site-async.yml"
+: > "$WORK/etc/core-complete"
+
+# Stubs. ansible-playbook records its argv and its exit code is scripted;
+# ansible-galaxy and systemd-inhibit are no-ops we do not want to reach for real.
+cat > "$WORK/stub/ansible-playbook" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >> "$WORK/argv"
+exit "\$(cat "$WORK/rc" 2>/dev/null || echo 0)"
+STUB
+printf '#!/bin/sh\nexit 0\n' > "$WORK/stub/ansible-galaxy"
+printf '#!/bin/sh\nexit 0\n' > "$WORK/stub/ansible-vault"
+chmod 755 "$WORK/stub"/*
+printf '0\n' > "$WORK/rc"
+
+run_runner() {
+    rm -f "$WORK/argv"
+    PATH="$WORK/stub:$PATH" GATHERD_HOME="$WORK/gatherd" \
+        GATHERD_CORE_COMPLETE="$WORK/etc/core-complete" \
+        timeout 10 sh "$RUNNER" "$@" >/dev/null 2>&1 && RC=0 || RC=$?
+}
+
+# 1. Without --needs-vault the runner must not wait for a password that does not
+#    exist, and must not hand ansible-playbook a --vault-password-file it cannot
+#    read. Before this change it blocked here forever.
+rm -f "$WORK/gatherd/.vault_pass"
+run_runner "$WORK/etc/async-complete" "$WORK/gatherd/site-async.yml"
+assert "runs with no vault password when the flag is absent (rc=$RC)" "$RC" -eq 0
+if grep -q 'vault-password-file' "$WORK/argv" 2>/dev/null; then
+    bad "and passes no --vault-password-file"
+else
+    ok "and passes no --vault-password-file"
+fi
+
+# 2. With --needs-vault and no password stored, it must block rather than run the
+#    play, because the play cannot be decrypted.
+: > "$WORK/gatherd/vault/vault.yml"
+: > "$WORK/gatherd/site-vault.yml"
+run_runner --needs-vault "$WORK/etc/vault-complete" "$WORK/gatherd/site-vault.yml"
+assert "blocks without a password when the flag is given (rc=$RC)" "$RC" -eq 124
+assert "and never reached ansible-playbook" ! -f "$WORK/argv"
+
+# 3. With --needs-vault and a password that decrypts, it runs and passes the file.
+printf 'secret\n' > "$WORK/gatherd/.vault_pass"
+run_runner --needs-vault "$WORK/etc/vault-complete" "$WORK/gatherd/site-vault.yml"
+assert "runs once a password is stored (rc=$RC)" "$RC" -eq 0
+if grep -q -- '--vault-password-file' "$WORK/argv" 2>/dev/null; then
+    ok "and passes --vault-password-file"
+else
+    bad "and passes --vault-password-file"
+fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

@@ -12,39 +12,57 @@
 # the eventual Artix port cheap: a runit/s6/OpenRC run script only has to exec
 # this; nothing below depends on systemd.
 #
-# Usage: gatherd-await-and-run <sentinel> <playbook>
+# Usage: gatherd-await-and-run [--needs-vault] <sentinel> <playbook>
+#
+# --needs-vault is passed by exactly the units whose playbook declares
+# `vars_files: vault/vault.yml`. It used to be unconditional, which made the REST
+# tier hostage to a password site-async.yml never reads -- and REST is what
+# installs nowayprompt, the renderer the in-session vault prompt needs, so on a
+# fresh machine the password could not even be asked for. See
+# docs/superpowers/specs/2026-09-07-first-login-cohort-design.md.
 set -eu
+
+needs_vault=no
+case "${1:-}" in
+--needs-vault) needs_vault=yes; shift ;;
+esac
 
 sentinel="$1"
 playbook="$2"
 
-gatherd_home=/usr/local/lib/gatherd
+# Overridable only so these paths can be pointed at a sandbox in tests.
+gatherd_home="${GATHERD_HOME:-/usr/local/lib/gatherd}"
 vault_pass="$gatherd_home/.vault_pass"
 vault_file="$gatherd_home/vault/vault.yml"
-complete=/etc/gatherd/core-complete
+complete="${GATHERD_CORE_COMPLETE:-/etc/gatherd/core-complete}"
 
 # Nothing to do if this play isn't deployed (e.g. no site-vault.yml).
 [ -f "$playbook" ] || exit 0
 
-# Block until the first-boot run has finished and a vault password that actually
-# decrypts the vault is present. A mistyped password is discarded right here so
-# the prompt side (gatherd-prompt-vault) re-asks; we never carry a bad password
-# into the play, where the decryption failure would fail the unit permanently
-# with no retry path. Polling (rather than inotify) keeps this dependency-free
-# and identical across inits; 2s latency is irrelevant for setup work.
-while :; do
-    while ! { [ -f "$complete" ] && [ -f "$vault_pass" ]; }; do
-        sleep 2
-    done
-    # No vault deployed → the password only needs to exist, not to decrypt.
-    if [ ! -f "$vault_file" ]; then
-        break
-    fi
-    if ansible-vault view --vault-password-file="$vault_pass" "$vault_file" >/dev/null 2>&1; then
-        break
-    fi
-    rm -f "$vault_pass"
+# Block until the first-boot run has finished. Polling (rather than inotify)
+# keeps this dependency-free and identical across inits; 2s latency is irrelevant
+# for setup work.
+while [ ! -f "$complete" ]; do
+    sleep 2
 done
+
+# And, only for a play that actually reads the vault, until a password that
+# decrypts it is present. A mistyped password is discarded right here so the
+# prompt side re-asks; we never carry a bad password into the play, where the
+# decryption failure would fail the unit permanently with no retry path.
+if [ "$needs_vault" = yes ]; then
+    while :; do
+        while [ ! -f "$vault_pass" ]; do
+            sleep 2
+        done
+        # No vault deployed → the password only needs to exist, not to decrypt.
+        [ -f "$vault_file" ] || break
+        if ansible-vault view --vault-password-file="$vault_pass" "$vault_file" >/dev/null 2>&1; then
+            break
+        fi
+        rm -f "$vault_pass"
+    done
+fi
 
 # Skip if this play already converged at the deployed git HEAD.
 "$gatherd_home/scripts/gatherd-needs-run" "$sentinel" || exit 0
@@ -55,9 +73,20 @@ cd "$gatherd_home"
 ansible-galaxy collection install --requirements-file "$gatherd_home/requirements.yml"
 
 # Hold off sleep during the long package run when the tooling is available
-# (elogind ships systemd-inhibit on Artix too), but tolerate its absence.
+# (elogind ships systemd-inhibit on Artix too), but tolerate its absence. The
+# inhibitor is passed as this function's argv rather than interpolated into a
+# command string, so --why's spaces survive without unquoted word splitting.
+play() {
+    if [ "$needs_vault" = yes ]; then
+        "$@" ansible-playbook --vault-password-file="$vault_pass" "$playbook"
+    else
+        "$@" ansible-playbook "$playbook"
+    fi
+}
+
 if command -v systemd-inhibit >/dev/null 2>&1; then
-    exec systemd-inhibit --what=sleep --who=gatherd --why="gatherd background work in progress" --mode=block \
-        ansible-playbook --vault-password-file="$vault_pass" "$playbook"
+    play systemd-inhibit --what=sleep --who=gatherd \
+        --why="gatherd background work in progress" --mode=block
+else
+    play
 fi
-exec ansible-playbook --vault-password-file="$vault_pass" "$playbook"

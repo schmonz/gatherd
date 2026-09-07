@@ -8,7 +8,7 @@ Wants=network-online.target nss-lookup.target
 # the script: started once at boot, it waits for the vault password to appear
 # and runs site-vault.yml when it does — no path watcher, no start-limit loop.
 Type=simple
-ExecStart=/usr/local/lib/gatherd/scripts/gatherd-await-and-run /etc/gatherd/vault-complete /usr/local/lib/gatherd/site-vault.yml
+ExecStart=/usr/local/lib/gatherd/scripts/gatherd-await-and-run --needs-vault /etc/gatherd/vault-complete /usr/local/lib/gatherd/site-vault.yml
 StandardOutput=journal+console
 StandardError=journal+console
 

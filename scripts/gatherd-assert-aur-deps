@@ -10,37 +10,85 @@
 # fourteen minutes in, with the name of the actual culprit ("Missing
 # dependencies: -> gsl") buried in stdout above it. This asks the same question
 # aurutils would, before any of that: resolve the targets' dependencies, drop
-# the ones that are themselves AUR packages in this build, and let pacman say
-# which of the rest are absent.
+# the ones this same sync builds, and let pacman say which of the rest are
+# absent.
 #
 # Run immediately before the aur sync it guards. That placement is the whole
 # trick -- it inspects the machine at the one moment that matters, so it needs
 # no model of which tier installs what when.
 #
+# Fails OPEN when the AUR cannot answer, and CLOSED when it answers that a
+# target does not exist: an unreachable AUR is weather, but a target the AUR has
+# never heard of is this repo naming a package wrong, which is a mistake it has
+# made twice (rclone left for [extra]; captive-browser is only a provides of
+# captive-browser-git). Treating that as "skipping the check" would turn the
+# guard into a permanent no-op and blame the network for it.
+#
 # Usage: gatherd-assert-aur-deps <pkgbase>...   (exit 0 clean, 1 with the list)
 
-set -eu
+set -uo pipefail
 
 [ $# -gt 0 ] || { echo "usage: $0 <pkgbase>..." >&2; exit 2; }
 
-TABLE=$(aur depends --table "$@") || {
-    # No answer is not the same as a bad answer: let the build proceed and fail
-    # in its own way rather than blocking a converge on a flaky AUR.
-    echo "gatherd-assert-aur-deps: cannot reach the AUR; skipping the check" >&2
-    exit 0
-}
+ERR=$(mktemp) || exit 2
+trap 'rm -f "$ERR"' EXIT
 
-# Column 1 is the pkgbase of every package in this build, column 2 a dependency
-# of it. Anything in column 1 gets built here, so it is not required up front.
-AUR=$(printf '%s\n' "$TABLE" | cut -f1 | sort -u)
-DEPS=$(printf '%s\n' "$TABLE" | awk -F'\t' '$5 != "Self" { print $2 }' | sort -u)
-WANTED=$(comm -23 <(printf '%s\n' "$DEPS") <(printf '%s\n' "$AUR"))
+open() { echo "gatherd-assert-aur-deps: $1; skipping the check" >&2; exit 0; }
+
+# aurutils shells out to `curl -A aurutils -fgLsSq` with neither
+# --connect-timeout nor --max-time (AUR/Query.pm), and gatherd-async.service
+# sets no TimeoutStartSec, so a black-holed route hangs the converge forever
+# rather than failing. A refusal or a 429 already returns promptly.
+TABLE=$(timeout 60 aur depends --table "$@" 2>"$ERR")
+RC=$?
+
+# A missing target is reported on stderr and does NOT set the exit status when
+# other targets resolved, so the status alone would let a stale name silently
+# drop out of the check.
+if grep -q 'target not found' "$ERR"; then
+    echo "Named as an AUR package, but the AUR has no such target:" >&2
+    sed -n 's/.*target not found: /  /p' "$ERR" >&2
+    echo >&2
+    echo "Building: $*" >&2
+    echo "Check the pkgbase: a plain name is often only a provides of a -git or" >&2
+    echo "-bin package, and packages do leave the AUR for the official repos." >&2
+    exit 1
+fi
+[ "$RC" -eq 124 ] && open 'the AUR did not answer within 60s'
+[ "$RC" -ne 0 ] && open 'cannot reach the AUR'
+
+# Column 1 is the pkgname of every package this sync builds (column 3 is its
+# pkgbase; for a split package the two differ, and it is the pkgname a
+# dependency names). Anything built here is not required up front.
+SIBLINGS=$(printf '%s\n' "$TABLE" | cut -f1 | sort -u)
+# ...and neither is anything they provide: open-fprintd asks for
+# fprintd-clients, which is a provides of the fprintd-clients-git built beside
+# it. aur depends resolves targets by name only, so it cannot tell us this.
+mapfile -t _siblings <<<"$SIBLINGS"
+PROVIDES=$(timeout 60 aur query -t info "${_siblings[@]}" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    for r in json.load(sys.stdin)["results"]:
+        for p in (r.get("Provides") or []):
+            print(p.split("=")[0].split(">")[0].split("<")[0].strip())
+except Exception:
+    pass
+' | sort -u)
+BUILT=$(printf '%s\n%s\n' "$SIBLINGS" "$PROVIDES" | sed '/^$/d' | sort -u)
+
+# Dependencies carry version bounds (open-fprintd>=0.6) that the sibling list
+# does not, so compare on the bare name and hand pacman the original -- it is
+# the one that understands bounds, sonames and virtuals.
+WANTED=$(printf '%s\n' "$TABLE" | awk -F'\t' '$5 != "Self" { print $2 }' | sort -u |
+    while IFS= read -r dep; do
+        [ -n "$dep" ] || continue
+        bare=${dep%%[<>=]*}
+        grep -qxF "$bare" <<<"$BUILT" || printf '%s\n' "$dep"
+    done)
 
 [ -n "$WANTED" ] || exit 0
 
-# pacman -T prints the ones it cannot satisfy, and understands both version
-# constraints and provides.
-MISSING=$(printf '%s\n' "$WANTED" | xargs pacman -T || true)
+MISSING=$(printf '%s\n' "$WANTED" | xargs -r pacman -T)
 
 [ -n "$MISSING" ] || exit 0
 

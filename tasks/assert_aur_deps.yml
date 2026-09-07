@@ -7,3 +7,10 @@
   ansible.builtin.command:
     argv: "{{ [setup_dir ~ '/scripts/gatherd-assert-aur-deps'] + aur_assert_targets }}"
   changed_when: false
+  # Emptying a package list is a legitimate edit, not a missing dependency.
+  when: aur_assert_targets | length > 0
+  # The build this guards runs as target_user, and `aur` sources
+  # $XDG_CONFIG_HOME/aurutils/env: asking the question as root would let the
+  # two consult different configurations.
+  become: true
+  become_user: "{{ target_user }}"

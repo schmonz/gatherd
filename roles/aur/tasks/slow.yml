@@ -34,6 +34,9 @@
       ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
       vars:
         aur_assert_targets: "{{ aur_slow_avx_packages }}"
+      # Same gate as the build below. Without it a pre-AVX machine fails this
+      # tier's whole block over a build it was never going to run.
+      when: has_avx
 
     - name: Build programs that use AVX or newer instructions
       # claude-code is a native Node bundle that uses AVX/SSE4 instructions and

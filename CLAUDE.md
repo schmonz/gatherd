@@ -138,8 +138,25 @@ one moment that matters, so it needs no model of which tier installs what when.
 A missing dependency becomes a one-second failure naming the package, instead of
 `ERROR: 'pacman' failed to install missing dependencies` fourteen minutes into a
 build with the real culprit buried in stdout. Add the include whenever you add
-an `aur sync`. It fails open on an unreachable AUR — a flaky network must not
-block a converge.
+an `aur sync`, with the same `when:` the build carries — a guard that outlives
+its build fails a tier over something that was never going to run.
+
+It fails open when the AUR cannot answer, and closed when the AUR answers that
+a target does not exist. An unreachable AUR is weather; a target the AUR has
+never heard of is this repo naming a package wrong, which it has done twice
+(rclone left for `[extra]`, and `captive-browser` is only a provides of
+`captive-browser-git`). Reading that as "skipping the check" would switch the
+guard off permanently and blame the network. `tests/assert-aur-deps` pins both
+directions, plus the sibling cases — a package built by the same sync is not a
+dependency to install first, even when named with a version bound or through a
+provides.
+
+One thing it is stricter about than the build: `aur depends` resolves the whole
+graph, while `aur sync` skips what the local repo already has current. On a
+converged machine it therefore still insists the makedepends are installed. That
+is deliberate — a machine that cannot rebuild its own AUR packages should say so
+— but it does mean an orphan sweep can turn a green machine red, and the fix is
+to declare what it names.
 
 **`scripts/gatherd-check-aur-deps`, run before committing.** The preflight only
 fires on the machine doing the converge; this one catches the same mistake in

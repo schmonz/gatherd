@@ -1,0 +1,93 @@
+#!/bin/sh
+# Unit tests for gatherd-assert-aur-deps.
+#
+# This one runs on every converge, in front of all thirteen aur syncs, so the
+# cases that matter are the two ways it could be worse than nothing:
+#
+#   * failing a tier that would have converged (a sibling named with a version
+#     bound or through a provides is NOT a missing dependency), and
+#   * quietly passing (a target the AUR has never heard of must not be read as
+#     "the network is down", which is how rclone and captive-browser would have
+#     switched the guard off and blamed the weather).
+#
+# gsl cannot be uninstalled to test the real case, so pacman is shimmed to
+# claim it is absent -- which is exactly the state the failed repave was in.
+#
+# Needs the network. Usage: tests/assert-aur-deps
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+GUARD="$REPO/scripts/gatherd-assert-aur-deps"
+PASS=0
+FAIL=0
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+# Reports gsl missing, defers everything else to the real pacman.
+mkdir -p "$WORK/shim"
+cat > "$WORK/shim/pacman" <<'SHIM'
+#!/bin/bash
+args=(); for a in "$@"; do [ "$a" = gsl ] || args+=("$a"); done
+out=$(/usr/bin/pacman "${args[@]}"); rc=$?
+for a in "$@"; do [ "$a" = gsl ] && { printf 'gsl\n'; rc=127; }; done
+printf '%s\n' "$out" | grep -v '^$'
+exit $rc
+SHIM
+chmod +x "$WORK/shim/pacman"
+
+assert_rc() {
+    _d=$1; _want=$2; shift 2
+    if "$@" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want rc=$_want got rc=$_got)"; cat "$WORK/out"; fi
+}
+
+assert_says() {
+    _d=$1; _want=$2
+    if grep -q "$_want" "$WORK/out"; then ok "$_d"; else bad "$_d (no '$_want' in output)"; cat "$WORK/out"; fi
+}
+
+# 1. The failure this exists to prevent, in the state the repave was in.
+assert_rc "a missing dependency exits 1" 1 \
+    env PATH="$WORK/shim:$PATH" "$GUARD" clight
+assert_says "the missing dependency is named" '^  gsl$'
+
+# 2. With it installed, the same build is clean.
+assert_rc "a satisfied build exits 0" 0 "$GUARD" clight
+
+# 3. Siblings of the same sync are not dependencies to install up front, even
+#    when named with a version bound (open-fprintd>=0.6) or through a provides
+#    (fprintd-clients, from fprintd-clients-git). Both once failed here.
+assert_rc "siblings are not reported missing" 0 \
+    "$GUARD" python-validity open-fprintd fprintd-clients-git
+
+# 4. A real missing dependency in a package we do not build.
+assert_rc "an unbuildable package exits 1" 1 "$GUARD" spotify
+assert_says "its missing dependencies are named" 'libcurl-gnutls'
+
+# 5. A target the AUR does not have is this repo's mistake, not the network's.
+#    rclone left the AUR for [extra]; captive-browser is only a provides.
+assert_rc "a target missing from the AUR exits 1" 1 "$GUARD" rclone
+assert_says "the absent target is named" '^  rclone$'
+assert_says "the diagnosis is not blamed on the network" 'the AUR has no such target'
+
+# 6. And it must not hide behind a target that DID resolve: aur depends reports
+#    the missing one on stderr and still exits 0.
+assert_rc "one bad name among good ones still exits 1" 1 "$GUARD" clight rclone
+
+# 7. An unreachable AUR is weather. Fail open, or a captive portal takes out
+#    every tier that builds anything.
+assert_rc "an unreachable AUR exits 0" 0 \
+    env AUR_LOCATION=http://127.0.0.1:1 "$GUARD" clight
+assert_says "skipping is announced" 'skipping the check'
+
+# 8. Called with nothing is a usage error, distinct from both of the above.
+assert_rc "no targets exits 2" 2 "$GUARD"
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

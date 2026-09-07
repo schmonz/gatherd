@@ -586,6 +586,16 @@
     mode: '0755'
     remote_src: true
 
+# The barrier gatherd-session-helpers puts its REST-dependent cohort behind. CORE
+# rather than REST for the same reason the supervisor itself is: it has to exist
+# at the FIRST login, which is the only login it changes anything on.
+- name: Install gatherd-await-async barrier script
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-await-async"
+    dest: "{{ target_home }}/.local/bin/gatherd-await-async"
+    mode: '0755'
+    remote_src: true
+
 - name: Install gatherd-polkit-agent (fuzzel polkit prompts)
   ansible.builtin.copy:
     src: "{{ setup_dir }}/scripts/gatherd-polkit-agent"

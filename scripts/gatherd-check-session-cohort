@@ -1,0 +1,98 @@
+#!/bin/sh
+# Fail if a session helper is started ahead of the thing it needs.
+#
+# The mistake this exists to catch: gatherd-session-helpers starts its cohort the
+# instant sway starts, which on a repave is minutes before the REST tier installs
+# what most of those helpers are about. A helper started too early probes for its
+# subject, finds nothing, and exits -- silently, with no notification and no log.
+# Measured on the 2026-09-07 repave, that lost the entire cohort for the whole
+# first session: no Tailscale tab, no 1Password tab, no conky, no tray and no
+# polkit agent, and nothing retried until the next login. It went unnoticed for
+# hours precisely because the failure mode of every one of them is to say nothing.
+#
+# The rule is exact, and cheap, because CORE installs no packages at all
+# (CLAUDE.md, "No packages, no AUR, no downloads"). So the set of packages
+# present at the first login is precisely tests/base-manifest.txt, and:
+#
+#     a `start_now` helper may only need packages in tests/base-manifest.txt.
+#
+# `start_now` therefore has to declare what it needs, with a trailing
+# `# needs: pkg ...`. An undeclared start_now is a hard failure rather than a
+# silent bet -- writing the declaration is the moment the author asks the
+# question this check exists to force. `start_later` runs behind
+# gatherd-await-async, by which point the machine has finished installing, so it
+# declares nothing.
+#
+# DECLARED, not present: this reads the repo, never the machine it runs on. A
+# converged machine has everything installed, so "does it work here" would pass
+# for every possible ordering and catch nothing.
+#
+# Exit 0 clean, 1 violation, 2 could not run. Never a silent skip.
+#
+# Usage: gatherd-check-session-cohort [repo-root]
+set -u
+
+repo="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
+helpers="$repo/scripts/gatherd-session-helpers"
+manifest="$repo/tests/base-manifest.txt"
+barrier=gatherd-await-async
+
+die() { printf 'gatherd-check-session-cohort: %s\n' "$1" >&2; exit 2; }
+
+[ -r "$helpers" ]  || die "cannot read $helpers"
+[ -r "$manifest" ] || die "cannot read $manifest"
+
+# The barrier must actually be invoked, or `start_later` is a lie and every
+# helper behind it races the REST tier again with nothing to say so. Its line
+# number is what "behind the barrier" is checked against, rather than trusting
+# the function name to imply position.
+barrier_line=$(grep -n "/$barrier\"" "$helpers" | head -1 | cut -d: -f1)
+[ -n "$barrier_line" ] \
+    || die "$helpers never invokes $barrier; start_later would not wait"
+
+# Only launch lines: `start_now "..."` / `start_later "..."` at the head of a
+# (possibly indented) line, never the function definitions or the prose above
+# them. Written to a file so the loop below runs in THIS shell and its failure
+# count survives -- a `grep | while` pipeline would count in a subshell and
+# always report success.
+launches=$(mktemp) || die "mktemp failed"
+trap 'rm -f "$launches"' EXIT
+grep -n '^[[:space:]]*start_\(now\|later\)[[:space:]]*"' "$helpers" > "$launches"
+[ -s "$launches" ] || die "no start_now/start_later launches found in $helpers"
+
+rc=0
+fail() { printf 'FAIL %s\n' "$1" >&2; rc=1; }
+
+while IFS= read -r entry; do
+    lineno=${entry%%:*}
+    line=${entry#*:}
+
+    case "$line" in
+    *start_later*)
+        [ "$lineno" -gt "$barrier_line" ] || fail \
+            "line $lineno: start_later sits above the $barrier call on line $barrier_line, so it does not wait"
+        continue
+        ;;
+    esac
+
+    # start_now: everything after the first '#' on the line is the declaration.
+    case "$line" in
+    *'#'*needs:*) ;;
+    *)
+        fail "line $lineno: start_now with no \`# needs:\` declaration -- name what must already be installed, or use start_later"
+        continue
+        ;;
+    esac
+
+    needs=${line#*needs:}
+    if [ -z "$(printf '%s' "$needs" | tr -d '[:space:]')" ]; then
+        fail "line $lineno: empty \`# needs:\` declaration"
+        continue
+    fi
+    for pkg in $needs; do
+        grep -qx "$pkg" "$manifest" || fail \
+            "line $lineno: start_now needs '$pkg', absent from tests/base-manifest.txt -- CORE installs no packages, so it is not there at the first login; use start_later"
+    done
+done < "$launches"
+
+exit "$rc"

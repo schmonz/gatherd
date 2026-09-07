@@ -39,7 +39,6 @@ if [ -z "$GATHERD_SUPERVISOR" ]; then
 fi
 
 bin="$HOME/.local/bin"
-run() { sh -c "$1" & }
 
 # Sweep any cohort a prior login leaked. One sway session runs at a time, so any
 # gatherd helper not in this supervisor's own process group ($$) is a stale
@@ -68,54 +67,102 @@ done
 # The cohort: long-running session helpers gatherd autostarts. One-shots and
 # things with their own lifecycle (swayidle, gatherd-show-slow-progress) stay as
 # plain sway `exec` lines and are intentionally not listed here.
-# The polkit agent belongs here, not as a standalone sway `exec`: launched as a
-# cohort child it shares our process group, so the stale-orphan sweep above
-# spares it and we reap it on logout — a standalone exec sat in its own group and
-# the sweep SIGKILL'd the fresh agent every login (its `cmd-polkit-agent -c
-# .../gatherd-polkit-agent` cmdline matches the gatherd- glob). Launch it first so
-# it is registered before anything can trigger a polkit prompt.
-run "$bin/gatherd-polkit-agent"
+#
+# It is split in two on WHEN each helper's subject exists, because sway starts
+# this the instant the session does — which on a repave is minutes before the
+# REST tier installs what most of these helpers are about. A helper started ahead
+# of its subject probes, finds nothing, and exits without saying so; measured on
+# the 2026-09-07 repave, that silently lost every one of them for the whole first
+# session, including the Tailscale and 1Password browser tabs that are the only
+# reason a fresh machine needs a human at all. scripts/gatherd-await-async
+# carries the measurements.
+#
+# `start_now` is the exception and carries a `# needs:` declaration of the
+# packages that must already be installed when it starts. CORE installs no
+# packages, so "already installed" means "in tests/base-manifest.txt" and nothing
+# else; scripts/gatherd-check-session-cohort enforces exactly that, and a
+# start_now with no declaration is a hard failure rather than a silent bet.
+#
+# `start_later` is the default. When in doubt use it: waiting costs a converged
+# machine nothing (the barrier returns at once) and costs a repave only the
+# minutes during which the helper had nothing to work with anyway.
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+
+# --- Immediately: needed DURING the pave, and subject is already in base ---
+
 # xdg-desktop-portal's systemd unit has Requisite=graphical-session.target, which
 # we don't activate (init-agnostic design). Start it directly so the Requisite
 # check is bypassed; the backends (xdg-desktop-portal-gtk for Qt Settings/dark mode)
 # only have PartOf/After, not Requisite, so they D-Bus-activate fine once this runs.
-run "/usr/lib/xdg-desktop-portal"
-# wayvnc as a cohort child, not a plain sway `exec`: a plain exec would orphan on
-# logout (sway reaps nothing) and keep holding 127.0.0.1:5900, so the next
-# session's wayvnc could not bind. As a cohort child it dies with the group on
-# logout, freeing the port. VNC is localhost-only, reached over SSH — plans/VNC.md.
-run "wayvnc"
-run "$bin/gatherd-conky"
-# Only installed on has_dual_accelerometer machines (roles/desktop/tasks/
-# tablet_mode_upstream.yml); `run` on a missing binary just fails quietly like
-# any other cohort member would on hardware that lacks it.
-run "$bin/minibook-hinge-daemon"
-run "$bin/gatherd-prompt-captiveportal"
-run "$bin/gatherd-prompt-1password"
-run "$bin/gatherd-prompt-tailscale"
-run "$bin/gatherd-prompt-postsetup"
-run "$bin/gatherd-prompt-vault"
-run "$bin/gatherd-prompt-pia"
-run "$bin/gatherd-prompt-icloud"
-# One-shot, not a watcher: it rate-limits itself and exits. Login only, unlike
-# iCloud's extra unlock trigger — the Mac it pulls from is usually asleep, and
-# scores change on the order of weeks, so retrying on every unlock would buy
-# nothing but wakeups.
-run "$bin/gatherd-musicscores-fetch --if-due"
-run "$bin/gatherd-prompt-lastrun"
-run "env XDG_CURRENT_DESKTOP=GNOME $bin/gatherd-systray 1password --silent"
-# Stash LocalSend's startup-window flash before it reaches the screen. Must be
-# launched just ahead of localsend so it is already subscribed when the first
-# surface maps (see scripts/gatherd-intercept-localsend-flash).
-run "$bin/gatherd-intercept-localsend-flash"
-run "$bin/gatherd-systray localsend --hidden"
-run "$bin/gatherd-systray tailscale systray"
-# Sign-in apps (JetBrains Toolbox, Discord/vesktop, Slack, Zoom, …) are
-# deliberately never autostarted — not here and not during provisioning. They
-# are just installed; open them on demand and sign in via 1Password when needed.
-# Nothing special about them, and starting them on every login wastes a potato.
-run "$bin/gatherd-systray /opt/piavpn/bin/pia-client --quiet"
-run "$bin/gatherd-systray arch-update --tray"
+start_now "/usr/lib/xdg-desktop-portal"  # needs: xdg-desktop-portal
+# A watcher, not a probe, so it is early even though captive-browser itself
+# arrives with REST: what it needs at start is nmcli, and it must already be
+# listening when a portal appears — which during a pave is the one time it truly
+# matters, since REST cannot fetch anything until the portal is cleared.
+start_now "$bin/gatherd-prompt-captiveportal"  # needs: networkmanager coreutils
+# Early on purpose: it exists to unblock site-vault.yml while the pave is still
+# running. Its own guard (gatherd-vault-pass-needed) already waits for
+# core-complete, so it cannot fire before there is anything to unblock.
+start_now "$bin/gatherd-prompt-vault"  # needs: fuzzel sudo
+# Reports the CORE run's outcome, which is settled before the greeter appears.
+start_now "$bin/gatherd-prompt-lastrun"  # needs: libnotify
+
+# --- Behind the barrier: subject is installed by the REST tier ---
+#
+# One barrier for the whole group rather than one per helper, so relative launch
+# order is preserved (localsend's flash interceptor must still start just ahead
+# of localsend) and the wait is polled once instead of a dozen times. The group
+# is a child of this supervisor, so it stays in our process group and the
+# teardown below still reaps it.
+{
+    "$bin/gatherd-await-async"
+
+    # The polkit agent belongs here, not as a standalone sway `exec`: launched as a
+    # cohort child it shares our process group, so the stale-orphan sweep above
+    # spares it and we reap it on logout — a standalone exec sat in its own group and
+    # the sweep SIGKILL'd the fresh agent every login (its `cmd-polkit-agent -c
+    # .../gatherd-polkit-agent` cmdline matches the gatherd- glob). Launch it first so
+    # it is registered before anything can trigger a polkit prompt.
+    start_later "$bin/gatherd-polkit-agent"
+    # wayvnc as a cohort child, not a plain sway `exec`: a plain exec would orphan on
+    # logout (sway reaps nothing) and keep holding 127.0.0.1:5900, so the next
+    # session's wayvnc could not bind. As a cohort child it dies with the group on
+    # logout, freeing the port. VNC is localhost-only, reached over SSH — plans/VNC.md.
+    start_later "wayvnc"
+    start_later "$bin/gatherd-conky"
+    # Only installed on has_dual_accelerometer machines (roles/desktop/tasks/
+    # tablet_mode_upstream.yml); starting a missing binary just fails quietly like
+    # any other cohort member would on hardware that lacks it.
+    start_later "$bin/minibook-hinge-daemon"
+    start_later "$bin/gatherd-prompt-1password"
+    start_later "$bin/gatherd-prompt-tailscale"
+    # Behind the barrier so its detection sees the finished machine. Run ahead of
+    # REST it writes "Sign in to 1Password" against a machine where 1Password is
+    # not installed yet, and then — because each section is only added once — never
+    # revisits the sections it got wrong.
+    start_later "$bin/gatherd-prompt-postsetup"
+    start_later "$bin/gatherd-prompt-pia"
+    start_later "$bin/gatherd-prompt-icloud"
+    # One-shot, not a watcher: it rate-limits itself and exits. Login only, unlike
+    # iCloud's extra unlock trigger — the Mac it pulls from is usually asleep, and
+    # scores change on the order of weeks, so retrying on every unlock would buy
+    # nothing but wakeups.
+    start_later "$bin/gatherd-musicscores-fetch --if-due"
+    start_later "env XDG_CURRENT_DESKTOP=GNOME $bin/gatherd-systray 1password --silent"
+    # Stash LocalSend's startup-window flash before it reaches the screen. Must be
+    # launched just ahead of localsend so it is already subscribed when the first
+    # surface maps (see scripts/gatherd-intercept-localsend-flash).
+    start_later "$bin/gatherd-intercept-localsend-flash"
+    start_later "$bin/gatherd-systray localsend --hidden"
+    start_later "$bin/gatherd-systray tailscale systray"
+    # Sign-in apps (JetBrains Toolbox, Discord/vesktop, Slack, Zoom, …) are
+    # deliberately never autostarted — not here and not during provisioning. They
+    # are just installed; open them on demand and sign in via 1Password when needed.
+    # Nothing special about them, and starting them on every login wastes a potato.
+    start_later "$bin/gatherd-systray /opt/piavpn/bin/pia-client --quiet"
+    start_later "$bin/gatherd-systray arch-update --tray"
+} &
 
 # Teardown runs when this supervisor learns the session is ending, by whichever
 # signal arrives first: sway's shutdown event (clean logout) or a TERM/HUP/INT

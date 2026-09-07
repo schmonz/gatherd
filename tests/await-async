@@ -1,0 +1,81 @@
+#!/bin/sh
+# Unit tests for gatherd-await-async, the barrier gatherd-session-helpers puts
+# its REST-dependent cohort behind.
+#
+# Three properties matter, and each one is a way the barrier could quietly undo
+# the fix it exists to deliver:
+#   - it returns AT ONCE on a converged machine, or every login after the first
+#     pays for the first one;
+#   - it actually WAITS while the run is unfinished, or nothing changed;
+#   - it always exits 0, because it is a wait and not a predicate -- a helper
+#     must never be suppressed because the barrier could not decide.
+#
+# Both knobs the barrier exposes for testing are used: a sentinel path pointed at
+# a scratch file, and the bound. Between them every branch is reachable on any
+# machine, converged or not -- which matters, because the property that matters
+# most (that it actually waits) is unreachable on a converged machine otherwise.
+# The one branch left to tests/test is "the async unit reported failed", which
+# needs a real systemd unit.
+#
+# Usage: tests/await-async
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+BARRIER="$REPO/scripts/gatherd-await-async"
+PASS=0
+FAIL=0
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+# assert <description> <test-args...> -- an if, not an `&& ok || bad` chain,
+# which reads like if-then-else and is not one.
+assert() {
+    _d=$1; shift
+    if [ "$@" ]; then ok "$_d"; else bad "$_d"; fi
+}
+
+elapsed() {
+    _start=$(date +%s)
+    "$@" >/dev/null 2>&1 && _rc=0 || _rc=$?
+    _end=$(date +%s)
+    ELAPSED=$(( _end - _start ))
+    RC=$_rc
+}
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+DONE="$WORK/async-complete"
+MISSING="$WORK/never"
+
+# 1. Converged machine: the sentinel is there, so it must not sleep at all. This
+#    is the common case -- every login after the first -- and the whole reason
+#    the barrier is safe to put in front of the entire cohort.
+: > "$DONE"
+elapsed env GATHERD_ASYNC_SENTINEL="$DONE" "$BARRIER"
+assert "returns at once when the sentinel exists (${ELAPSED}s)" "$ELAPSED" -le 1
+assert "and exits 0 (rc=$RC)" "$RC" -eq 0
+
+# 2. Unfinished run: it must actually wait. Without this the barrier could be a
+#    no-op and every test above would still be green.
+elapsed env GATHERD_ASYNC_SENTINEL="$MISSING" GATHERD_AWAIT_ASYNC_TIMEOUT=3 "$BARRIER"
+assert "waits while the run is unfinished (${ELAPSED}s)" "$ELAPSED" -ge 2
+
+# 3. ...and gives up at the bound rather than holding a helper for the whole
+#    session, still exiting 0 so the helper is never suppressed by the wait.
+assert "gives up at the bound (${ELAPSED}s, bound 3s)" "$ELAPSED" -le 15
+assert "and still exits 0 at the bound (rc=$RC)" "$RC" -eq 0
+
+# 4. The sentinel appearing mid-wait releases it, which is the actual first-boot
+#    sequence: the barrier is already blocked when async finishes.
+( sleep 2; : > "$WORK/late" ) &
+elapsed env GATHERD_ASYNC_SENTINEL="$WORK/late" GATHERD_AWAIT_ASYNC_TIMEOUT=60 "$BARRIER"
+wait
+assert "releases when the sentinel appears mid-wait (${ELAPSED}s)" "$ELAPSED" -le 10
+assert "and did not return before it appeared (${ELAPSED}s)" "$ELAPSED" -ge 2
+assert "and exits 0 (rc=$RC)" "$RC" -eq 0
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

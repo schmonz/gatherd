@@ -1,0 +1,85 @@
+#!/bin/sh
+# Barrier for session helpers whose subject the REST tier installs. Blocks until
+# the REST run for the deployed commit is over -- converged, failed, or never
+# going to start -- then always exits 0.
+#
+# Why: gatherd-session-helpers starts the cohort the instant sway starts, which
+# on a repave is minutes before REST installs the things the cohort is about.
+# Measured on the 2026-09-07 repave of this machine (session start 11:33:55, from
+# `ps -o lstart=` on the supervisor; the rest from /var/log/pacman.log):
+#
+#     11:35:26  tailscale, conky, wayvnc
+#     11:37:48  nowayprompt
+#     11:44:16  1password
+#     11:44:17  helium-browser-bin, arch-update, cmd-polkit-git, captive-browser-git
+#     11:49:44  /etc/gatherd/async-complete
+#
+# Every helper that probed for its subject found nothing and exited quietly:
+# `pgrep -g` on the supervisor found zero surviving children afterwards. The
+# freshly paved machine never opened the Tailscale or 1Password tabs the human
+# had to act on, and nothing retried until the next login.
+#
+# A barrier, not a probe. Helpers keep their own readiness logic; this only stops
+# them running it against a machine that has not finished installing.
+#
+# Contains no systemctl call, deliberately. An earlier draft asked
+# `systemctl is-failed`, which is wrong three measured ways -- `inactive` after a
+# converged run, rc=4 for an unknown unit, and false while a CORE failure has the
+# runner blocked before the playbook. Reading gatherd's own files instead is both
+# correct and one less thing the Artix/s6 rebase has to answer.
+#
+# Always exits 0. It is a wait, not a predicate -- a helper must never be
+# suppressed because the barrier itself could not decide.
+set -u
+
+gatherd_home="${GATHERD_HOME:-/usr/local/lib/gatherd}"
+
+# Overridable only so the wait can be exercised in tests. On a converged machine
+# the real files are always present, so without these the property that matters
+# most -- that it actually waits -- is the one no test can reach.
+sentinel="${GATHERD_ASYNC_SENTINEL:-/etc/gatherd/async-complete}"
+core_marker="${GATHERD_CORE_MARKER:-/etc/gatherd/last-run}"
+stamp="${sentinel}-finished"
+
+# Freshness, not existence. site-async.yml overwrites the sentinel at the end of
+# a run and never removes it at the start, so after a `git pull` the file is
+# still on disk holding the OLD commit while REST re-runs the whole tier. A test
+# for existence would return instantly on exactly the boots where a newly added
+# helper most needs to wait.
+#
+# Only exit 1 means converged. A missing or non-executable script exits 127, and
+# treating that as converged would silently turn this barrier into a no-op.
+current() {
+    "$gatherd_home/scripts/gatherd-needs-run" "$1"
+    [ "$?" -eq 1 ]
+}
+
+# A bound, so a hung run cannot hold the cohort for a whole session. Validated
+# rather than trusted: `$(( ${VAR:-3600} ))` on a non-numeric value throws under
+# `set -u`, which would break the always-exit-0 invariant this file states twice.
+timeout=${GATHERD_AWAIT_ASYNC_TIMEOUT:-3600}
+case "$timeout" in
+'' | *[!0-9]*) timeout=3600 ;;
+esac
+deadline=$(( $(date +%s) + timeout ))
+
+while :; do
+    # The run converged at this commit.
+    current "$sentinel" && break
+
+    # Or it ran and ended badly. site-async.yml writes its sentinel only when no
+    # tier failed, so this stamp is the only thing that can say "over" about a
+    # failed run. gatherd-await-and-run writes it on every exit path.
+    current "$stamp" && break
+
+    # Or CORE never converged, in which case gatherd-await-and-run is blocked
+    # before the playbook and REST will not start at all this boot. Waiting for
+    # it would cost an hour of no tray and no polkit agent at exactly the moment
+    # a broken machine needs them.
+    [ -f "$core_marker" ] && [ "$(head -n1 "$core_marker" 2>/dev/null)" != ok ] && break
+
+    [ "$(date +%s)" -lt "$deadline" ] || break
+    sleep 2
+done
+
+exit 0

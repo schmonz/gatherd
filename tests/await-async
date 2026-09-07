@@ -1,0 +1,109 @@
+#!/bin/sh
+# Unit tests for gatherd-await-async, the barrier the session cohort waits on.
+#
+# Each case is a way the barrier could quietly undo the fix it delivers:
+#   - it must return AT ONCE on a converged machine, or every login pays for the
+#     first one;
+#   - it must WAIT while the run is unfinished, or nothing changed;
+#   - it must treat a STALE sentinel as unfinished, because site-async.yml
+#     overwrites the sentinel without removing it, so after a `git pull` the file
+#     is still there holding the old commit while REST re-runs;
+#   - it must release on a run that FINISHED AND FAILED, which the sentinel
+#     cannot express;
+#   - it must release when CORE failed, because REST will then never start;
+#   - it must always exit 0, because it is a wait and not a predicate.
+#
+# Usage: tests/await-async
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+BARRIER="$REPO/scripts/gatherd-await-async"
+PASS=0
+FAIL=0
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+assert() { _d=$1; shift; if [ "$@" ]; then ok "$_d"; else bad "$_d"; fi; }
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+HOMEDIR="$WORK/gatherd"
+mkdir -p "$HOMEDIR/scripts" "$WORK/nohome"
+cp "$REPO/scripts/gatherd-needs-run" "$HOMEDIR/scripts/"
+git -C "$HOMEDIR" init -q
+git -C "$HOMEDIR" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+HEAD=$(git -C "$HOMEDIR" rev-parse HEAD)
+
+SENTINEL="$WORK/async-complete"
+STAMP="$WORK/async-complete-finished"
+LASTRUN="$WORK/last-run"
+printf 'ok\n' > "$LASTRUN"
+
+run_barrier() {
+    _start=$(date +%s)
+    GATHERD_HOME="$HOMEDIR" GATHERD_ASYNC_SENTINEL="$SENTINEL" \
+        GATHERD_CORE_MARKER="$LASTRUN" "$@" sh "$BARRIER" >/dev/null 2>&1 && RC=0 || RC=$?
+    ELAPSED=$(( $(date +%s) - _start ))
+}
+
+# 1. Converged: sentinel records the deployed HEAD. Every login after the first.
+printf '%s\n' "$HEAD" > "$SENTINEL"
+run_barrier env
+assert "returns at once when the sentinel is current (${ELAPSED}s)" "$ELAPSED" -le 1
+assert "and exits 0 (rc=$RC)" "$RC" -eq 0
+
+# 2. Stale sentinel and no stamp: what every boot after a `git pull` looks like
+#    while REST re-runs. An existence test would return instantly here.
+printf '%s\n' 0000000000000000000000000000000000000000 > "$SENTINEL"
+rm -f "$STAMP"
+run_barrier env GATHERD_AWAIT_ASYNC_TIMEOUT=3
+assert "waits on a stale sentinel (${ELAPSED}s)" "$ELAPSED" -ge 2
+assert "and exits 0 at the bound (rc=$RC)" "$RC" -eq 0
+
+# 3. A stale stamp is no better than a stale sentinel.
+printf '%s\n' 0000000000000000000000000000000000000000 > "$STAMP"
+run_barrier env GATHERD_AWAIT_ASYNC_TIMEOUT=3
+assert "waits on a stale stamp (${ELAPSED}s)" "$ELAPSED" -ge 2
+
+# 4. The run finished and FAILED: no fresh sentinel will ever appear, but the
+#    tiers are over. Without this the cohort waits out the bound after every
+#    failure.
+printf '%s\n' "$HEAD" > "$STAMP"
+run_barrier env GATHERD_AWAIT_ASYNC_TIMEOUT=60
+assert "releases on a finished-but-failed run (${ELAPSED}s)" "$ELAPSED" -le 5
+assert "and exits 0 (rc=$RC)" "$RC" -eq 0
+
+# 5. The stamp landing mid-wait releases it -- the actual first-boot sequence,
+#    where the barrier is already blocked when the run ends.
+rm -f "$STAMP"
+( sleep 2; printf '%s\n' "$HEAD" > "$STAMP" ) &
+run_barrier env GATHERD_AWAIT_ASYNC_TIMEOUT=60
+wait
+assert "releases when the stamp lands mid-wait (${ELAPSED}s)" "$ELAPSED" -le 10
+assert "and not before it landed (${ELAPSED}s)" "$ELAPSED" -ge 2
+
+# 6. CORE failed: gatherd-await-and-run blocks before the playbook, so REST never
+#    starts and no stamp is ever written. A broken machine is exactly when the
+#    tray and the polkit agent are wanted.
+rm -f "$STAMP"
+printf 'timeout\n/var/log/gatherd.log\n' > "$LASTRUN"
+run_barrier env GATHERD_AWAIT_ASYNC_TIMEOUT=60
+assert "releases when CORE did not converge (${ELAPSED}s)" "$ELAPSED" -le 5
+assert "and exits 0 (rc=$RC)" "$RC" -eq 0
+printf 'ok\n' > "$LASTRUN"
+
+# 7. A checkout git calls foreign must not read as permanently unconverged.
+printf '%s\n' "$HEAD" > "$SENTINEL"
+run_barrier env GIT_TEST_ASSUME_DIFFERENT_OWNER=1 HOME="$WORK/nohome" GATHERD_AWAIT_ASYNC_TIMEOUT=6
+assert "returns at once on a foreign-owned checkout (${ELAPSED}s)" "$ELAPSED" -le 1
+
+# 8. Always exits 0 is an invariant, not an aspiration: a garbage bound must not
+#    throw under `set -u`.
+run_barrier env GATHERD_AWAIT_ASYNC_TIMEOUT=abc
+assert "a non-numeric bound still exits 0 (rc=$RC)" "$RC" -eq 0
+assert "and does not hang (${ELAPSED}s)" "$ELAPSED" -le 5
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

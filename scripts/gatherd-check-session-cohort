@@ -1,0 +1,155 @@
+#!/bin/sh
+# Fail if a session helper is started ahead of the thing it needs.
+#
+# The mistake this catches: gatherd-session-helpers starts its cohort the instant
+# sway starts, which on a repave is minutes before the REST tier installs what
+# most of those helpers are about. A helper started too early probes for its
+# subject, finds nothing, and exits -- silently, with no notification and no log.
+# Measured on the 2026-09-07 repave, that lost the entire cohort for the whole
+# first session: no Tailscale tab, no 1Password tab, no conky, no tray, no polkit
+# agent, and nothing retried until the next login. It went unnoticed for hours
+# precisely because the failure mode of every one of them is to say nothing.
+#
+# The rule for the immediate form is exact, and cheap, because CORE installs no
+# packages at all (CLAUDE.md, "No packages, no AUR, no downloads"). So the set of
+# packages present at the first login is precisely tests/base-manifest.txt:
+#
+#     a `start_now` helper may only need packages in tests/base-manifest.txt.
+#
+# It therefore has to declare what it needs. An undeclared start_now is a hard
+# failure rather than a silent bet -- writing the declaration is the moment the
+# author asks the question this gate exists to force.
+#
+# WHAT THIS DOES NOT DO. It checks DECLARED START-TIME needs. It cannot verify a
+# declaration is complete, or honest, and it says nothing about what a helper
+# reaches for later: gatherd-prompt-captiveportal legitimately declares only base
+# packages and still cannot clear a portal during a pave, because captive-browser
+# is itself a REST package and the base image has no browser at all. That case is
+# irreducible -- no ordering fixes it -- so the helper announces its inability at
+# runtime instead. Do not read a green run here as "every helper can do its job".
+#
+# DECLARED, not present: this reads the repo, never the machine it runs on. A
+# converged machine has everything installed, so "does it work here" would pass
+# for every possible ordering and catch nothing.
+#
+# Exit 0 clean, 1 violation, 2 could not run. Never a silent skip.
+#
+# Usage: gatherd-check-session-cohort [repo-root]
+set -u
+
+repo="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
+helpers="$repo/scripts/gatherd-session-helpers"
+manifest="$repo/tests/base-manifest.txt"
+barrier=gatherd-await-async
+
+die() { printf 'gatherd-check-session-cohort: %s\n' "$1" >&2; exit 2; }
+
+[ -r "$helpers" ]  || die "cannot read $helpers"
+[ -r "$manifest" ] || die "cannot read $manifest"
+
+# The barrier has to exist and to be installed, or every start_later waits on a
+# command that is not there and the whole mechanism is decoration.
+[ -f "$repo/scripts/$barrier" ] || die "$repo/scripts/$barrier does not exist"
+grep -rql "scripts/$barrier" "$repo/roles" >/dev/null 2>&1 \
+    || die "no role installs scripts/$barrier"
+
+# Locate the gated block, so "behind the barrier" is a fact about nesting rather
+# than a guess from line numbers. A bare line-number test passes four different
+# ways of not waiting: a start_later after the closing `} &`, one at the top of
+# the block above the barrier call, a barrier invocation commented out, and a
+# start_now buried inside the block.
+#
+# The leading-quote anchor is what rules out a comment, which
+# `#   "$bin/gatherd-await-async"` would otherwise satisfy.
+barrier_line=$(grep -n "^[[:space:]]*\"[^\"]*/$barrier\"[[:space:]]*$" "$helpers" | head -1 | cut -d: -f1)
+[ -n "$barrier_line" ] \
+    || die "$helpers never invokes $barrier as a command; start_later would not wait"
+
+open_line=$(awk -v b="$barrier_line" 'NR < b && /^[[:space:]]*\{[[:space:]]*$/ { n = NR } END { print n }' "$helpers")
+close_line=$(awk -v b="$barrier_line" 'NR > b && /^[[:space:]]*\}[[:space:]]*&[[:space:]]*$/ { print NR; exit }' "$helpers")
+[ -n "$open_line" ]  || die "no \`{\` opening a block above the $barrier call on line $barrier_line"
+[ -n "$close_line" ] || die "no \`} &\` closing the block opened on line $open_line"
+
+rc=0
+fail() { printf 'FAIL %s\n' "$1" >&2; rc=1; }
+
+# Every launch, however written. Two greps because the rules below need a quoted
+# argument to reason about, and a launch written without one -- `start_later
+# $cmd` -- would otherwise be invisible to all of them. Written to files so the
+# loop runs in THIS shell: a `grep | while` pipeline counts failures in a
+# subshell and always reports success.
+all=$(mktemp) || die "mktemp failed"
+launches=$(mktemp) || die "mktemp failed"
+trap 'rm -f "$all" "$launches"' EXIT
+grep -n '^[[:space:]]*start_\(now\|later\|when\)[[:space:]]' "$helpers" \
+    | grep -v '^[0-9]*:[[:space:]]*start_[a-z]*()' | sort -n -t: -k1,1 > "$all"
+grep -n '^[[:space:]]*start_\(now\|later\)[[:space:]]*"' "$helpers" > "$launches"
+grep -n '^[[:space:]]*start_when[[:space:]][^[:space:]]*[[:space:]]*"' "$helpers" >> "$launches"
+sort -n -t: -k1,1 "$launches" -o "$launches"
+[ -s "$all" ] || die "no start_now/start_later/start_when launches found in $helpers"
+
+if [ "$(wc -l < "$all")" -ne "$(wc -l < "$launches")" ]; then
+    comm -13 "$launches" "$all" | while IFS= read -r entry; do
+        printf 'FAIL line %s: launch argument is not a quoted string, so nothing here can check it\n' \
+            "${entry%%:*}" >&2
+    done
+    rc=1
+fi
+
+while IFS= read -r entry; do
+    lineno=${entry%%:*}
+    line=${entry#*:}
+    # The leading TOKEN, not a substring: a command containing the string
+    # "start_later" must not be diagnosed as one.
+    form=$(printf '%s' "$line" | sed -n 's/^[[:space:]]*\(start_[a-z]*\).*/\1/p')
+
+    inside=no
+    [ "$lineno" -gt "$open_line" ] && [ "$lineno" -lt "$close_line" ] && inside=yes
+
+    case "$form" in
+    start_later)
+        # Against the BARRIER line, not the block's opening brace: a start_later
+        # at the top of the block is inside it and still races the pave.
+        if [ "$inside" = no ] || [ "$lineno" -lt "$barrier_line" ]; then
+            fail "line $lineno: start_later is not below the $barrier call inside the block (lines $open_line-$close_line, barrier on $barrier_line), so it does not wait"
+        fi
+        continue
+        ;;
+    start_when)
+        [ "$inside" = no ] || fail \
+            "line $lineno: start_when is inside the block, which already waits on $barrier -- it carries its own wait and belongs outside"
+        # `start_when <command> "<cmd>"`: two arguments, the first unquoted.
+        printf '%s' "$line" | grep -q '^[[:space:]]*start_when[[:space:]][^[:space:]"]\{1,\}[[:space:]]*"' \
+            || fail "line $lineno: start_when names no command to wait for"
+        continue
+        ;;
+    esac
+
+    # start_now from here down.
+    if [ "$inside" = yes ]; then
+        fail "line $lineno: start_now is inside the block that waits on $barrier, so it is not immediate -- use start_later"
+        continue
+    fi
+
+    case "$line" in
+    *'#'*needs:*) ;;
+    *)
+        fail "line $lineno: start_now with no \`# needs:\` declaration -- name what must already be installed, or use start_later"
+        continue
+        ;;
+    esac
+
+    needs=${line#*needs:}
+    if [ -z "$(printf '%s' "$needs" | tr -d '[:space:]')" ]; then
+        fail "line $lineno: empty \`# needs:\` declaration"
+        continue
+    fi
+    # -F, not a plain -x: a package name is a literal. `libfoo.bar` matched
+    # `libfoo-bar` as a regex, so a typo could certify itself.
+    for pkg in $needs; do
+        grep -qxF -- "$pkg" "$manifest" || fail \
+            "line $lineno: start_now needs '$pkg', absent from tests/base-manifest.txt -- CORE installs no packages, so it is not there at the first login; use start_later"
+    done
+done < "$launches"
+
+exit "$rc"

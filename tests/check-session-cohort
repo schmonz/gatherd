@@ -1,0 +1,271 @@
+#!/bin/sh
+# Unit tests for gatherd-check-session-cohort.
+#
+# The cases that matter reproduce the 2026-09-07 repave: a helper started ahead
+# of a package the REST tier installs, and a helper that never said what it
+# needed. The rest pin the ways a gate like this goes quietly useless -- a
+# missing or commented-out barrier, a launch that sits outside the block that
+# waits, an unreadable input reported as "could not run" rather than "clean".
+#
+# Usage: tests/check-session-cohort
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+GATE="$REPO/scripts/gatherd-check-session-cohort"
+PASS=0
+FAIL=0
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/scripts" "$WORK/tests" "$WORK/roles/desktop/tasks"
+
+# A two-package base: one thing that ships with the machine, and nothing else.
+# Anything not named here is, by definition, installed by REST.
+printf 'networkmanager\nfuzzel\nlibfoo-bar\n' > "$WORK/tests/base-manifest.txt"
+
+# The gate also asserts the barrier is real and installed, so the sandbox needs
+# both -- otherwise deleting the install task would leave every case green while
+# the barrier degraded to a no-op.
+printf '#!/bin/sh\nexit 0\n' > "$WORK/scripts/gatherd-await-async"
+chmod 755 "$WORK/scripts/gatherd-await-async"
+printf -- '- name: Install gatherd-await-async barrier script\n  ansible.builtin.copy:\n    src: "{{ setup_dir }}/scripts/gatherd-await-async"\n' \
+    > "$WORK/roles/desktop/tasks/core.yml"
+
+helpers() { cat > "$WORK/scripts/gatherd-session-helpers"; }
+
+assert_rc() {
+    _d=$1; _want=$2
+    if "$GATE" "$WORK" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want rc=$_want got rc=$_got)"; sed 's/^/       /' "$WORK/out"; fi
+}
+assert_says() {
+    _d=$1; _want=$2
+    if grep -q -- "$_want" "$WORK/out"; then ok "$_d"; else bad "$_d (no '$_want' in output)"; sed 's/^/       /' "$WORK/out"; fi
+}
+
+# 1. All three forms used properly.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_when()  { shift; sh -c "$1" & }
+start_now "$bin/watcher"  # needs: networkmanager
+start_when nowayprompt "$bin/gatherd-prompt-vault"
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/gatherd-prompt-tailscale"
+} &
+EOF
+assert_rc "a correct cohort exits 0" 0
+
+# 2. The actual bug: started immediately, subject arrives with REST.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/gatherd-prompt-tailscale"  # needs: tailscale
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "start_now needing a REST package fails" 1
+assert_says "and names the package" "needs 'tailscale'"
+
+# 3. Silence is not a pass: an undeclared start_now must fail, so the author
+#    answers the question rather than skipping it.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/gatherd-prompt-tailscale"
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "undeclared start_now fails" 1
+assert_says "and says what is missing" "no \`# needs:\` declaration"
+
+# 4. Several packages on one line, one of them bad.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/watcher"  # needs: networkmanager conky fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "one bad package among good ones fails" 1
+assert_says "and names the bad one, not the good ones" "needs 'conky'"
+
+# 5. start_later above the block.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_later "$bin/gatherd-prompt-tailscale"
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "start_later above the block fails" 1
+assert_says "and says it does not wait" "does not wait"
+
+# 6. start_later below the closing `} &`. A line-number test passes this,
+#    because its line number is greater than the barrier's.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/first"
+} &
+start_later "$bin/gatherd-prompt-tailscale"
+EOF
+assert_rc "start_later below the closing brace fails" 1
+assert_says "and says it does not wait" "does not wait"
+
+# 7. start_later inside the block but ABOVE the barrier call -- the most natural
+#    mistake to make, dropping a new helper at the top of the block. A test that
+#    only checks the block's bounds passes this.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+{
+    start_later "$bin/RACES-THE-BARRIER"
+    "$bin/gatherd-await-async"
+    start_later "$bin/ok"
+} &
+EOF
+assert_rc "start_later above the barrier inside the block fails" 1
+assert_says "and says it does not wait" "does not wait"
+
+# 8. A commented-out barrier: every start_later reads as gated and waits for
+#    nothing. A grep for the name alone matches the comment.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+{
+#   "$bin/gatherd-await-async"
+    start_later "$bin/gatherd-prompt-tailscale"
+} &
+EOF
+assert_rc "a commented-out barrier is rc=2, not a pass" 2
+assert_says "and says it is not invoked" "never invokes gatherd-await-async"
+
+# 9. start_now inside the block is delayed despite its name, and its declaration
+#    then certifies nothing.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+{
+    "$bin/gatherd-await-async"
+    start_now "$bin/watcher"  # needs: fuzzel
+} &
+EOF
+assert_rc "start_now inside the block fails" 1
+assert_says "and says it is not immediate" "not immediate"
+
+# 10. start_when carries its own wait, so nesting it delays it twice.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_when()  { shift; sh -c "$1" & }
+{
+    "$bin/gatherd-await-async"
+    start_when nowayprompt "$bin/gatherd-prompt-vault"
+} &
+EOF
+assert_rc "start_when inside the block fails" 1
+assert_says "and says it already waits" "carries its own wait"
+
+# 11. start_when with no command to wait for waits for nothing.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_when()  { shift; sh -c "$1" & }
+start_when "$bin/gatherd-prompt-vault"
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "start_when without a command fails" 1
+assert_says "and says what is missing" "names no command"
+
+# 12. A launch whose argument is not a quoted string is invisible to every rule
+#     above, so it must be rejected rather than skipped.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_later $cmd
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "an unquoted launch argument fails" 1
+assert_says "and says why nothing can check it" "not a quoted string"
+
+# 13. A package name is a literal, not a regex: a typo must not match its
+#     neighbour and certify itself.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/watcher"  # needs: libfoo.bar
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "a regex metachar does not match a different package" 1
+assert_says "and names the undeclared spelling" "needs 'libfoo.bar'"
+
+# 14. A file that never calls the barrier: start_later would be decoration.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/watcher"  # needs: fuzzel
+start_later "$bin/other"
+EOF
+assert_rc "a missing barrier is rc=2, not a pass" 2
+
+# 15. Prose and definitions are not launches. A file with nothing to check is a
+#     could-not-run, not a clean bill of health -- silence is the failure this
+#     gate guards against.
+helpers <<'EOF'
+# start_now is the exception; prefer start_later.
+{
+    "$bin/gatherd-await-async"
+} &
+EOF
+assert_rc "a file with no launches is rc=2" 2
+
+# 16. The barrier script itself must exist and be installed by a role. Deleting
+#     the copy task would otherwise leave this suite green while every
+#     start_later waited on a command that is not there.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/watcher"  # needs: fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+mv "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.bak"
+assert_rc "an uninstalled barrier is rc=2" 2
+assert_says "and says so" "no role installs"
+mv "$WORK/core.yml.bak" "$WORK/roles/desktop/tasks/core.yml"
+
+# 17. Unreadable inputs are rc=2. A gate that returns 0 when it could not look is
+#     worse than no gate.
+rm -f "$WORK/scripts/gatherd-session-helpers"
+assert_rc "an unreadable helpers file is rc=2" 2
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

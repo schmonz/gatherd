@@ -39,6 +39,9 @@ gatherd_home="${GATHERD_HOME:-/usr/local/lib/gatherd}"
 # most -- that it actually waits -- is the one no test can reach.
 sentinel="${GATHERD_ASYNC_SENTINEL:-/etc/gatherd/async-complete}"
 core_marker="${GATHERD_CORE_MARKER:-/etc/gatherd/last-run}"
+# Same variable name and default gatherd-await-and-run uses for the file whose
+# existence gates it -- see below.
+core_complete="${GATHERD_CORE_COMPLETE:-/etc/gatherd/core-complete}"
 stamp="${sentinel}-finished"
 
 # Freshness, not existence. site-async.yml overwrites the sentinel at the end of
@@ -47,8 +50,10 @@ stamp="${sentinel}-finished"
 # for existence would return instantly on exactly the boots where a newly added
 # helper most needs to wait.
 #
-# Only exit 1 means converged. A missing or non-executable script exits 127, and
-# treating that as converged would silently turn this barrier into a no-op.
+# Only exit 1 means converged. A missing script exits 127 and a non-executable
+# one 126 (measured: `sh -c '/no/such/file'` vs. the same path chmod 644'd),
+# and treating either as converged would silently turn this barrier into a
+# no-op.
 current() {
     "$gatherd_home/scripts/gatherd-needs-run" "$1"
     [ "$?" -eq 1 ]
@@ -61,6 +66,38 @@ timeout=${GATHERD_AWAIT_ASYNC_TIMEOUT:-3600}
 case "$timeout" in
 '' | *[!0-9]*) timeout=3600 ;;
 esac
+
+# All-digit is not the same as safe. A leading zero makes `$(( ))` read the rest
+# as octal: `08`/`019` contain a digit no octal number can, and error outright
+# ("value too great for base") rather than fall back to anything, which would
+# have hit the same `set -u`-adjacent crash the case above exists to avoid;
+# `007` parses fine but silently means 7, which happens to equal decimal 7 here
+# and would not for e.g. `017` (15). Stripped so every digit string is read the
+# way it looks: in base 10.
+while [ "${#timeout}" -gt 1 ]; do
+    case "$timeout" in
+    0*) timeout=${timeout#0} ;;
+    *) break ;;
+    esac
+done
+
+# And a value need not look wrong to break the arithmetic below: an
+# unreasonably large one (a fat-fingered extra digit, or the literal max of
+# whatever integer type the arithmetic uses) makes `$(( now + timeout ))`
+# overflow past that type's max and wrap negative, so `[ "$(date +%s)" -lt
+# "$deadline" ]` reads a deadline already in the past and releases at once on a
+# machine that has not converged -- measured at 21ms with
+# 9223372036854775807. One day is generous for even a stalled AUR tier and, at
+# five digits, small enough that the clamp comparison below can never itself
+# overflow.
+max_timeout=86400
+case "$timeout" in
+[0-9] | [0-9][0-9] | [0-9][0-9][0-9] | [0-9][0-9][0-9][0-9] | [0-9][0-9][0-9][0-9][0-9])
+    [ "$timeout" -gt "$max_timeout" ] && timeout=$max_timeout
+    ;;
+*) timeout=$max_timeout ;;
+esac
+
 deadline=$(( $(date +%s) + timeout ))
 
 while :; do
@@ -72,11 +109,31 @@ while :; do
     # failed run. gatherd-await-and-run writes it on every exit path.
     current "$stamp" && break
 
-    # Or CORE never converged, in which case gatherd-await-and-run is blocked
-    # before the playbook and REST will not start at all this boot. Waiting for
-    # it would cost an hour of no tray and no polkit agent at exactly the moment
-    # a broken machine needs them.
-    [ -f "$core_marker" ] && [ "$(head -n1 "$core_marker" 2>/dev/null)" != ok ] && break
+    # Or REST cannot ever start this boot. gatherd-await-and-run gates on
+    # core-complete's EXISTENCE (`while [ ! -f "$complete" ]`), not its
+    # freshness, so that file being present is not proof CORE just succeeded --
+    # it can be a stale leftover from a previous converge while a `git pull`'s
+    # CORE re-run is failing right now. Measured: releasing on last-run alone (an
+    # earlier version of this check) fired in that exact state, on the false
+    # premise that a non-ok last-run always means REST never started -- and put
+    # the cohort in front of a live install, the same failure class this barrier
+    # exists to prevent, reached from underneath it. So both conditions, in this
+    # order: core-complete absent (REST truly has nothing to start from) AND
+    # last-run says CORE did not succeed (it is not just still running).
+    #
+    # An unreadable last-run is the same "cannot tell" as CORE still running --
+    # wait, don't release. last-run is root-owned and this runs as the desktop
+    # user; its mode is 0644 today (gatherd-run-core's bare redirect plus the
+    # process umask) but nothing guarantees that stays true, and misreading
+    # "cannot tell" as "failed" is the same class of false release as above.
+    if [ ! -f "$core_complete" ] && [ -r "$core_marker" ]; then
+        # Trim whitespace before the equality compare -- commit fc06442 exists in
+        # this plan because an untrimmed marker has already caused a false
+        # compare once. [[:space:]] covers space/tab/CR in the POSIX/C locale, the
+        # same class that regression needed.
+        status=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e q "$core_marker" 2>/dev/null)
+        [ "$status" != ok ] && break
+    fi
 
     [ "$(date +%s)" -lt "$deadline" ] || break
     sleep 2

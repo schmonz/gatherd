@@ -56,7 +56,10 @@ playbook_declares_vault() {
     awk '
         function strip_comment(s) { sub(/#.*/, "", s); return s }
         function indent_of(s,   t) { t = s; sub(/[^ \t].*/, "", t); return length(t) }
-        function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+        # \r joins \t and space here because splitting a CRLF file on \n
+        # leaves \r as the last character of every line, and an untrimmed \r
+        # broke the bare "vars_files:" == "" check that starts block mode.
+        function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
 
         {
             line = strip_comment($0)

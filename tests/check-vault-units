@@ -139,5 +139,15 @@ assert_rc "multi-line flow-style vars_files without the flag still fails" 1
 unit gatherd-vault.service '--needs-vault /etc/gatherd/vault-complete' site-vault.yml
 assert_rc "multi-line flow-style vars_files with the flag is clean" 0
 
+# 12. A CRLF-terminated playbook is valid YAML. The bare "vars_files:" line
+#     ending "\r\n" left a stray "\r" that made it compare unequal to "",
+#     so block mode was never entered -- dark in both directions.
+printf -- '---\r\n- hosts: localhost\r\n  vars_files:\r\n    - vault/vault.yml\r\n' > "$WORK/site-vault.yml"
+unit gatherd-vault.service '/etc/gatherd/vault-complete' site-vault.yml
+assert_rc "a CRLF playbook without the flag still fails" 1
+
+unit gatherd-vault.service '--needs-vault /etc/gatherd/vault-complete' site-vault.yml
+assert_rc "a CRLF playbook with the flag is clean" 0
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

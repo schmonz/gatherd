@@ -140,6 +140,90 @@ if [[ "$health_rc" -ne 0 ]]; then
 fi
 echo "PASS: pacman can prepare a transaction"
 
+# Second member: pacman's copy of every local repository must be the current
+# one. A converge that builds a package and then dies before installing it
+# leaves the copy behind, and every AUR install task's
+# `update_cache: "{{ _aur_sync_x.changed }}"` asks a per-run question of that
+# durable state -- the next run builds nothing, so it refreshes nothing, so the
+# built package stays invisible to pacman forever. A real machine failed
+# `Install clight` for a clight sitting built in /var/cache/gatherd-aur.
+# Nothing in run 1 or run 2 notices on its own: both runs are equally wrong, so
+# the idempotency check below reads the wedged state as converged.
+#
+# Every file:// repository in /etc/pacman.conf is checked, not the one gatherd
+# happens to register: naming it here would go stale on a rename, and picking
+# just one would pick the wrong one the moment a second is added. A repository
+# with no database file at all is a failure, not a skip -- repo-add runs behind
+# a `creates:` guard, so the only way to reach here without one is that
+# aurutils.yml did not run, which is exactly what this is looking for.
+#
+# Note what this is and is not. The VM starts from a Calamares snapshot with no
+# /var/cache/gatherd-aur, so run 1 creates both databases in order and they
+# agree even with the aurutils.yml fix reverted -- the wedge needs a run that
+# did not finish, and `set -e` plus site-async.yml's non-zero exit abort this
+# script before the assertions whenever a tier fails. So this is a tripwire for
+# a future regression, not a reproduction of the bug that prompted it. That one
+# was measured on a real machine, where it named clight.
+sync_rc=0
+"${SSH[@]}" sh -s <<'REMOTE' || sync_rc=$?
+set -u
+work=$(mktemp -d) || exit 1
+trap 'rm -rf "$work"' EXIT
+status=0
+
+awk '/^\[/ { name = substr($0, 2, length($0) - 2) }
+     /^Server *= *file:\/\// { sub(/^Server *= *file:\/\//, ""); print name "\t" $0 }' \
+    /etc/pacman.conf > "$work/repos"
+
+if [ ! -s "$work/repos" ]; then
+    echo "no file:// repository is registered in /etc/pacman.conf"
+    exit 1
+fi
+
+while IFS="$(printf '\t')" read -r name dir; do
+    # $name.db, followed, is the path pacman fetches through -- not the
+    # .db.tar.zst behind it, which can agree while the symlink is broken.
+    repo="$dir/$name.db"
+    synced="/var/lib/pacman/sync/$name.db"
+    missing=
+    for f in "$repo" "$synced"; do
+        [ -f "$f" ] && continue
+        echo "$name: $f does not exist"
+        missing=yes
+        status=1
+    done
+    # Per repository, not the shared $status: one bad repository must not stop
+    # the next from being looked at, which is the whole reason for the loop.
+    [ -z "$missing" ] || continue
+    [ "$(md5sum <"$repo")" = "$(md5sum <"$synced")" ] && continue
+
+    status=1
+    echo "pacman's copy of $name is not the repository it copies:"
+    echo "  $repo   $(date -r "$repo" '+%F %T')"
+    echo "  $synced $(date -r "$synced" '+%F %T')"
+    bsdtar -tf "$repo" | sed -n 's|^\(.*\)-[^-]*-[^-]*/$|\1|p' |
+        LC_ALL=C sort -u > "$work/in-repo"
+    pacman -Sl "$name" | awk '{print $2}' | LC_ALL=C sort > "$work/in-pacman"
+    # Both directions. The reverse -- pacman's copy naming packages the
+    # repository no longer has -- comes from the same clock and rollback cases
+    # aurutils.yml names, not from paccache, which only ever reads
+    # /var/cache/pacman/pkg. A failure that prints an empty list under a
+    # heading is the kind people learn to ignore.
+    comm -13 "$work/in-pacman" "$work/in-repo" |
+        sed 's/^/  in the repository, invisible to pacman: /'
+    comm -23 "$work/in-pacman" "$work/in-repo" |
+        sed 's/^/  known to pacman, gone from the repository: /'
+done < "$work/repos"
+
+exit "$status"
+REMOTE
+
+if [[ "$sync_rc" -ne 0 ]]; then
+    echo "FAIL: run 1 left pacman unable to see packages it built"
+    exit 1
+fi
+echo "PASS: pacman's copy of every local repository is current"
+
 # ── Run 2: idempotency check ──────────────────────────────────────────────────
 
 echo "=== Run 2 (idempotency check) ==="

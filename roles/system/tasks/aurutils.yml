@@ -99,15 +99,77 @@
 # changed: a machine that registered the repo and then failed before syncing --
 # i.e. every machine this has already bitten -- has an unchanged pacman.conf,
 # so a changed-guarded sync would never repair it.
-- name: Check for the local AUR repository's sync database
+#
+# Stale counts as well as missing, and for the same reason. Every AUR install
+# task passes `update_cache: "{{ _aur_sync_x.changed }}"`, which asks a per-run
+# question ("did this run build something?") of durable state ("is pacman's
+# copy of the repo database current?"). A run that builds a package and then
+# dies before installing it -- an interrupted repave, a tier that fails in
+# between -- leaves the two permanently apart: the next run's build says "there
+# is nothing to do", so it never refreshes, so pacman never sees the package,
+# forever. On the machine that prompted this, clight-4.11-1 sat built in
+# /var/cache/gatherd-aur and named in the repo database while pacman's copy was
+# half an hour older and did not name it, and `Install clight` failed. Asking
+# the durable question here settles it before any tier installs what an earlier
+# run built.
+#
+# Note that the module's error there -- "Failed to list package clight",
+# `error: 'clight': could not find or read package` -- is NOT diagnostic of
+# this. It is community.general.pacman's fallback chain: name absent from the
+# `pacman -Sl` inventory, `pacman -S --print-format` fails, `pacman -U
+# --print-format` fails, and the module reports that last command's stderr. A
+# typo in aur_packages produces the same bytes. The database comparison is what
+# distinguishes them.
+#
+# pacman copies a file:// repository's database byte for byte, so equal
+# checksums mean the copy is current. It does NOT copy on content alone:
+# measured against a scratch pacman root, a repository database whose contents
+# differ but whose mtime is older than the copy is not fetched by `pacman -Sy`
+# at all, and `--refresh` (a second -y) is what takes it. That direction is
+# reachable -- a Timeshift rollback of /var/cache, an rsync -a restore, a first
+# boot whose clock steps backwards when NTP corrects the RTC -- and without the
+# extra -y this task would run forever, change nothing, and report changed
+# false, because the module derives changed from pacman -Sl before and after.
+#
+# update_cache_extra_args, not `force: true`. Both reach the same `-Syy` (the
+# module's base command is already --sync --refresh and appends this to it), but
+# force also sets cache_updated unconditionally, which would report changed on
+# every converge and fail the idempotency run.
+#
+# Refreshing means `pacman -Sy`, which touches every configured repo and takes
+# db.lck, so a local defect is repaired by a network operation in the tier whose
+# failure is most expensive. That trade is why the condition is a comparison and
+# not a bare `true`: on a converged machine it is never paid.
+#
+# Guarded on isreg, not exists: stat only fills in `checksum` for a readable
+# regular file, and `exists` is lstat-based, so a dangling symlink or a
+# directory would be `exists: true` with no checksum key -- and an
+# undefined-attribute error here fails the first REST tier, taking etckeeper,
+# NFS, Timeshift and the fingerprint reader with it.
+- name: Look for pacman's copy of the local AUR repository database
   ansible.builtin.stat:
     path: "/var/lib/pacman/sync/{{ aur_repo_name }}.db"
   register: _aur_repo_sync_db
 
+# The .db, not the .db.tar.zst it points at, and followed. That symlink is
+# what pacman actually fetches through, it is maintained by a separate task
+# further down, and it has been observed missing while the tarball survived --
+# in which case the two tarballs agree, this reads converged, and pacman still
+# cannot fetch anything.
+- name: Look for the local AUR repository's own database
+  ansible.builtin.stat:
+    path: "{{ aur_repo_dir }}/{{ aur_repo_name }}.db"
+    follow: true
+  register: _aur_repo_db
+
 - name: Populate the local AUR repository's sync database
   community.general.pacman:
     update_cache: true
-  when: not _aur_repo_sync_db.stat.exists
+    update_cache_extra_args: --refresh
+  when: >-
+    not _aur_repo_sync_db.stat.isreg | default(false)
+    or (_aur_repo_db.stat.isreg | default(false)
+        and _aur_repo_db.stat.checksum != _aur_repo_sync_db.stat.checksum)
 
 - name: Read the pinned aurutils pkgver from the vendored PKGBUILD  # noqa: command-instead-of-module
   ansible.builtin.command: "grep -m1 -oP '(?<=^pkgver=).*' {{ setup_dir }}/packaging/aurutils/PKGBUILD"

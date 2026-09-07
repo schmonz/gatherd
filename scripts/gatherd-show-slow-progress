@@ -13,11 +13,16 @@
 # converged machine; the loop below then exits at once and reports completion.
 
 if [ -z "${GATHERD_SLOW_PROGRESS_TERM:-}" ]; then
-    # The async-complete sentinel is the whole gate: it is absent only on the
-    # first boot while slow packages are still pending or installing, and present
-    # forever after. So its absence means "there is work to watch" — show
-    # progress; its presence means "done" — stay silent, no flash on later
-    # logins. We deliberately do NOT also probe gatherd-async.service state:
+    # The async-complete sentinel is the whole gate: it is absent while slow
+    # packages are pending or installing, and present once they converged. So
+    # its absence means "there is work to watch" — show progress; its presence
+    # means "done" — stay silent, no flash on later logins. That holds for a
+    # re-converge too, because gatherd-run-core retires a sentinel whose HEAD
+    # has gone stale before greetd is unblocked. Do not be tempted to compare
+    # HEADs here instead: `git rev-parse` in the root-owned checkout only works
+    # for this user through the dotfiles' safe.directory=*, and a gate that
+    # fails open when git refuses would flash on every login and never say
+    # "complete". We deliberately do NOT also probe gatherd-async.service state:
     # at autostart time that service may not have reached 'active' yet, so gating
     # on it raced the window away before async came up. Waiting for the sentinel
     # in the loop below is race-free and keeps this decision init-agnostic.

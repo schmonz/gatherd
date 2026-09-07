@@ -53,7 +53,7 @@ run "$REPO/scripts/gatherd-check-aur-deps" "$REPO"
 
 printf '\n== unit tests ==\n'
 for suite in check-package-tiers check-migrations check-aur-deps assert-aur-deps \
-             census-removals migration-checks; do
+             census-removals migration-checks run-core; do
     [ -x "$REPO/tests/$suite" ] && run "$REPO/tests/$suite"
 done
 

@@ -11,7 +11,7 @@
 set -eu
 
 sentinel="$1"
-gatherd_home=/usr/local/lib/gatherd
+gatherd_home="${GATHERD_HOME:-/usr/local/lib/gatherd}"
 
 [ -f "$sentinel" ] || exit 0
 

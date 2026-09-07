@@ -50,10 +50,11 @@ printf '\n== gates, against this working tree ==\n'
 run "$REPO/scripts/gatherd-check-package-tiers" "$REPO"
 run "$REPO/scripts/gatherd-check-migrations" "$REPO"
 run "$REPO/scripts/gatherd-check-aur-deps" "$REPO"
+run "$REPO/scripts/gatherd-check-vault-units" "$REPO"
 
 printf '\n== unit tests ==\n'
 for suite in check-package-tiers check-migrations check-aur-deps assert-aur-deps \
-             census-removals migration-checks await-and-run; do
+             census-removals migration-checks await-and-run check-vault-units; do
     [ -x "$REPO/tests/$suite" ] && run "$REPO/tests/$suite"
 done
 

@@ -1,0 +1,72 @@
+#!/bin/sh
+# Unit tests for gatherd-check-vault-units.
+#
+# The flag is a declaration, and a declaration can drift from what it describes.
+# Both directions are failures: a playbook that reads the vault but whose unit
+# forgot the flag dies at parse time with "Attempting to decrypt but no vault
+# secrets found", and a unit that passes the flag for a playbook with no vault
+# vars silently reinstates the coupling this whole change removed.
+#
+# Usage: tests/check-vault-units
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+GATE="$REPO/scripts/gatherd-check-vault-units"
+PASS=0
+FAIL=0
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/services/system"
+
+assert_rc() {
+    _d=$1; _want=$2
+    if "$GATE" "$WORK" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want rc=$_want got rc=$_got)"; sed 's/^/       /' "$WORK/out"; fi
+}
+assert_says() {
+    _d=$1; _want=$2
+    if grep -q -- "$_want" "$WORK/out"; then ok "$_d"; else bad "$_d (no '$_want' in output)"; fi
+}
+
+unit() {
+    printf '[Service]\nExecStart=/usr/local/lib/gatherd/scripts/gatherd-await-and-run %s /usr/local/lib/gatherd/%s\n' \
+        "$2" "$3" > "$WORK/services/system/$1"
+}
+
+# 1. Matched pair: the vault play declares vault vars and its unit passes the
+#    flag; the async play declares none and its unit does not.
+printf -- '---\n- hosts: localhost\n  vars_files:\n    - vault/vault.yml\n' > "$WORK/site-vault.yml"
+printf -- '---\n- hosts: localhost\n' > "$WORK/site-async.yml"
+unit gatherd-vault.service '--needs-vault /etc/gatherd/vault-complete' site-vault.yml
+unit gatherd-async.service '/etc/gatherd/async-complete' site-async.yml
+assert_rc "a matched pair exits 0" 0
+
+# 2. A playbook reads the vault and its unit forgot the flag.
+unit gatherd-vault.service '/etc/gatherd/vault-complete' site-vault.yml
+assert_rc "vault vars without the flag fails" 1
+assert_says "and names the playbook" "site-vault.yml"
+
+# 3. A unit passes the flag for a playbook with no vault vars, quietly putting
+#    the coupling back.
+unit gatherd-vault.service '--needs-vault /etc/gatherd/vault-complete' site-vault.yml
+unit gatherd-async.service '--needs-vault /etc/gatherd/async-complete' site-async.yml
+assert_rc "the flag on a vault-free playbook fails" 1
+assert_says "and names that playbook" "site-async.yml"
+
+# 4. A unit naming a playbook that is not in the repo is a could-not-run, never a
+#    pass -- a gate that returns 0 when it could not look is worse than no gate.
+unit gatherd-async.service '/etc/gatherd/async-complete' site-missing.yml
+assert_rc "a missing playbook is rc=2" 2
+
+# 5. No units at all is also rc=2, not a clean bill of health.
+rm -f "$WORK/services/system"/*.service
+assert_rc "no units to check is rc=2" 2
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

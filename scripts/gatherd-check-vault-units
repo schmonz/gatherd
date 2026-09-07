@@ -1,0 +1,64 @@
+#!/bin/sh
+# Fail if a unit's --needs-vault flag disagrees with its playbook.
+#
+# gatherd-await-and-run takes --needs-vault, and exactly the units whose playbook
+# declares `vars_files: vault/vault.yml` may pass it. The flag exists because the
+# wait used to be unconditional, which made the REST tier hostage to a password
+# site-async.yml never reads -- and REST installs nowayprompt, which the
+# in-session vault prompt needs to render, so on a fresh machine the password
+# could not even be asked for.
+#
+# Both directions are failures. A playbook that gained vault vars whose unit
+# forgot the flag dies at parse time ("Attempting to decrypt but no vault secrets
+# found") -- loud, but only at runtime, on the machine, during a pave. A unit
+# that passes the flag for a playbook with no vault vars silently restores the
+# deadlock.
+#
+# DECLARED, not present: this reads the repo, never the machine it runs on.
+#
+# Exit 0 clean, 1 violation, 2 could not run. Never a silent skip.
+#
+# Usage: gatherd-check-vault-units [repo-root]
+set -u
+
+repo="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
+units="$repo/services/system"
+
+die() { printf 'gatherd-check-vault-units: %s\n' "$1" >&2; exit 2; }
+
+[ -d "$units" ] || die "cannot read $units"
+
+rc=0
+fail() { printf 'FAIL %s\n' "$1" >&2; rc=1; }
+
+checked=0
+for unit in "$units"/*.service; do
+    [ -f "$unit" ] || continue
+    line=$(grep -m1 '^ExecStart=.*gatherd-await-and-run' "$unit") || continue
+    checked=$((checked + 1))
+
+    # The playbook is the last whitespace-separated word of the ExecStart line.
+    playbook=${line##* }
+    # Units name absolute deployed paths; map that back onto this checkout.
+    rel=${playbook#/usr/local/lib/gatherd/}
+    [ -f "$repo/$rel" ] || die "$(basename "$unit") names $playbook, which is not in this repo"
+
+    declares=no
+    grep -qE '^[[:space:]]*-[[:space:]]*vault/vault\.yml[[:space:]]*$' "$repo/$rel" && declares=yes
+
+    passes=no
+    case "$line" in
+    *--needs-vault*) passes=yes ;;
+    esac
+
+    if [ "$declares" = yes ] && [ "$passes" = no ]; then
+        fail "$(basename "$unit"): $rel declares vars_files: vault/vault.yml but the unit does not pass --needs-vault -- the play will die at parse time with 'no vault secrets found'"
+    fi
+    if [ "$declares" = no ] && [ "$passes" = yes ]; then
+        fail "$(basename "$unit"): passes --needs-vault for $rel, which declares no vault vars -- that blocks the play on a password it never reads"
+    fi
+done
+
+[ "$checked" -gt 0 ] || die "no gatherd-await-and-run units found under $units"
+
+exit "$rc"

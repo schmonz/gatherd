@@ -48,6 +48,16 @@ mark_finished() {
     printf '%s\n' "$_head" > "$stamp" 2>/dev/null || true
 }
 
+# Deliberately no trap to call mark_finished on SIGTERM. A killed run leaves no
+# stamp on purpose: gatherd-async.service restarts at the next boot and runs the
+# play for real, and that run's own mark_finished is what should release the
+# barrier. A stamp written on TERM would record this HEAD as finished for a run
+# that never actually finished, so the next login's barrier would release
+# immediately while the new run is still going -- a false release, the same
+# class of bug an earlier version of this barrier was reverted for. The one case
+# this leaves uncovered -- the unit stopped by hand and never restarted -- is the
+# barrier's timeout doing its job, not a bug.
+
 # Nothing to do if this play isn't deployed (e.g. no site-vault.yml).
 [ -f "$playbook" ] || exit 0
 
@@ -86,7 +96,11 @@ fi
 # ansible resolves ansible.cfg from the working directory.
 cd "$gatherd_home"
 
-ansible-galaxy collection install --requirements-file "$gatherd_home/requirements.yml"
+ansible-galaxy collection install --requirements-file "$gatherd_home/requirements.yml" && rc=0 || rc=$?
+if [ "$rc" -ne 0 ]; then
+    mark_finished
+    exit "$rc"
+fi
 
 # Hold off sleep during the long package run when the tooling is available
 # (elogind ships systemd-inhibit on Artix too), but tolerate its absence. The

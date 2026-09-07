@@ -41,10 +41,14 @@ cat > "$WORK/stub/ansible-playbook" <<STUB
 printf '%s\n' "\$*" >> "$WORK/argv"
 exit "\$(cat "$WORK/rc" 2>/dev/null || echo 0)"
 STUB
-printf '#!/bin/sh\nexit 0\n' > "$WORK/stub/ansible-galaxy"
+cat > "$WORK/stub/ansible-galaxy" <<STUB
+#!/bin/sh
+exit "\$(cat "$WORK/galaxy_rc" 2>/dev/null || echo 0)"
+STUB
 printf '#!/bin/sh\nexit 0\n' > "$WORK/stub/ansible-vault"
 chmod 755 "$WORK/stub"/*
 printf '0\n' > "$WORK/rc"
+printf '0\n' > "$WORK/galaxy_rc"
 
 run_runner() {
     rm -f "$WORK/argv"
@@ -110,6 +114,18 @@ printf '%s\n' "$HEAD" > "$WORK/etc/async-complete"
 run_runner "$WORK/etc/async-complete" "$WORK/gatherd/site-async.yml"
 assert "an already-converged short-circuit writes it" -f "$STAMP"
 assert "and exits 0 (rc=$RC)" "$RC" -eq 0
+
+# 6. ansible-galaxy runs under set -eu before mark_finished; an unguarded
+#    failure there aborts the whole script via errexit and the stamp never
+#    gets written -- the same missed-exit-path bug as case 4, one command
+#    earlier. Collections are fetched over the network, which is exactly the
+#    kind of transient failure this barrier exists to tolerate.
+rm -f "$STAMP" "$WORK/etc/async-complete"
+printf '7\n' > "$WORK/galaxy_rc"
+run_runner "$WORK/etc/async-complete" "$WORK/gatherd/site-async.yml"
+assert "an ansible-galaxy failure writes the stamp" -f "$STAMP"
+assert "and propagates its exit code (rc=$RC)" "$RC" -eq 7
+printf '0\n' > "$WORK/galaxy_rc"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

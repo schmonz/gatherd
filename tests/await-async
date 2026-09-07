@@ -16,11 +16,13 @@
 #     is what tells those two apart;
 #   - it must treat an unreadable last-run the same as CORE still running (wait),
 #     never the same as CORE having failed (release);
+#   - it must trim whitespace before comparing last-run's content, not compare
+#     it exactly;
 #   - it must treat a missing or non-executable gatherd-needs-run as "cannot
 #     tell", never as "converged";
 #   - a timeout value that is all digits but not a safe one (a leading zero, or
 #     one big enough to overflow the deadline arithmetic) must not crash the
-#     script or release it early;
+#     script, release it early, or be read as octal instead of decimal;
 #   - it must always exit 0, because it is a wait and not a predicate.
 #
 # Usage: tests/await-async
@@ -120,6 +122,16 @@ run_barrier env GATHERD_AWAIT_ASYNC_TIMEOUT=60
 assert "releases when CORE never completed at all (${ELAPSED}s)" "$ELAPSED" -le 5
 assert "and exits 0 (rc=$RC)" "$RC" -eq 0
 
+# 6a. The equality compare against last-run's content must be trimmed, not
+# exact: with core-complete absent, "ok " with a trailing space is CORE
+# succeeding, and reading it as anything else releases the cohort in front of a
+# CORE run that is (as far as this file can tell) still in progress.
+printf 'ok \n' > "$LASTRUN"
+run_barrier env GATHERD_AWAIT_ASYNC_TIMEOUT=3
+assert "waits when last-run is \"ok \" with trailing whitespace (${ELAPSED}s)" "$ELAPSED" -ge 2
+assert "and exits 0 (rc=$RC)" "$RC" -eq 0
+printf 'ok\n' > "$LASTRUN"
+
 # 7. CORE failed on a `git pull` re-run, but core-complete is a STALE leftover
 # from the previous converge -- gatherd-await-and-run's gate is existence, not
 # freshness, so REST is genuinely running right now behind that stale file. An
@@ -161,9 +173,11 @@ assert "returns at once on a foreign-owned checkout (${ELAPSED}s)" "$ELAPSED" -l
 # 11. All-digit is not the same as safe. Each of these parses without error
 # under the naive *[!0-9]* guard but breaks the arithmetic a different way:
 # 08/019 contain a digit no octal literal can (`$(( ))` errors outright), 007
-# quietly means 7, and the u64-max value overflows the deadline negative and
-# would release at once on an unconverged machine. Each must still park in the
-# wait loop and release only when the real stamp lands.
+# quietly means 7 (kept even though that coincides with its decimal reading --
+# it still proves a leading zero made only of valid octal digits does not
+# crash, which 08/019 don't cover), and the u64-max value overflows the
+# deadline negative and would release at once on an unconverged machine. Each
+# must still park in the wait loop and release only when the real stamp lands.
 for bad_timeout in 08 019 007 9223372036854775807; do
     printf '%s\n' 0000000000000000000000000000000000000000 > "$SENTINEL"
     release_stamp_after 2
@@ -173,6 +187,15 @@ for bad_timeout in 08 019 007 9223372036854775807; do
     assert "and still releases on the real stamp (${ELAPSED}s)" "$ELAPSED" -le 10
     assert "and exits 0 (rc=$RC)" "$RC" -eq 0
 done
+
+# 11a. `007` above cannot tell octal from decimal parsing apart -- they agree.
+# `010` does: octal 8 vs. decimal 10. No stamp arrives here, so the barrier
+# runs out the actual bound; reading it as decimal is what makes the wait land
+# at 10s rather than 8.
+printf '%s\n' 0000000000000000000000000000000000000000 > "$SENTINEL"
+rm -f "$STAMP"
+run_barrier env GATHERD_AWAIT_ASYNC_TIMEOUT=010
+assert "GATHERD_AWAIT_ASYNC_TIMEOUT=010 waits 10s, not octal's 8 (${ELAPSED}s)" "$ELAPSED" -ge 9
 
 # 12. Always exits 0 is an invariant, not an aspiration: a garbage bound must not
 # throw under `set -u`, nor be mistaken for "no bound at all" -- it must still

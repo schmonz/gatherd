@@ -68,5 +68,55 @@ assert_rc "a missing playbook is rc=2" 2
 rm -f "$WORK/services/system"/*.service
 assert_rc "no units to check is rc=2" 2
 
+# The async unit stays a harmless, correctly-matched bystander for the rest of
+# this file: unchanged playbook, unchanged unit, never touched again.
+unit gatherd-async.service '/etc/gatherd/async-complete' site-async.yml
+
+# 6. A quoted scalar is ordinary YAML. An exact-anchor match that only
+#    recognizes a bare, unquoted list item reads this as "no vars_files" and
+#    lets the missing flag through clean -- exactly the failure mode this gate
+#    exists to catch.
+printf -- '---\n- hosts: localhost\n  vars_files:\n    - "vault/vault.yml"\n' > "$WORK/site-vault.yml"
+unit gatherd-vault.service '/etc/gatherd/vault-complete' site-vault.yml
+assert_rc "a double-quoted vars_files entry without the flag still fails" 1
+
+printf -- '---\n- hosts: localhost\n  vars_files:\n    - '"'"'vault/vault.yml'"'"'\n' > "$WORK/site-vault.yml"
+unit gatherd-vault.service '/etc/gatherd/vault-complete' site-vault.yml
+assert_rc "a single-quoted vars_files entry without the flag still fails" 1
+
+unit gatherd-vault.service '--needs-vault /etc/gatherd/vault-complete' site-vault.yml
+assert_rc "a single-quoted vars_files entry with the flag is clean" 0
+
+printf -- '---\n- hosts: localhost\n  vars_files:\n    - "vault/vault.yml"\n' > "$WORK/site-vault.yml"
+assert_rc "a double-quoted vars_files entry with the flag is clean" 0
+
+# 7. Flow style (vars_files: [vault/vault.yml]) is also ordinary YAML and hits
+#    the same gap.
+printf -- '---\n- hosts: localhost\n  vars_files: [vault/vault.yml]\n' > "$WORK/site-vault.yml"
+unit gatherd-vault.service '/etc/gatherd/vault-complete' site-vault.yml
+assert_rc "a flow-style vars_files entry without the flag still fails" 1
+
+unit gatherd-vault.service '--needs-vault /etc/gatherd/vault-complete' site-vault.yml
+assert_rc "a flow-style vars_files entry with the flag is clean" 0
+
+# 8. A trailing inline comment after the value is also ordinary YAML. It broke
+#    the old regex's trailing "$" anchor, which both flagged a
+#    correctly-configured pair as a spurious FAIL and let an unflagged unit's
+#    missing flag pass as a spurious clean bill of health.
+printf -- '---\n- hosts: localhost\n  vars_files:\n    - vault/vault.yml  # decrypted with .vault_pass\n' > "$WORK/site-vault.yml"
+unit gatherd-vault.service '--needs-vault /etc/gatherd/vault-complete' site-vault.yml
+assert_rc "a trailing comment on a correctly-configured pair is not a false FAIL" 0
+
+unit gatherd-vault.service '/etc/gatherd/vault-complete' site-vault.yml
+assert_rc "a trailing comment does not hide a missing flag" 1
+
+# 9. A line-continued ExecStart (valid systemd syntax) must not be reported as
+#    an unrecognized playbook path -- that buries the real, parseable problem
+#    behind a confusing "names \, which is not in this repo".
+printf '[Service]\nExecStart=/usr/local/lib/gatherd/scripts/gatherd-await-and-run \\\n    --needs-vault /etc/gatherd/vault-complete /usr/local/lib/gatherd/site-vault.yml\n' \
+    > "$WORK/services/system/gatherd-vault.service"
+assert_rc "a line-continued ExecStart is rc=2" 2
+assert_says "and names the real problem, not just 'not in this repo'" "continues"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

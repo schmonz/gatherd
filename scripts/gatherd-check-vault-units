@@ -31,6 +31,38 @@ die() { printf 'gatherd-check-vault-units: %s\n' "$1" >&2; exit 2; }
 rc=0
 fail() { printf 'FAIL %s\n' "$1" >&2; rc=1; }
 
+# A vars_files entry can be quoted or not, block or flow style, and can carry
+# a trailing comment -- all ordinary YAML. Matching only the bare, anchored
+# "- vault/vault.yml" line missed every one of those: a quoted entry (in no
+# way exotic) read as "no vars_files" and passed the gate clean on exactly the
+# failure mode it exists to catch.
+playbook_declares_vault() {
+    _file=$1
+
+    # Block style: "- vault/vault.yml", quoted or not, comment or not. Strip
+    # the leading "- ", then the trailing comment, then a pair of surrounding
+    # quotes, and compare what is left exactly -- so "vault/vault.yml.bak" or
+    # a path merely ending in it does not also match.
+    if sed -n 's/^[[:space:]]*-[[:space:]]*//p' "$_file" \
+        | sed -e 's/#.*$//' -e 's/[[:space:]]*$//' \
+              -e 's/^"\(.*\)"$/\1/' -e "s/^'\\(.*\\)'\$/\\1/" \
+        | grep -qFx 'vault/vault.yml'
+    then
+        return 0
+    fi
+
+    # Flow style: "vars_files: [vault/vault.yml]" or a multi-entry list on one
+    # line. Scoped to lines naming the key so a flow list under some other key
+    # can't trip this.
+    sed -e 's/#.*$//' "$_file" | grep -E 'vars_files:[[:space:]]*\[.*\]' \
+        | grep -Eo '\[[^][]*\]' \
+        | sed -e 's/^\[//' -e 's/\]$//' \
+        | tr ',' '\n' \
+        | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+              -e 's/^"\(.*\)"$/\1/' -e "s/^'\\(.*\\)'\$/\\1/" \
+        | grep -qFx 'vault/vault.yml'
+}
+
 checked=0
 for unit in "$units"/*.service; do
     [ -f "$unit" ] || continue
@@ -39,12 +71,20 @@ for unit in "$units"/*.service; do
 
     # The playbook is the last whitespace-separated word of the ExecStart line.
     playbook=${line##* }
+
+    # A line-continued ExecStart (valid systemd syntax) leaves a bare "\" as
+    # that last word. Reporting it as an unrecognized playbook path buries the
+    # real problem, so name it.
+    if [ "$playbook" = "\\" ]; then
+        die "$(basename "$unit"): ExecStart continues onto another line -- this gate only reads that one line, so keep gatherd-await-and-run's arguments on it"
+    fi
+
     # Units name absolute deployed paths; map that back onto this checkout.
     rel=${playbook#/usr/local/lib/gatherd/}
     [ -f "$repo/$rel" ] || die "$(basename "$unit") names $playbook, which is not in this repo"
 
     declares=no
-    grep -qE '^[[:space:]]*-[[:space:]]*vault/vault\.yml[[:space:]]*$' "$repo/$rel" && declares=yes
+    playbook_declares_vault "$repo/$rel" && declares=yes
 
     passes=no
     case "$line" in

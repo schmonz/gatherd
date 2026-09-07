@@ -1,0 +1,22 @@
+#!/bin/sh
+# Reshape claude-usage-waybar's output for gatherd's bar.
+#
+# Two changes, both cosmetic and both outside what upstream can be asked for:
+#
+#   - The prefix becomes nothing, because the bar draws the real Claude Desktop
+#     tray icon behind the module instead (a background-image in waybar's CSS --
+#     see roles/desktop/tasks/waybar_claude_usage.yml). Upstream's --icon takes a
+#     string, and no string is that icon.
+#   - The two percentages sit either side of the separator with no padding, so
+#     the module reads as one value rather than two.
+#
+# A wrapper rather than a patch or a fork: upstream has no separator option, and
+# its error texts hardcode the letter regardless of --icon ("C ??" when the
+# credentials file is unreadable, "C ⚠" when the API call fails). Rewriting the
+# rendered `text` field covers the normal and both error paths with one rule and
+# survives an upstream version bump untouched.
+#
+# The tooltip and the `class` (which drives the warning/critical colours) are
+# passed through exactly as upstream built them.
+claude-usage-waybar --icon '' "$@" | jq -c '
+    .text |= (sub("^C ?";"") | sub("^ +";"") | gsub(" *· *";"·"))'

@@ -20,6 +20,29 @@
     path: /usr/bin/claude-usage-waybar
   register: _claude_usage_waybar
 
+# The bar draws Claude Desktop's own tray asset behind the module rather than a
+# letter, so the image is a second, independent gate: claude-usage-waybar and
+# claude-desktop are different packages and either can be absent. Without the
+# file GTK paints nothing and the padding below would leave a blank gap where an
+# icon should be, so the whole background-image rule is skipped instead.
+#
+# TrayIconLinux-Dark.png, not TrayIconLinux.png: the "-Dark" in Electron's
+# naming means "for a dark tray", i.e. a white glyph. Measured -- the other file
+# is black on transparent and is invisible on this bar's #19191e.
+- name: Check whether Claude Desktop's tray icon is installed
+  ansible.builtin.stat:
+    path: /usr/lib/claude-desktop/resources/TrayIconLinux-Dark.png
+  register: _claude_tray_icon
+
+- name: Install the Claude usage waybar wrapper
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/scripts/gatherd-claude-usage-waybar"
+    dest: "{{ target_home }}/.local/bin/gatherd-claude-usage-waybar"
+    mode: '0755'
+    remote_src: true
+  when: _claude_usage_waybar.stat.exists
+  notify: Reload waybar
+
 - name: Add the Claude usage widget to waybar modules-right
   # Between idle_inhibitor and cpu, so it sits with the other live meters rather
   # than off in the status cluster with the clock and tray.
@@ -47,7 +70,7 @@
     marker: "// {mark} ANSIBLE MANAGED BLOCK: claude-usage"
     block: |2
           "custom/claude-usage": {
-              "exec": "claude-usage-waybar",
+              "exec": "{{ target_home }}/.local/bin/gatherd-claude-usage-waybar",
               "return-type": "json",
               "format": "{}",
               "interval": 300,
@@ -76,6 +99,22 @@
     insertbefore: '^#memory \{'
     marker: "/* {mark} ANSIBLE MANAGED BLOCK: claude-usage */"
     block: |
+      {% if _claude_tray_icon.stat.exists %}
+      #custom-claude-usage {
+          background-image: url("/usr/lib/claude-desktop/resources/TrayIconLinux-Dark.png");
+          background-repeat: no-repeat;
+          background-position: left center;
+          /* em, not px: gatherd sizes the whole bar from foot_font_size, and a
+             fixed pixel icon would be a different size on every panel. Measured
+             at 13px and 22px -- GTK resolves em here against the module's own
+             font-size, so the glyph tracks the digits beside it. Without an
+             explicit size, `contain` fits the icon to the module's HEIGHT, which
+             is taller than the text and crowds it. */
+          background-size: 1.15em 1.15em;
+          padding-left: 1.5em;
+      }
+
+      {% endif %}
       #custom-claude-usage.warning {
           color: orange;
       }

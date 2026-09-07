@@ -1,0 +1,62 @@
+#!/bin/sh
+# Unit tests for gatherd-needs-run.
+#
+# It used to be called only by root, which owns /usr/local/lib/gatherd.
+# gatherd-await-async calls it as the desktop user, and git refuses a repository
+# it thinks belongs to someone else ("detected dubious ownership"). Read as "a
+# run is still owed", that stalls the whole session cohort. It works on a
+# converged machine only because ~/.gitconfig carries `safe.directory = *` -- and
+# those dotfiles are themselves a REST tier, so the first login has no such file.
+#
+# A test repo is necessarily owned by whoever runs the suite, so the mismatch is
+# simulated with git's own knob for it, GIT_TEST_ASSUME_DIFFERENT_OWNER.
+#
+# Usage: tests/needs-run
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+SCRIPT="$REPO/scripts/gatherd-needs-run"
+PASS=0
+FAIL=0
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+assert() { _d=$1; shift; if [ "$@" ]; then ok "$_d"; else bad "$_d"; fi; }
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/gatherd" "$WORK/nohome"
+git -C "$WORK/gatherd" init -q
+git -C "$WORK/gatherd" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+HEAD=$(git -C "$WORK/gatherd" rev-parse HEAD)
+SENTINEL="$WORK/sentinel"
+
+probe() {
+    HOME="$WORK/nohome" GATHERD_HOME="$WORK/gatherd" "$@" sh "$SCRIPT" "$SENTINEL" && RC=0 || RC=$?
+}
+
+# 1. No sentinel: a run is owed.
+rm -f "$SENTINEL"
+probe env
+assert "a missing sentinel means a run is owed (rc=$RC)" "$RC" -eq 0
+
+# 2. Sentinel at the deployed HEAD: converged.
+printf '%s\n' "$HEAD" > "$SENTINEL"
+probe env
+assert "a current sentinel means converged (rc=$RC)" "$RC" -eq 1
+
+# 3. Stale sentinel: a run is owed again. This is every boot after a git pull.
+printf '%s\n' 0000000000000000000000000000000000000000 > "$SENTINEL"
+probe env
+assert "a stale sentinel means a run is owed (rc=$RC)" "$RC" -eq 0
+
+# 4. A checkout git calls foreign must still answer, or a converged machine reads
+#    as permanently unconverged.
+printf '%s\n' "$HEAD" > "$SENTINEL"
+probe env GIT_TEST_ASSUME_DIFFERENT_OWNER=1
+assert "a foreign-owned checkout still reads as converged (rc=$RC)" "$RC" -eq 1
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

@@ -54,7 +54,8 @@ run "$REPO/scripts/gatherd-check-vault-units" "$REPO"
 
 printf '\n== unit tests ==\n'
 for suite in check-package-tiers check-migrations check-aur-deps assert-aur-deps \
-             census-removals migration-checks await-and-run check-vault-units; do
+             census-removals migration-checks await-and-run check-vault-units \
+             needs-run; do
     [ -x "$REPO/tests/$suite" ] && run "$REPO/tests/$suite"
 done
 

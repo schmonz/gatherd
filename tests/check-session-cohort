@@ -47,6 +47,11 @@ assert_says() {
     _d=$1; _want=$2
     if grep -q -- "$_want" "$WORK/out"; then ok "$_d"; else bad "$_d (no '$_want' in output)"; sed 's/^/       /' "$WORK/out"; fi
 }
+assert_fail_count() {
+    _d=$1; _want=$2
+    _got=$(grep -c '^FAIL' "$WORK/out")
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want $_want FAIL lines, got $_got)"; sed 's/^/       /' "$WORK/out"; fi
+}
 
 # 1. All three forms used properly.
 helpers <<'EOF'
@@ -259,7 +264,7 @@ start_now "$bin/watcher"  # needs: fuzzel
 EOF
 mv "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.bak"
 assert_rc "an uninstalled barrier is rc=2" 2
-assert_says "and says so" "tasks/core.yml installs"
+assert_says "and says so" "installs scripts/gatherd-await-async"
 mv "$WORK/core.yml.bak" "$WORK/roles/desktop/tasks/core.yml"
 
 # 17. Unreadable inputs are rc=2. A gate that returns 0 when it could not look is
@@ -321,7 +326,7 @@ start_now "$bin/watcher"  # needs: fuzzel
 } &
 EOF
 assert_rc "a removal task does not count as installing the barrier" 2
-assert_says "and says so" "tasks/core.yml installs"
+assert_says "and says so" "installs scripts/gatherd-await-async"
 mv "$WORK/core.yml.orig" "$WORK/roles/desktop/tasks/core.yml"
 
 # 21. A bare comment naming the path is a mention, not an install -- a plain
@@ -330,7 +335,7 @@ cp "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.orig"
 printf -- '# src: "{{ setup_dir }}/scripts/gatherd-await-async"\n' \
     > "$WORK/roles/desktop/tasks/core.yml"
 assert_rc "a bare comment does not count as installing the barrier" 2
-assert_says "and says so" "tasks/core.yml installs"
+assert_says "and says so" "installs scripts/gatherd-await-async"
 mv "$WORK/core.yml.orig" "$WORK/roles/desktop/tasks/core.yml"
 
 # 22. Installed by REST instead of CORE: every start_later would still wait on
@@ -338,7 +343,7 @@ mv "$WORK/core.yml.orig" "$WORK/roles/desktop/tasks/core.yml"
 #     exists to prevent.
 mv "$WORK/roles/desktop/tasks/core.yml" "$WORK/roles/desktop/tasks/rest.yml"
 assert_rc "an install in tasks/rest.yml is not a CORE install" 2
-assert_says "and says so" "tasks/core.yml installs"
+assert_says "and says so" "installs scripts/gatherd-await-async"
 mv "$WORK/roles/desktop/tasks/rest.yml" "$WORK/roles/desktop/tasks/core.yml"
 
 # 23. An empty `# needs:` declaration is neither a real declaration nor a
@@ -418,6 +423,134 @@ start_when "nowayprompt" "$bin/gatherd-prompt-vault"
 } &
 EOF
 assert_rc "a quoted start_when guard is accepted" 0
+
+# 29. A trailing comment noting a form choice -- this file already does this
+#     (wayvnc's start_later-not-start_when rationale) -- must not be read as a
+#     second call sharing the line just because it names another form.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"  # deliberately not start_now
+} &
+EOF
+assert_rc "a comment naming another form is not a second call" 0
+
+# 30. A form name appearing only inside a double-quoted string is not a call
+#     at all -- there is nothing here to check.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+msg="use start_later instead"
+start_now "$bin/watcher"  # needs: fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "a form name inside a double-quoted string is not a call" 0
+
+# 31. Same, single-quoted.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+printf 'start_later is the default\n' >&2
+start_now "$bin/watcher"  # needs: fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "a form name inside a single-quoted string is not a call" 0
+
+# 32. A start_now's own `# needs:` comment must still count as exactly one
+#     call on its line -- the sanitization that ignores comments elsewhere
+#     must not also blind the needs-declaration check that reads that comment.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/watcher"  # needs: fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "start_now with its own needs comment still passes" 0
+
+# 33. Installed via a `loop:`/`with_items:` list alongside a templated `src:
+#     .../{{ item }}` -- roles/desktop/tasks/core.yml's own pbcopy/pbpaste
+#     pair, and tablet_mode.yml's music-stand scripts, are exactly this shape.
+#     Folding the barrier's install into a sibling loop is a natural tidy-up.
+cp "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.orig"
+printf -- '- name: Install gatherd-await-async and gatherd-pbcopy scripts\n  ansible.builtin.copy:\n    src: "{{ setup_dir }}/scripts/{{ item }}"\n    dest: "{{ target_home }}/.local/bin/{{ item }}"\n  loop:\n    - gatherd-await-async\n    - gatherd-pbcopy\n' \
+    > "$WORK/roles/desktop/tasks/core.yml"
+assert_rc "a loop: entry counts as installing the barrier" 0
+mv "$WORK/core.yml.orig" "$WORK/roles/desktop/tasks/core.yml"
+
+# 34. Installed via a file core.yml reaches through `import_tasks:`/
+#     `include_tasks:` (roles/desktop/tasks/core.yml really does this for
+#     tablet_mode.yml) -- CLAUDE.md's "Tiny task files" convention pushes new
+#     work into exactly this shape.
+cp "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.orig"
+printf -- '- name: Configure something\n  ansible.builtin.import_tasks: sub_barrier.yml\n' \
+    > "$WORK/roles/desktop/tasks/core.yml"
+printf -- '- name: Install gatherd-await-async barrier script\n  ansible.builtin.copy:\n    src: "{{ setup_dir }}/scripts/gatherd-await-async"\n' \
+    > "$WORK/roles/desktop/tasks/sub_barrier.yml"
+assert_rc "a file reached via import_tasks: counts as CORE" 0
+rm -f "$WORK/roles/desktop/tasks/sub_barrier.yml"
+mv "$WORK/core.yml.orig" "$WORK/roles/desktop/tasks/core.yml"
+
+# 35. Single-quoted src:, unquoted relative src:, and a `template:` module
+#     instead of `copy:` were already accepted and must stay accepted -- none
+#     of the round-2 tightening should have narrowed the literal-src: path.
+cp "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.orig"
+printf -- "- name: Install gatherd-await-async barrier script\n  ansible.builtin.copy:\n    src: '{{ setup_dir }}/scripts/gatherd-await-async'\n" \
+    > "$WORK/roles/desktop/tasks/core.yml"
+assert_rc "single-quoted src: still counts" 0
+printf -- '- name: Install gatherd-await-async barrier script\n  ansible.builtin.copy:\n    src: scripts/gatherd-await-async\n' \
+    > "$WORK/roles/desktop/tasks/core.yml"
+assert_rc "an unquoted relative src: still counts" 0
+printf -- '- name: Install gatherd-await-async barrier script\n  ansible.builtin.template:\n    src: "{{ setup_dir }}/scripts/gatherd-await-async"\n' \
+    > "$WORK/roles/desktop/tasks/core.yml"
+assert_rc "template: instead of copy: still counts" 0
+mv "$WORK/core.yml.orig" "$WORK/roles/desktop/tasks/core.yml"
+
+# 36. The install can live in ANY role's core.yml, not only desktop's.
+cp "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.orig"
+printf -- '- name: Unrelated task\n  ansible.builtin.debug:\n    msg: hi\n' \
+    > "$WORK/roles/desktop/tasks/core.yml"
+mkdir -p "$WORK/roles/system/tasks"
+printf -- '- name: Install gatherd-await-async barrier script\n  ansible.builtin.copy:\n    src: "{{ setup_dir }}/scripts/gatherd-await-async"\n' \
+    > "$WORK/roles/system/tasks/core.yml"
+assert_rc "a different role's core.yml still counts" 0
+rm -rf "$WORK/roles/system"
+mv "$WORK/core.yml.orig" "$WORK/roles/desktop/tasks/core.yml"
+
+# 37. Past nine launches, `sort -n` sorts "10" before "2" while `comm` expects
+#     the plain lexical order it would itself produce -- garbling or dropping
+#     diagnostics. One unquoted launch among nine total, comfortably past that
+#     boundary, must still produce exactly one clean diagnostic.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+# padding comment to push the unquoted launch to line 9
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/a"
+    start_later "$bin/b"
+    start_later "$bin/c"
+    start_later $bin_bad
+    start_later "$bin/d"
+    start_later "$bin/e"
+    start_later "$bin/f"
+    start_later "$bin/g"
+    start_later "$bin/h"
+} &
+EOF
+assert_rc "one unquoted launch past nine total still fails cleanly" 1
+assert_says "and names exactly that line" "line 9: launch argument"
+assert_fail_count "and only that one line -- not one per launch after it" 1
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

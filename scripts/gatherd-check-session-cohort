@@ -40,15 +40,21 @@
 #     to every rule that follows.
 #   - It understands exactly ONE `{ ... } &` block. A second gated block is
 #     not a shape this file has, so it is not a shape this gate resolves.
-#   - "Installed by CORE" means a `src:` line naming the barrier inside some
-#     roles/*/tasks/core.yml. It does not run Ansible: a `when:` that is
-#     always false, or a `dest:` that never matches this host, would still
-#     count as installed here.
+#   - "Installed by CORE" means a `src:` line naming the barrier (directly, or
+#     as a `loop:`/`with_items:` entry alongside a templated `src: .../{{ item
+#     }}`) inside a roles/*/tasks/core.yml OR a file it reaches via
+#     `import_tasks:`/`include_tasks:` -- resolved ONE level only, so a second
+#     layer of indirection (core.yml imports A, A imports B, B installs the
+#     barrier) is not a shape this gate follows. It does not run Ansible: a
+#     `when:` that is always false, or a `dest:` that never matches this host,
+#     would still count as installed here.
 #   - A barrier call hidden inside a heredoc or a multi-line quoted string
 #     would be counted as the real invocation if it matched the anchor
-#     pattern below -- the real file's start_when body has exactly this
-#     shape, one layer down, inside its own `sh -c '...'`. Closing that needs
-#     a shell parser, which is a worse trade than naming the limit here.
+#     pattern below. That shape exists in this file today -- start_when's own
+#     body is a multi-line `sh -c '...'` -- though it happens not to contain
+#     such a call; the risk is that it or a similar block one day could, and
+#     nothing here would notice. Closing that needs a shell parser, which is
+#     a worse trade than naming the limit here.
 #
 # DECLARED, not present: this reads the repo, never the machine it runs on. A
 # converged machine has everything installed, so "does it work here" would pass
@@ -71,11 +77,13 @@ die() { printf 'gatherd-check-session-cohort: %s\n' "$1" >&2; exit 2; }
 
 hfile=$(mktemp) || die "mktemp failed"
 mfile=$(mktemp) || die "mktemp failed"
+cfile=$(mktemp) || die "mktemp failed"
 all=$(mktemp) || die "mktemp failed"
 launches=$(mktemp) || die "mktemp failed"
 mentions=$(mktemp) || die "mktemp failed"
 core_files=$(mktemp) || die "mktemp failed"
-trap 'rm -f "$hfile" "$mfile" "$all" "$launches" "$mentions" "$core_files"' EXIT
+extra_files=$(mktemp) || die "mktemp failed"
+trap 'rm -f "$hfile" "$mfile" "$cfile" "$all" "$launches" "$mentions" "$core_files" "$extra_files"' EXIT
 
 # CRLF survives word-splitting -- \r is not in $IFS -- so on a Windows-edited
 # file it rides along on the last package name on a `# needs:` line, and a
@@ -92,17 +100,77 @@ tr -d '\r' < "$manifest" > "$mfile"
 [ -s "$repo/scripts/$barrier" ] || die "$repo/scripts/$barrier does not exist or is empty"
 [ -x "$repo/scripts/$barrier" ] || die "$repo/scripts/$barrier is not executable"
 
+# Detect whether FILE installs the barrier -- either a literal `src:` line, or
+# (roles/desktop/tasks/core.yml's pbcopy/pbpaste pair, and tablet_mode.yml's
+# music-stand scripts, are exactly this shape) a templated `src: .../{{ item
+# }}` task whose own `loop:`/`with_items:` list names the barrier. A parser of
+# convenience, not of record: it tracks one task at a time, reset at each
+# blank line or `- name:` (this repo's task-separator convention), and stops
+# trusting a `loop:`/`with_items:` list the moment a line no longer looks like
+# one of its items.
+file_installs_barrier() {
+    _f=$1
+    _templated=no
+    _in_loop=no
+    while IFS= read -r _l; do
+        case "$_l" in
+        '') _templated=no; _in_loop=no; continue ;;
+        '- name:'*) _templated=no; _in_loop=no ;;
+        esac
+
+        case "$_l" in
+        [[:space:]]*src:*scripts/"$barrier"*) return 0 ;;
+        [[:space:]]*src:*'scripts/{{'*item*'}}'*) _templated=yes ;;
+        esac
+
+        if [ "$_in_loop" = yes ]; then
+            case "$_l" in
+            '    -'*)
+                _item=$(printf '%s' "$_l" | sed 's/^[[:space:]]*-[[:space:]]*//; s/[[:space:]]*$//; s/^"//; s/"$//')
+                [ "$_item" = "$barrier" ] && return 0
+                continue
+                ;;
+            *) _in_loop=no ;;
+            esac
+        fi
+
+        case "$_l" in
+        [[:space:]]*loop:*|[[:space:]]*with_items:*)
+            [ "$_templated" = yes ] && _in_loop=yes
+            ;;
+        esac
+    done < "$_f"
+    return 1
+}
+
 find "$repo/roles" -type f -path '*/tasks/core.yml' > "$core_files" 2>/dev/null
+
+# CORE genuinely installs scripts from files core.yml only REACHES: CLAUDE.md's
+# "Tiny task files" convention pushes work into files named for what they do,
+# imported from core.yml (roles/desktop/tasks/core.yml's own tablet_mode.yml is
+# exactly this). One level, not recursive -- a second layer of indirection is
+# not a shape this repo currently uses, and the header says so as a limit.
+while IFS= read -r f; do
+    d=$(dirname "$f")
+    grep -oE 'ansible\.builtin\.(import|include)_tasks:[[:space:]]*[^[:space:]]+' "$f" 2>/dev/null \
+        | sed -E 's/^.*_tasks:[[:space:]]*//' \
+        | while IFS= read -r ref; do
+            [ -f "$d/$ref" ] && printf '%s\n' "$d/$ref" >> "$extra_files"
+        done
+done < "$core_files"
+cat "$extra_files" >> "$core_files"
+
 found_install=no
 while IFS= read -r f; do
-    # A `src:` line specifically, not any mention of the path: a `state:
-    # absent` removal task and a bare comment both name the path without
-    # installing anything, and an install in tasks/rest.yml must fail this
-    # exactly the same way -- REST is not there yet at the login this gates.
-    grep -q "^[[:space:]]*src:.*scripts/$barrier" "$f" && { found_install=yes; break; }
+    # A `state: absent` removal task and a bare comment both name the path
+    # without installing anything, and an install in tasks/rest.yml must fail
+    # this exactly the same way -- REST is not there yet at the login this
+    # gates. file_installs_barrier only recognizes `src:`/loop shapes, so both
+    # are already excluded by construction.
+    file_installs_barrier "$f" && { found_install=yes; break; }
 done < "$core_files"
 [ "$found_install" = yes ] \
-    || die "no roles/*/tasks/core.yml installs scripts/$barrier via a \`src:\` line"
+    || die "no roles/*/tasks/core.yml (or file it imports) installs scripts/$barrier"
 
 # Locate the gated block, so "behind the barrier" is a fact about nesting rather
 # than a guess from line numbers. A bare line-number test passes four different
@@ -124,11 +192,32 @@ close_line=$(awk -v b="$barrier_line" 'NR > b && /^[[:space:]]*\}[[:space:]]*&[[
 rc=0
 fail() { printf 'FAIL %s\n' "$1" >&2; rc=1; }
 
+# A code-only view of the file, for deciding what counts as a launch MENTION:
+# text after an unquoted `#` and text inside quotes are dropped, line by line,
+# so a trailing comment ("# deliberately not start_now") or a quoted string
+# that happens to contain one of these words ("use start_later instead") is
+# not itself mistaken for a call. This is the same reason a real start_now's
+# OWN `# needs:` comment must not add to its line's call count.
+awk '
+    BEGIN { dq = "\""; sq = sprintf("%c", 39) }
+    {
+        line = $0; out = ""; q = ""
+        for (i = 1; i <= length(line); i++) {
+            c = substr(line, i, 1)
+            if (q != "") { if (c == q) q = ""; continue }
+            if (c == dq || c == sq) { q = c; continue }
+            if (c == "#") break
+            out = out c
+        }
+        print out
+    }
+' "$hfile" > "$cfile"
+
 # Every REAL use of the three forms, wherever it sits on the line -- not only
 # at the very start. A guarded launch (`[ -n "$X" ] && start_now ...`) or two
 # launches sharing one line would otherwise never reach any rule below at all:
 # that is the 2026-09-07 bug shape exactly, a helper the gate never saw.
-grep -nE '(^|[^[:alnum:]_])start_(now|later|when)([^[:alnum:]_]|$)' "$hfile" \
+grep -nE '(^|[^[:alnum:]_])start_(now|later|when)([^[:alnum:]_]|$)' "$cfile" \
     | grep -v '^[0-9]*:[[:space:]]*start_[a-z]*()' \
     | grep -v '^[0-9]*:[[:space:]]*#' > "$mentions"
 [ -s "$mentions" ] || die "no start_now/start_later/start_when launches found in $helpers"

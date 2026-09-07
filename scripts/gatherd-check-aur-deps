@@ -87,6 +87,8 @@ ALLOWED = {
     'edk2-aarch64': 'aarch64-only; no aarch64 machine converges yet',
 }
 
+GUARD = 'tasks/assert_aur_deps.yml'
+
 VERSIONED = re.compile(r'[<>=].*$')
 
 # `pacman` and `removed` are both real spellings: `ansible-doc
@@ -327,6 +329,11 @@ def visit(root, path, gv, arch, conds, seen, events):
         for key in ('ansible.builtin.include_tasks', 'ansible.builtin.import_tasks',
                     'include_tasks', 'import_tasks'):
             if key in task:
+                spec = task[key]
+                named = spec.get('file') if isinstance(spec, dict) else spec
+                if isinstance(named, str) and named.endswith(GUARD):
+                    events.append(('guard', names_from(
+                        (task.get('vars') or {}).get('aur_assert_targets'), gv), here))
                 target = included_file(root, path, task, key)
                 if target:
                     visit(root, target, gv, arch, here, seen, events)
@@ -441,8 +448,39 @@ def check(root):
     installed = [(satisfied, frozenset())
                  for name in base for satisfied in provides.get(name, {name})]
 
+    # Every build must be immediately preceded by a guard over the same packages
+    # under the same conditions. A guard that outlives its build is not
+    # harmless: roles/aur/tasks/slow.yml once ran the AVX guard unconditionally
+    # in front of a `when: has_avx` build, so on a pre-AVX machine it failed the
+    # enclosing block over something that was never going to run.
+    unguarded, last = [], None
+    for event in events:
+        if event[0] == 'guard':
+            last = (event[1], event[2])
+            continue
+        if event[0] != 'build':
+            continue
+        where, task, targets, conds = event[1]
+        if last is None or last[0] != set(targets):
+            unguarded.append(f'{where}: {task}: no assert_aur_deps guard '
+                             f'immediately before it')
+        elif last[1] != conds:
+            unguarded.append(f'{where}: {task}: its guard runs under '
+                             f'{sorted(last[1]) or "no condition"}, the build under '
+                             f'{sorted(conds) or "no condition"}')
+        last = None
+    if unguarded:
+        print('AUR builds whose preflight guard does not match them. Include\n'
+              f'{GUARD} immediately before each `aur sync`, over the same\n'
+              'packages and under the same when::\n')
+        for detail in unguarded:
+            print(f'  {detail}')
+        return 1
+
     violations = []
     for event in events:
+        if event[0] == 'guard':
+            continue
         if event[0] == 'install':
             _, names, conds = event
             for name in names:

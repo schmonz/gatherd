@@ -1,0 +1,63 @@
+#!/bin/sh
+# Unit tests for gatherd-check-package-tiers.
+#
+# The gate exists so the offline-cache builder can see every package the
+# playbook installs: one named inline in a task file is invisible to it, and the
+# USB stick silently drifts from the playbook. The cases that matter are
+# therefore an inline name (the drift), a tier reference (the correct spelling),
+# and a reference to a var that does not exist (a typo that would otherwise read
+# as classified).
+#
+# Usage: tests/check-package-tiers
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+GATE="$REPO/scripts/gatherd-check-package-tiers"
+PASS=0
+FAIL=0
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/group_vars/all" "$WORK/roles/demo/tasks"
+printf 'rest_packages:\n  - htop\n' > "$WORK/group_vars/all/main.yml"
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+task() { printf -- '---\n- name: Install\n  community.general.pacman:\n    name: %s\n    state: present\n' "$1" > "$WORK/roles/demo/tasks/main.yml"; }
+
+assert_rc() {
+    _d=$1; _want=$2
+    if "$GATE" "$WORK" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want rc=$_want got rc=$_got)"; cat "$WORK/out"; fi
+}
+
+assert_says() {
+    _d=$1; _want=$2
+    if grep -q "$_want" "$WORK/out"; then ok "$_d"; else bad "$_d (no '$_want' in output)"; cat "$WORK/out"; fi
+}
+
+# 1. A package installed through a tier var is classified.
+task '"{{ rest_packages }}"'
+assert_rc "a tier reference exits 0" 0
+
+# 2. A package named inline is the drift the gate exists to catch.
+task 'sl'
+assert_rc "an inline package exits 1" 1
+assert_says "the inline package is named" 'sl'
+
+# 3. A name in ALLOWED is a documented exception, not a violation.
+task 'base-devel'
+assert_rc "a documented exception exits 0" 0
+
+# 4. A tier-shaped var that is not declared must not read as classified. Only a
+#    name ending in _packages reaches this branch; anything else is caught above
+#    as an ordinary inline package, which is also a failure.
+task '"{{ resst_packages }}"'
+assert_rc "an undeclared tier var exits 1" 1
+assert_says "the undeclared var is reported" 'no such var'
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

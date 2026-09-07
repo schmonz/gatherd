@@ -38,6 +38,7 @@ cp "$AMBIENT" "$WORK/pristine-ambient"
 cp "$APPLESMC" "$WORK/pristine-applesmc"
 cp "$GATE" "$WORK/pristine-gate"
 cp "$WORK/repo/site-async.yml" "$WORK/pristine-async"
+cp "$WORK/repo/roles/aur/tasks/slow.yml" "$WORK/pristine-slow"
 
 ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
@@ -166,6 +167,41 @@ sed -i 's|^SRCINFO = .*|SRCINFO = "http://127.0.0.1:1/{}"|' "$GATE"
 # A cold cache, or the fetch never happens and the breakage is invisible.
 XDG_CACHE_HOME="$WORK/cold" assert_rc "an unreachable AUR exits 2, not 1" 2
 cp "$WORK/pristine-gate" "$GATE"
+
+# 12. A build must be guarded, and by a guard with the same when: it has. The
+#     AVX guard once ran unconditionally in front of a `when: has_avx` build,
+#     which on a pre-AVX machine failed the tier over a build that never ran.
+python3 - "$WORK/repo/roles/aur/tasks/slow.yml" <<'PATCH'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+p.write_text(p.read_text().replace(
+    """        aur_assert_targets: "{{ aur_slow_avx_packages }}"
+      # Same gate as the build below. Without it a pre-AVX machine fails this
+      # tier's whole block over a build it was never going to run.
+      when: has_avx
+""",
+    """        aur_assert_targets: "{{ aur_slow_avx_packages }}"
+"""))
+PATCH
+assert_rc "a guard that outlives its build exits 1" 1
+assert_says "the condition mismatch is reported" "the build under"
+cp "$WORK/pristine-slow" "$WORK/repo/roles/aur/tasks/slow.yml"
+
+# 13. And a build with no guard at all.
+python3 - "$AMBIENT" <<'PATCH'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+p.write_text(p.read_text().replace(
+    """- name: Check the build dependencies of clight
+  ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+  vars:
+    aur_assert_targets: ['clight']
+
+""", ""))
+PATCH
+assert_rc "an unguarded build exits 1" 1
+assert_says "the unguarded build is named" "no assert_aur_deps guard"
+cp "$WORK/pristine-ambient" "$AMBIENT"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

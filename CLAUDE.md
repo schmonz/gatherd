@@ -139,7 +139,11 @@ A missing dependency becomes a one-second failure naming the package, instead of
 `ERROR: 'pacman' failed to install missing dependencies` fourteen minutes into a
 build with the real culprit buried in stdout. Add the include whenever you add
 an `aur sync`, with the same `when:` the build carries — a guard that outlives
-its build fails a tier over something that was never going to run.
+its build fails a tier over something that was never going to run. Both halves
+of that are enforced: `gatherd-check-aur-deps` pairs every build with the guard
+in front of it and compares their conditions, so a missing guard and a
+mismatched one are each a hard failure rather than something a reviewer has to
+notice. That check exists because a reviewer had to.
 
 It fails open when the AUR cannot answer, and closed when the AUR answers that
 a target does not exist. An unreachable AUR is weather; a target the AUR has
@@ -212,6 +216,15 @@ meaningful:
 Skipping step 2 is why the count went 9 to 22 without ever coming down.
 
 ## Testing
+
+`tests/gates` is the one command to run before committing: every static gate,
+its unit tests, and the rule that keeps them honest — each
+`scripts/gatherd-{check,assert}-*` must have a `tests/<same-name>` beside it,
+with no exemption list. A gate nothing exercises is a gate nobody trusts, and
+`gatherd-check-package-tiers` — which carries the whole offline-cache promise —
+had no test at all until that rule went looking for one. Writing the test is
+always cheaper than arguing for the exemption. It runs in seconds and needs the
+network; the VM suites below are separate because they do not.
 
 `tests/test` boots one VM from one snapshot and, historically, asserted one
 thing: that run 2 is clean. Both halves of that are narrower than they look, and

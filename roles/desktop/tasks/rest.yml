@@ -15,6 +15,35 @@
 - name: Show Claude Code usage in waybar
   ansible.builtin.include_tasks: waybar_claude_usage.yml
 
+# EndeavourOS Sway CE ships ~/.config/xed.dconf with these, and a
+# ~/.config/sway/scripts/xed_setup.sh that dconf-loads it at the first sway
+# login and then deletes the dconf file, its own autostart line, and itself.
+# One shot, no retry, no error handling -- `rm` runs whether the load worked or
+# not -- and no signal either way. On the machine that prompted this, 26 of the
+# 30 Sway CE skeleton files were present and both xed files were gone, so the
+# script had run; scheme was still 'xed', the schema default. It ran and its
+# settings did not survive, and nothing reported it.
+#
+# So own them here rather than inherit them from a hook that erases the
+# evidence of its own failure. Values are xed.dconf's, verbatim; all five
+# differ from the schema default, which is what makes their absence visible.
+- name: Configure xed the way the Sway CE first-login hook meant to
+  ansible.builtin.shell: |
+    changed=
+    set -- scheme "'cobalt'" prefer-dark-theme true bracket-matching false \
+           display-line-numbers true wrap-mode "'none'"
+    while [ $# -gt 0 ]; do
+      key=$1 want=$2; shift 2
+      cur=$(dbus-run-session gsettings get org.x.editor.preferences.editor "$key" 2>/dev/null)
+      if [ "$cur" != "$want" ]; then
+        dbus-run-session gsettings set org.x.editor.preferences.editor "$key" "$want"
+        changed=yes
+      fi
+    done
+    [ -n "$changed" ] && echo changed || echo ok
+  register: _xed_prefs
+  changed_when: _xed_prefs.stdout == 'changed'
+
 - name: Configure xed font size for 80-col two-up layout
   ansible.builtin.shell: |
     font="JetBrains Mono {{ foot_font_size }}"

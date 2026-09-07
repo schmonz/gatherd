@@ -118,5 +118,26 @@ printf '[Service]\nExecStart=/usr/local/lib/gatherd/scripts/gatherd-await-and-ru
 assert_rc "a line-continued ExecStart is rc=2" 2
 assert_says "and names the real problem, not just 'not in this repo'" "continues"
 
+# 10. A list item elsewhere that happens to equal "vault/vault.yml" is not a
+#     vars_files entry. Unscoped block-style matching read it as one -- in
+#     both directions: it spuriously failed a unit correctly omitting the
+#     flag, and it would give a false clean to a unit wrongly carrying the
+#     flag for a playbook with no real vault vars.
+printf -- '---\n- hosts: localhost\n  some_other_list:\n    - vault/vault.yml\n' > "$WORK/site-vault.yml"
+unit gatherd-vault.service '/etc/gatherd/vault-complete' site-vault.yml
+assert_rc "a same-named entry under an unrelated key without the flag stays clean" 0
+
+unit gatherd-vault.service '--needs-vault /etc/gatherd/vault-complete' site-vault.yml
+assert_rc "the flag on that unrelated-key entry still fails" 1
+
+# 11. Multi-line flow style -- the brackets on separate lines from the
+#     entries -- is valid YAML that a single-line-only flow match misses.
+printf -- '---\n- hosts: localhost\n  vars_files: [\n    vault/vault.yml\n  ]\n' > "$WORK/site-vault.yml"
+unit gatherd-vault.service '/etc/gatherd/vault-complete' site-vault.yml
+assert_rc "multi-line flow-style vars_files without the flag still fails" 1
+
+unit gatherd-vault.service '--needs-vault /etc/gatherd/vault-complete' site-vault.yml
+assert_rc "multi-line flow-style vars_files with the flag is clean" 0
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

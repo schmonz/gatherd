@@ -31,33 +31,83 @@ die() { printf 'gatherd-check-vault-units: %s\n' "$1" >&2; exit 2; }
 rc=0
 fail() { printf 'FAIL %s\n' "$1" >&2; rc=1; }
 
-# A vars_files entry can be quoted or not, block or flow style, and can carry
-# a trailing comment -- all ordinary YAML. Matching only the bare, anchored
-# "- vault/vault.yml" line missed every one of those: a quoted entry (in no
-# way exotic) read as "no vars_files" and passed the gate clean on exactly the
-# failure mode it exists to catch.
+# A vars_files entry can be quoted or not, block or flow (single- or
+# multi-line) style, and can carry a trailing comment -- all ordinary YAML.
+# And a list item elsewhere that happens to equal "vault/vault.yml" is not a
+# vars_files entry just because its value matches. Matching entries requires
+# tracking which key's block or flow list a line is actually inside, which
+# means tracking indentation -- past what a single regex can express, so this
+# is a small awk state machine rather than a longer sed pipeline.
+#
+# It walks the file once, entering "block" mode at a bare "vars_files:" key
+# (recording its indent) and printing each subsequent more-indented "- foo"
+# line as a candidate until a line at or above that indent ends the block
+# (any key at the same or a shallower level, including a comment-only line's
+# next real neighbor -- comments never end or populate the block, since they
+# are stripped to nothing before the block-membership check runs). It enters
+# "flow" mode at "vars_files: [" with no closing "]" on that line, and
+# accumulates lines into one buffer, splitting on "," once the "]" appears --
+# which also covers the single-line form, closed on the same line it opens.
+#
+# Candidates come out with their quoting (if any) still on, same as a raw
+# block-style line always did; the pipeline below strips it before comparing.
 playbook_declares_vault() {
     _file=$1
+    awk '
+        function strip_comment(s) { sub(/#.*/, "", s); return s }
+        function indent_of(s,   t) { t = s; sub(/[^ \t].*/, "", t); return length(t) }
+        function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 
-    # Block style: "- vault/vault.yml", quoted or not, comment or not. Strip
-    # the leading "- ", then the trailing comment, then a pair of surrounding
-    # quotes, and compare what is left exactly -- so "vault/vault.yml.bak" or
-    # a path merely ending in it does not also match.
-    if sed -n 's/^[[:space:]]*-[[:space:]]*//p' "$_file" \
-        | sed -e 's/#.*$//' -e 's/[[:space:]]*$//' \
-              -e 's/^"\(.*\)"$/\1/' -e "s/^'\\(.*\\)'\$/\\1/" \
-        | grep -qFx 'vault/vault.yml'
-    then
-        return 0
-    fi
+        {
+            line = strip_comment($0)
+            content = trim(line)
 
-    # Flow style: "vars_files: [vault/vault.yml]" or a multi-entry list on one
-    # line. Scoped to lines naming the key so a flow list under some other key
-    # can't trip this.
-    sed -e 's/#.*$//' "$_file" | grep -E 'vars_files:[[:space:]]*\[.*\]' \
-        | grep -Eo '\[[^][]*\]' \
-        | sed -e 's/^\[//' -e 's/\]$//' \
-        | tr ',' '\n' \
+            if (mode == "flow") {
+                buf = buf " " content
+                if (index(content, "]") > 0) {
+                    sub(/\].*/, "", buf)
+                    n = split(buf, parts, ",")
+                    for (i = 1; i <= n; i++) { v = trim(parts[i]); if (v != "") print v }
+                    mode = "none"
+                }
+                next
+            }
+
+            if (mode == "block") {
+                ind = indent_of(line)
+                if (content == "") {
+                    next
+                } else if (ind > key_indent && content ~ /^-/) {
+                    val = content
+                    sub(/^-[ \t]*/, "", val)
+                    if (val != "") print val
+                    next
+                } else {
+                    mode = "none"
+                    # fall through: this line may itself be the next key
+                }
+            }
+
+            if (content ~ /^vars_files:/) {
+                key_indent = indent_of(line)
+                rest = content
+                sub(/^vars_files:[ \t]*/, "", rest)
+                if (rest == "") {
+                    mode = "block"
+                } else if (rest ~ /^\[/) {
+                    buf = rest
+                    sub(/^\[/, "", buf)
+                    if (index(rest, "]") > 0) {
+                        sub(/\].*/, "", buf)
+                        n = split(buf, parts, ",")
+                        for (i = 1; i <= n; i++) { v = trim(parts[i]); if (v != "") print v }
+                    } else {
+                        mode = "flow"
+                    }
+                }
+            }
+        }
+    ' "$_file" \
         | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
               -e 's/^"\(.*\)"$/\1/' -e "s/^'\\(.*\\)'\$/\\1/" \
         | grep -qFx 'vault/vault.yml'

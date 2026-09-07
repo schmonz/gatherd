@@ -28,6 +28,28 @@
 # irreducible -- no ordering fixes it -- so the helper announces its inability at
 # runtime instead. Do not read a green run here as "every helper can do its job".
 #
+# This is a parser of convenience, not of record, and it is deliberately strict
+# rather than silently blind about where that convenience ends:
+#
+#   - It understands ONE launch per line, unconditionally invoked
+#     (`start_now "$x"`, never `cond && start_now "$x"`, never two calls
+#     sharing a line). Anything else is rejected outright as unmatched, not
+#     skipped -- see the "does not begin its line" / "share one line" checks
+#     below. A silent skip here is exactly how the 2026-09-07 bug went
+#     unnoticed: a guarded or doubled-up launch would otherwise be invisible
+#     to every rule that follows.
+#   - It understands exactly ONE `{ ... } &` block. A second gated block is
+#     not a shape this file has, so it is not a shape this gate resolves.
+#   - "Installed by CORE" means a `src:` line naming the barrier inside some
+#     roles/*/tasks/core.yml. It does not run Ansible: a `when:` that is
+#     always false, or a `dest:` that never matches this host, would still
+#     count as installed here.
+#   - A barrier call hidden inside a heredoc or a multi-line quoted string
+#     would be counted as the real invocation if it matched the anchor
+#     pattern below -- the real file's start_when body has exactly this
+#     shape, one layer down, inside its own `sh -c '...'`. Closing that needs
+#     a shell parser, which is a worse trade than naming the limit here.
+#
 # DECLARED, not present: this reads the repo, never the machine it runs on. A
 # converged machine has everything installed, so "does it work here" would pass
 # for every possible ordering and catch nothing.
@@ -47,11 +69,40 @@ die() { printf 'gatherd-check-session-cohort: %s\n' "$1" >&2; exit 2; }
 [ -r "$helpers" ]  || die "cannot read $helpers"
 [ -r "$manifest" ] || die "cannot read $manifest"
 
-# The barrier has to exist and to be installed, or every start_later waits on a
-# command that is not there and the whole mechanism is decoration.
-[ -f "$repo/scripts/$barrier" ] || die "$repo/scripts/$barrier does not exist"
-grep -rql "scripts/$barrier" "$repo/roles" >/dev/null 2>&1 \
-    || die "no role installs scripts/$barrier"
+hfile=$(mktemp) || die "mktemp failed"
+mfile=$(mktemp) || die "mktemp failed"
+all=$(mktemp) || die "mktemp failed"
+launches=$(mktemp) || die "mktemp failed"
+mentions=$(mktemp) || die "mktemp failed"
+core_files=$(mktemp) || die "mktemp failed"
+trap 'rm -f "$hfile" "$mfile" "$all" "$launches" "$mentions" "$core_files"' EXIT
+
+# CRLF survives word-splitting -- \r is not in $IFS -- so on a Windows-edited
+# file it rides along on the last package name on a `# needs:` line, and a
+# package that is right there in the manifest silently fails to match. Strip
+# it once, up front, rather than special-casing every place that later reads
+# a line.
+tr -d '\r' < "$helpers" > "$hfile"
+tr -d '\r' < "$manifest" > "$mfile"
+
+# The barrier has to exist, be runnable, and be installed by CORE specifically
+# -- or every start_later either waits on a command that is not there, or on
+# one that only REST installs, which is the original bug again: the barrier
+# itself would not exist at the first login it exists to gate.
+[ -s "$repo/scripts/$barrier" ] || die "$repo/scripts/$barrier does not exist or is empty"
+[ -x "$repo/scripts/$barrier" ] || die "$repo/scripts/$barrier is not executable"
+
+find "$repo/roles" -type f -path '*/tasks/core.yml' > "$core_files" 2>/dev/null
+found_install=no
+while IFS= read -r f; do
+    # A `src:` line specifically, not any mention of the path: a `state:
+    # absent` removal task and a bare comment both name the path without
+    # installing anything, and an install in tasks/rest.yml must fail this
+    # exactly the same way -- REST is not there yet at the login this gates.
+    grep -q "^[[:space:]]*src:.*scripts/$barrier" "$f" && { found_install=yes; break; }
+done < "$core_files"
+[ "$found_install" = yes ] \
+    || die "no roles/*/tasks/core.yml installs scripts/$barrier via a \`src:\` line"
 
 # Locate the gated block, so "behind the barrier" is a fact about nesting rather
 # than a guess from line numbers. A bare line-number test passes four different
@@ -61,32 +112,59 @@ grep -rql "scripts/$barrier" "$repo/roles" >/dev/null 2>&1 \
 #
 # The leading-quote anchor is what rules out a comment, which
 # `#   "$bin/gatherd-await-async"` would otherwise satisfy.
-barrier_line=$(grep -n "^[[:space:]]*\"[^\"]*/$barrier\"[[:space:]]*$" "$helpers" | head -1 | cut -d: -f1)
+barrier_line=$(grep -n "^[[:space:]]*\"[^\"]*/$barrier\"[[:space:]]*$" "$hfile" | head -1 | cut -d: -f1)
 [ -n "$barrier_line" ] \
     || die "$helpers never invokes $barrier as a command; start_later would not wait"
 
-open_line=$(awk -v b="$barrier_line" 'NR < b && /^[[:space:]]*\{[[:space:]]*$/ { n = NR } END { print n }' "$helpers")
-close_line=$(awk -v b="$barrier_line" 'NR > b && /^[[:space:]]*\}[[:space:]]*&[[:space:]]*$/ { print NR; exit }' "$helpers")
+open_line=$(awk -v b="$barrier_line" 'NR < b && /^[[:space:]]*\{[[:space:]]*$/ { n = NR } END { print n }' "$hfile")
+close_line=$(awk -v b="$barrier_line" 'NR > b && /^[[:space:]]*\}[[:space:]]*&[[:space:]]*$/ { print NR; exit }' "$hfile")
 [ -n "$open_line" ]  || die "no \`{\` opening a block above the $barrier call on line $barrier_line"
 [ -n "$close_line" ] || die "no \`} &\` closing the block opened on line $open_line"
 
 rc=0
 fail() { printf 'FAIL %s\n' "$1" >&2; rc=1; }
 
+# Every REAL use of the three forms, wherever it sits on the line -- not only
+# at the very start. A guarded launch (`[ -n "$X" ] && start_now ...`) or two
+# launches sharing one line would otherwise never reach any rule below at all:
+# that is the 2026-09-07 bug shape exactly, a helper the gate never saw.
+grep -nE '(^|[^[:alnum:]_])start_(now|later|when)([^[:alnum:]_]|$)' "$hfile" \
+    | grep -v '^[0-9]*:[[:space:]]*start_[a-z]*()' \
+    | grep -v '^[0-9]*:[[:space:]]*#' > "$mentions"
+[ -s "$mentions" ] || die "no start_now/start_later/start_when launches found in $helpers"
+
+while IFS= read -r entry; do
+    lineno=${entry%%:*}
+    line=${entry#*:}
+    # grep -c counts matching LINES, not occurrences, so two calls sharing a
+    # line would read as one -- use -o and count the output instead.
+    count=$(printf '%s\n' "$line" \
+        | grep -oE '(^|[^[:alnum:]_])start_(now|later|when)([^[:alnum:]_]|$)' | wc -l)
+    anchored=no
+    printf '%s' "$line" | grep -q '^[[:space:]]*start_\(now\|later\|when\)[[:space:]]' && anchored=yes
+
+    if [ "$count" -ne 1 ]; then
+        fail "line $lineno: $count start_now/start_later/start_when calls share one line -- put each on its own line so it can be checked"
+    elif [ "$anchored" != yes ]; then
+        fail "line $lineno: start_now/start_later/start_when does not begin its line, so nothing here can check it -- write it as a plain, unconditional call"
+    fi
+done < "$mentions"
+
 # Every launch, however written. Two greps because the rules below need a quoted
 # argument to reason about, and a launch written without one -- `start_later
 # $cmd` -- would otherwise be invisible to all of them. Written to files so the
 # loop runs in THIS shell: a `grep | while` pipeline counts failures in a
 # subshell and always reports success.
-all=$(mktemp) || die "mktemp failed"
-launches=$(mktemp) || die "mktemp failed"
-trap 'rm -f "$all" "$launches"' EXIT
-grep -n '^[[:space:]]*start_\(now\|later\|when\)[[:space:]]' "$helpers" \
-    | grep -v '^[0-9]*:[[:space:]]*start_[a-z]*()' | sort -n -t: -k1,1 > "$all"
-grep -n '^[[:space:]]*start_\(now\|later\)[[:space:]]*"' "$helpers" > "$launches"
-grep -n '^[[:space:]]*start_when[[:space:]][^[:space:]]*[[:space:]]*"' "$helpers" >> "$launches"
-sort -n -t: -k1,1 "$launches" -o "$launches"
-[ -s "$all" ] || die "no start_now/start_later/start_when launches found in $helpers"
+#
+# Plain lexical sort, not `-n`: comm needs both files in the SAME collating
+# order it itself would produce, and past 9 launches "10" sorts before "2"
+# lexically but after it numerically -- `sort -n` then feeding `comm` silently
+# garbled or dropped diagnostics once the real file passed that line count.
+grep -n '^[[:space:]]*start_\(now\|later\|when\)[[:space:]]' "$hfile" \
+    | grep -v '^[0-9]*:[[:space:]]*start_[a-z]*()' | sort -t: -k1,1 > "$all"
+grep -n '^[[:space:]]*start_\(now\|later\)[[:space:]]*"' "$hfile" > "$launches"
+grep -n '^[[:space:]]*start_when[[:space:]][^[:space:]]*[[:space:]]*"' "$hfile" >> "$launches"
+sort -t: -k1,1 "$launches" -o "$launches"
 
 if [ "$(wc -l < "$all")" -ne "$(wc -l < "$launches")" ]; then
     comm -13 "$launches" "$all" | while IFS= read -r entry; do
@@ -118,8 +196,10 @@ while IFS= read -r entry; do
     start_when)
         [ "$inside" = no ] || fail \
             "line $lineno: start_when is inside the block, which already waits on $barrier -- it carries its own wait and belongs outside"
-        # `start_when <command> "<cmd>"`: two arguments, the first unquoted.
-        printf '%s' "$line" | grep -q '^[[:space:]]*start_when[[:space:]][^[:space:]"]\{1,\}[[:space:]]*"' \
+        # `start_when <command> "<cmd>"`: two arguments, the command either
+        # bare or quoted -- `start_when "nowayprompt" "$bin/x"` is as valid a
+        # spelling as the unquoted form and must not be rejected either way.
+        printf '%s' "$line" | grep -q '^[[:space:]]*start_when[[:space:]]\("[^"]\{1,\}"\|[^[:space:]"]\{1,\}\)[[:space:]]\{1,\}"' \
             || fail "line $lineno: start_when names no command to wait for"
         continue
         ;;
@@ -147,7 +227,7 @@ while IFS= read -r entry; do
     # -F, not a plain -x: a package name is a literal. `libfoo.bar` matched
     # `libfoo-bar` as a regex, so a typo could certify itself.
     for pkg in $needs; do
-        grep -qxF -- "$pkg" "$manifest" || fail \
+        grep -qxF -- "$pkg" "$mfile" || fail \
             "line $lineno: start_now needs '$pkg', absent from tests/base-manifest.txt -- CORE installs no packages, so it is not there at the first login; use start_later"
     done
 done < "$launches"

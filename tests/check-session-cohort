@@ -259,13 +259,165 @@ start_now "$bin/watcher"  # needs: fuzzel
 EOF
 mv "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.bak"
 assert_rc "an uninstalled barrier is rc=2" 2
-assert_says "and says so" "no role installs"
+assert_says "and says so" "tasks/core.yml installs"
 mv "$WORK/core.yml.bak" "$WORK/roles/desktop/tasks/core.yml"
 
 # 17. Unreadable inputs are rc=2. A gate that returns 0 when it could not look is
-#     worse than no gate.
+#     worse than no gate, and it must die for the RIGHT reason: neutering the
+#     helpers readability check still yields rc=2 (via a later die), so the rc
+#     alone does not prove this check is the one that fired.
 rm -f "$WORK/scripts/gatherd-session-helpers"
 assert_rc "an unreadable helpers file is rc=2" 2
+assert_says "and says it cannot read it" "cannot read"
+assert_says "naming the right file" "gatherd-session-helpers"
+
+# 18. A launch guarded by a condition never begins its own line, so it was
+#     invisible to every anchored rule above -- the 2026-09-07 bug shape
+#     verbatim, and a plausible edit given minibook-hinge-daemon's hardware
+#     guard already lives beside these calls.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+[ -n "$WAYVNC" ] && start_now "$bin/gatherd-prompt-tailscale"  # needs: fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "a guarded launch is not silently invisible" 1
+assert_says "and says it does not begin its line" "does not begin its line"
+
+# 19. Two launches sharing a line, BOTH otherwise correctly placed: a rule that
+#     looks only at the leading token sees one well-formed, declared start_now
+#     and calls it done -- the second start_now, needing a REST-only package,
+#     is never examined at all, and the first one's `# needs: fuzzel` reads as
+#     covering the whole line.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/a"; start_now "$bin/gatherd-prompt-tailscale"  # needs: fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "two launches sharing a line are not silently invisible" 1
+assert_says "and says they share a line" "share one line"
+
+# 20. A removal-shaped task (this repo's own documented convention for
+#     retiring a file, CLAUDE.md "Migrations") names the barrier's path
+#     without installing anything. Passing this would also pass the day the
+#     install task is genuinely removed.
+cp "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.orig"
+printf -- '- name: Remove the old barrier\n  ansible.builtin.file:\n    path: "{{ setup_dir }}/scripts/gatherd-await-async"\n    state: absent\n' \
+    > "$WORK/roles/desktop/tasks/core.yml"
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/watcher"  # needs: fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "a removal task does not count as installing the barrier" 2
+assert_says "and says so" "tasks/core.yml installs"
+mv "$WORK/core.yml.orig" "$WORK/roles/desktop/tasks/core.yml"
+
+# 21. A bare comment naming the path is a mention, not an install -- a plain
+#     grep for the path would be satisfied by this.
+cp "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.orig"
+printf -- '# src: "{{ setup_dir }}/scripts/gatherd-await-async"\n' \
+    > "$WORK/roles/desktop/tasks/core.yml"
+assert_rc "a bare comment does not count as installing the barrier" 2
+assert_says "and says so" "tasks/core.yml installs"
+mv "$WORK/core.yml.orig" "$WORK/roles/desktop/tasks/core.yml"
+
+# 22. Installed by REST instead of CORE: every start_later would still wait on
+#     a barrier that does not exist yet at the first login, which this gate
+#     exists to prevent.
+mv "$WORK/roles/desktop/tasks/core.yml" "$WORK/roles/desktop/tasks/rest.yml"
+assert_rc "an install in tasks/rest.yml is not a CORE install" 2
+assert_says "and says so" "tasks/core.yml installs"
+mv "$WORK/roles/desktop/tasks/rest.yml" "$WORK/roles/desktop/tasks/core.yml"
+
+# 23. An empty `# needs:` declaration is neither a real declaration nor a
+#     start_later -- it must not read as "no packages required".
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/watcher"  # needs:
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "an empty needs declaration fails" 1
+assert_says "and says it is empty" "empty \`# needs:\` declaration"
+
+# 24. An unreadable manifest is rc=2 with its own message, not a false rc=1
+#     ("needs 'x', absent from the manifest") that blames the helper instead
+#     of the gate's own missing input.
+mv "$WORK/tests/base-manifest.txt" "$WORK/base-manifest.txt.bak"
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/watcher"  # needs: fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "an unreadable manifest is rc=2" 2
+assert_says "and says so" "cannot read"
+mv "$WORK/base-manifest.txt.bak" "$WORK/tests/base-manifest.txt"
+
+# 25. A zero-byte barrier is a no-op: every start_later would "wait" on a
+#     command that returns immediately having done nothing.
+cp "$WORK/scripts/gatherd-await-async" "$WORK/gatherd-await-async.orig"
+: > "$WORK/scripts/gatherd-await-async"
+chmod 755 "$WORK/scripts/gatherd-await-async"
+assert_rc "an empty barrier script is rc=2" 2
+assert_says "and says so" "does not exist or is empty"
+mv "$WORK/gatherd-await-async.orig" "$WORK/scripts/gatherd-await-async"
+chmod 755 "$WORK/scripts/gatherd-await-async"
+
+# 26. A non-executable barrier can never be run by the cohort's `&` block.
+chmod 644 "$WORK/scripts/gatherd-await-async"
+assert_rc "a non-executable barrier is rc=2" 2
+assert_says "and says so" "is not executable"
+chmod 755 "$WORK/scripts/gatherd-await-async"
+
+# 27. CRLF survives word-splitting, so the \r rides along on the last package
+#     name on a `# needs:` line -- a package right there in the manifest must
+#     still be recognized.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/watcher"  # needs: fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+awk '{printf "%s\r\n", $0}' "$WORK/scripts/gatherd-session-helpers" > "$WORK/scripts/gatherd-session-helpers.crlf"
+mv "$WORK/scripts/gatherd-session-helpers.crlf" "$WORK/scripts/gatherd-session-helpers"
+assert_rc "a CRLF helpers file does not spuriously fail on a present package" 0
+
+# 28. `start_when "cmd" "$bin/x"` is as valid a spelling as the unquoted
+#     command form and runs identically -- only the regex's missing-quote
+#     assumption used to reject it.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_when()  { shift; sh -c "$1" & }
+start_when "nowayprompt" "$bin/gatherd-prompt-vault"
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "a quoted start_when guard is accepted" 0
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

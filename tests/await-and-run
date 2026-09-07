@@ -83,5 +83,33 @@ else
     bad "and passes --vault-password-file"
 fi
 
+# 4. The stamp is the barrier's release signal, so it must be written whatever
+#    happens -- including the case the sentinel itself cannot express, since
+#    site-async.yml writes async-complete only when no tier failed.
+STAMP="$WORK/etc/async-complete-finished"
+HEAD=$(git -C "$WORK/gatherd" rev-parse HEAD)
+
+rm -f "$STAMP" "$WORK/etc/async-complete"
+printf '0\n' > "$WORK/rc"
+run_runner "$WORK/etc/async-complete" "$WORK/gatherd/site-async.yml"
+assert "a successful run writes the finished stamp" -f "$STAMP"
+assert "recording the deployed HEAD" "$(cat "$STAMP" 2>/dev/null)" = "$HEAD"
+
+rm -f "$STAMP"
+printf '2\n' > "$WORK/rc"
+run_runner "$WORK/etc/async-complete" "$WORK/gatherd/site-async.yml"
+assert "a failed run writes it too" -f "$STAMP"
+assert "and still reports the failure (rc=$RC)" "$RC" -eq 2
+printf '0\n' > "$WORK/rc"
+
+# 5. And on the short-circuit, where the play already converged at this HEAD and
+#    never runs. Without this the barrier waits out its whole bound on every
+#    login of a machine that has nothing to do.
+rm -f "$STAMP"
+printf '%s\n' "$HEAD" > "$WORK/etc/async-complete"
+run_runner "$WORK/etc/async-complete" "$WORK/gatherd/site-async.yml"
+assert "an already-converged short-circuit writes it" -f "$STAMP"
+assert "and exits 0 (rc=$RC)" "$RC" -eq 0
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

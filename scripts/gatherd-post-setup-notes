@@ -328,15 +328,32 @@ section_unmanaged_wifi() {
 }
 
 section_vault() {
-    set -- \
-        'Enter password when prompted' \
-        'Run `journalctl -u gatherd-vault.service` to check progress'
-    if [ -f /etc/gatherd/vault-complete ]; then
-        prune_section 'Vault' "$@"
+    # Ask gatherd-vault-pass-needed rather than watching for vault-complete. The
+    # sentinel says the vault PLAY has converged, which is minutes later and a
+    # different question: between a correct password being stored and the play
+    # finishing, the section stood there telling you to enter a password you had
+    # already entered. The predicate is the same one both prompts use, and a
+    # stored password is only ever one that decrypted the vault (see
+    # gatherd-await-and-run), so its absence is exactly "a human still has to type
+    # something".
+    b_enter='Enter password when prompted'
+
+    # Retired: it pointed at one service's journal while the pave's own progress
+    # terminal (gatherd-show-slow-progress) was already on screen showing the run.
+    # prune_section matches on bullet text, so a bullet that is simply deleted
+    # from the set above is orphaned in every notes file that already has it --
+    # the same trap section_other_logins documents. Name it here, forever, so it
+    # goes away on machines that already wrote it.
+    prune_section 'Vault' 'Run `journalctl -u gatherd-vault.service` to check progress'
+
+    # Overridable only so the branch can be exercised against a sandbox in tests
+    # (the same reason gatherd-vault-pass-needed itself takes GATHERD_HOME).
+    if "${GATHERD_HOME:-/usr/local/lib/gatherd}/scripts/gatherd-vault-pass-needed"; then
+        prune_section 'Vault' "$b_enter"
+        section_present 'Vault' || h 'Vault'
+        li "$b_enter"
     else
-        section_present 'Vault' && return
-        h 'Vault'
-        for b in "$@"; do li "$b"; done
+        prune_section 'Vault' "$b_enter"
     fi
 }
 

@@ -169,10 +169,11 @@ start_when nowayprompt "$bin/gatherd-prompt-vault"
     # the sweep SIGKILL'd the fresh agent every login (its `cmd-polkit-agent -c
     # .../gatherd-polkit-agent` cmdline matches the gatherd- glob). Launched first as
     # a best effort, not a guarantee: nothing enforces registration order among the
-    # 16 members below, which all fire within microseconds of barrier release
-    # rather than spread across a slow login the way they used to be. cmd-polkit
-    # typically registers within tens of milliseconds regardless; a prompt raised
-    # in that narrow window gets a bare denial instead of a UI.
+    # 16 members below, which all fire within milliseconds of barrier release
+    # (measured in the sandbox smoke test: the 16 start_later forks spanned
+    # ~12ms end to end) rather than spread across a slow login the way they
+    # used to be. cmd-polkit registers quickly regardless; a prompt raised
+    # before it does gets a bare denial instead of a UI.
     start_later "$bin/gatherd-polkit-agent"
     # wayvnc as a cohort child, not a plain sway `exec`: a plain exec would orphan on
     # logout (sway reaps nothing) and keep holding 127.0.0.1:5900, so the next
@@ -180,12 +181,12 @@ start_when nowayprompt "$bin/gatherd-prompt-vault"
     # logout, freeing the port. VNC is localhost-only, reached over SSH — plans/VNC.md.
     #
     # Deliberately left start_later rather than start_when: wayvnc's own
-    # package lands ~14 minutes into a measured REST run, earlier than the
-    # ~12 minutes cited for nowayprompt above, so it would also qualify -- and
-    # remote GUI access during a pave is exactly when you'd want it. Whether
-    # that's the right behavior is a preference about how the machine should
-    # act while paving, not a defect, so it's left for a human call rather
-    # than decided here.
+    # package lands ~14 minutes before barrier release -- a longer margin than
+    # the ~12 minutes cited for nowayprompt above -- so it would also qualify,
+    # and remote GUI access during a pave is exactly when you'd want it.
+    # Whether that's the right behavior is a preference about how the machine
+    # should act while paving, not a defect, so it's left for a human call
+    # rather than decided here.
     start_later "wayvnc"
     start_later "$bin/gatherd-conky"
     # Only installed on has_dual_accelerometer machines (roles/desktop/tasks/
@@ -209,17 +210,19 @@ start_when nowayprompt "$bin/gatherd-prompt-vault"
     start_later "env XDG_CURRENT_DESKTOP=GNOME $bin/gatherd-systray 1password --silent"
     # Stash LocalSend's startup-window flash before it reaches the screen.
     # Source order is not what guarantees this: start_later just forks in
-    # sequence, and two forks microseconds apart race under the scheduler --
-    # measured, the interceptor landed after this line's systray call in 2 of
-    # 3 sandbox runs when both stubs were equally cheap (see the smoke test in
-    # the Task 7 report). What actually protects it is an asymmetry in the two
-    # paths: the interceptor only has to open a sway IPC subscription, while
-    # gatherd-systray pays a D-Bus round trip to the StatusNotifierWatcher --
-    # already registered by barrier release, so that call returns immediately
-    # (measured: `busctl --user status org.kde.StatusNotifierWatcher` succeeds
-    # on the first call once waybar owns the name, contributing no delay) --
-    # and then execs a Flutter app that does not map its first surface for
-    # seconds. See scripts/gatherd-intercept-localsend-flash.
+    # sequence, and two forks issued a couple of milliseconds apart race under
+    # the scheduler -- measured, the interceptor landed after this line's
+    # systray call in 1 of 3 sandbox reruns when both stubs were equally cheap
+    # (see the smoke test in the Task 7 report). What actually protects it is
+    # an asymmetry in the two paths: the interceptor only has to open a sway
+    # IPC subscription, while gatherd-systray pays a D-Bus round trip to the
+    # StatusNotifierWatcher -- already registered by barrier release, so that
+    # call returns quickly (measured on this machine:
+    # `busctl --user status org.kde.StatusNotifierWatcher` completes in
+    # single-digit milliseconds once waybar owns the name, contributing no
+    # meaningful delay) -- and then execs an application that takes
+    # appreciably longer to map its first surface. See
+    # scripts/gatherd-intercept-localsend-flash.
     start_later "$bin/gatherd-intercept-localsend-flash"
     start_later "$bin/gatherd-systray localsend --hidden"
     start_later "$bin/gatherd-systray tailscale systray"

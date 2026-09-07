@@ -52,6 +52,11 @@ assert_says() {
     if grep -q "$_want" "$WORK/out"; then ok "$_d"; else bad "$_d (no '$_want' in output)"; cat "$WORK/out"; fi
 }
 
+assert_silent() {
+    _d=$1; _want=$2
+    if grep -q "$_want" "$WORK/out"; then bad "$_d ('$_want' in output)"; cat "$WORK/out"; else ok "$_d"; fi
+}
+
 # 1. The failure this exists to prevent, in the state the repave was in.
 assert_rc "a missing dependency exits 1" 1 \
     env PATH="$WORK/shim:$PATH" "$GUARD" clight
@@ -88,6 +93,163 @@ assert_says "skipping is announced" 'skipping the check'
 
 # 8. Called with nothing is a usage error, distinct from both of the above.
 assert_rc "no targets exits 2" 2 "$GUARD"
+
+# 9-13. The architecture filter.
+#
+# .SRCINFO comes from a fixture over file://, and pacman is shimmed to call the
+# dependency absent, because both halves of every case below are states the
+# network and this machine will not supply on demand: qemu-system-aarch64 and
+# edk2-aarch64 are ordinary extra/ packages that a machine with
+# qemu-emulators-full HAS -- on which an unshimmed test would find nothing
+# missing, never reach this code, and pass without asserting anything. The
+# pkgbase stays claude-desktop so `aur depends` still answers for real; only the
+# .SRCINFO is substituted.
+mkdir -p "$WORK/srcinfo" "$WORK/qemu-shim" "$WORK/cmake-shim"
+cat > "$WORK/qemu-shim/pacman" <<'SHIM'
+#!/bin/bash
+absent=$GATHERD_TEST_ABSENT
+args=(); for a in "$@"; do
+    case " $absent " in *" $a "*) ;; *) args+=("$a") ;; esac
+done
+out=$(/usr/bin/pacman "${args[@]}"); rc=$?
+for a in "$@"; do
+    case " $absent " in *" $a "*) printf '%s\n' "$a"; rc=127 ;; esac
+done
+printf '%s\n' "$out" | grep -v '^$'
+exit $rc
+SHIM
+chmod +x "$WORK/qemu-shim/pacman"
+
+# Every fixture disposes of edk2-aarch64 the same way, because it is genuinely
+# absent on any machine without qemu-emulators-full: leave it unaccounted for
+# and it forces exit 1 on its own, and the case under test decides nothing.
+# Three of these tests passed against the bugs they name for exactly that
+# reason.
+fixture() {
+    printf 'pkgbase = claude-desktop\n\tdepends_aarch64 = edk2-aarch64\n%b\n' "$1" \
+        > "$WORK/srcinfo/claude-desktop"
+}
+# $1 is what pacman will call absent, so each case names exactly the state it
+# is about instead of inheriting the previous one's.
+guard_fixture() {
+    # Cold every time. The cache is keyed by the AUR's LastModified, which does
+    # not change between cases, so a warm one would serve the PREVIOUS fixture
+    # and every case after the first would silently assert the first one again.
+    rm -rf "$WORK/cache"
+    env PATH="$WORK/qemu-shim:$PATH" GATHERD_TEST_ABSENT="$1" \
+        XDG_CACHE_HOME="$WORK/cache" AUR_SRCINFO="file://$WORK/srcinfo/" \
+        "$GUARD" claude-desktop
+}
+
+# 9. The case that started this: a pair declared only under the OTHER
+#    architecture's suffix. The AUR's RPC flattens it into one Depends list, so
+#    the guard failed the whole slow AUR tier over two packages makepkg was
+#    never going to ask for.
+fixture '\tdepends_aarch64 = qemu-system-aarch64\n\tdepends_aarch64 = edk2-aarch64'
+assert_rc "a foreign-arch-only dependency is dropped" 0 \
+    guard_fixture 'qemu-system-aarch64 edk2-aarch64'
+
+# 10. ...and this architecture's suffix is not foreign. Without this the fix is
+#     just a way to stop noticing things.
+fixture '\tdepends_x86_64 = qemu-system-aarch64'
+assert_rc "this arch's depends_<arch> is still reported" 1 \
+    guard_fixture 'qemu-system-aarch64'
+assert_says "and it is named" '^  qemu-system-aarch64$'
+
+# 11. A name in NEITHER list survives. This is the difference between "drop what
+#     a foreign suffix declares" and "keep what the native lists mention": the
+#     two agree on every package we build and diverge here, where the second
+#     rule deletes a real missing dependency with no message and no exit code.
+fixture '\tdepends_aarch64 = qemu-system-aarch64'
+assert_rc "a dependency in neither list survives" 1 \
+    guard_fixture 'qemu-system-aarch64 socat'
+assert_says "and it is named" '^  socat$'
+
+# 12. Bounds are not part of the name. `depends = X>=8` and `depends_aarch64 = X`
+#     are one package named twice; compare the raw strings and the bounded
+#     native entry never cancels the bare foreign one, so a dependency this
+#     architecture requires is dropped with no message and no exit code.
+#
+#     The bound goes on the NATIVE line. Measured: with it on the foreign line
+#     both the real script and a raw-string mutant exit 1, because raw strings
+#     can only shrink foreign membership, which only makes the filter more
+#     conservative. An earlier version of this test pinned that harmless
+#     direction and passed against the bug it named.
+fixture '\tdepends = qemu-system-aarch64>=8\n\tdepends_aarch64 = qemu-system-aarch64'
+assert_rc "a native dependency named with a bound elsewhere survives" 1 \
+    guard_fixture 'qemu-system-aarch64'
+assert_says "and it is named" '^  qemu-system-aarch64$'
+
+# 13. An unreadable .SRCINFO must not discard a verdict that was already
+#     correct. clight's whole graph carries no arch-suffixed list, so no answer
+#     could have moved gsl from missing to present -- exiting 0 on a cgit outage
+#     would be exactly the swallowed dependency this script exists to prevent.
+#     (AUR_LOCATION cannot produce this state: it breaks the RPC first and the
+#     run stops at test 7's exit.)
+assert_rc "an unreadable .SRCINFO keeps the missing dependency" 1 \
+    env PATH="$WORK/shim:$PATH" XDG_CACHE_HOME="$WORK/cold-13" \
+        AUR_SRCINFO=http://127.0.0.1:1/x "$GUARD" clight
+assert_says "the dependency is still named" '^  gsl$'
+assert_says "and the outage is named too" 'clight: cannot read .SRCINFO'
+
+# 14. A 200 that is not a .SRCINFO -- a cgit error page, a captive portal, a
+#     proxy interstitial -- parses to no keys at all, which is indistinguishable
+#     from a package with no dependencies. Refuse the body; do not trust the
+#     parse.
+printf 'not a srcinfo at all\n' > "$WORK/srcinfo/claude-desktop"
+assert_rc "a body that is not a .SRCINFO keeps the dependency" 1 \
+    guard_fixture 'qemu-system-aarch64'
+assert_says "and says what was wrong with it" 'not a \.SRCINFO'
+
+# 15. When one pkgbase cannot be read, its dependencies survive -- even a
+#     dependency another, readable pkgbase declares foreign. Only a multi-base
+#     graph can put the two rules in conflict: clight, clightd and libmodule all
+#     declare cmake, so serving a foreign cmake for the two that are readable
+#     while clight itself 404s is the one shape where dropping and keeping
+#     disagree. Without this rule cmake vanishes from the report.
+mkdir -p "$WORK/multi"
+for base in clightd libmodule; do
+    printf 'pkgbase = %s\n\tdepends_aarch64 = cmake\n' "$base" > "$WORK/multi/$base"
+done
+: > "$WORK/multi/clight"   # empty: read as a body that is not a .SRCINFO
+cat > "$WORK/cmake-shim/pacman" <<'SHIM'
+#!/bin/bash
+args=(); for a in "$@"; do [ "$a" = cmake ] || args+=("$a"); done
+out=$(/usr/bin/pacman "${args[@]}"); rc=$?
+for a in "$@"; do [ "$a" = cmake ] && { printf 'cmake\n'; rc=127; }; done
+printf '%s\n' "$out" | grep -v '^$'
+exit $rc
+SHIM
+chmod +x "$WORK/cmake-shim/pacman"
+assert_rc "an unreadable pkgbase keeps its own dependencies" 1 \
+    env PATH="$WORK/cmake-shim:$PATH" XDG_CACHE_HOME="$WORK/cold-15" \
+        AUR_SRCINFO="file://$WORK/multi/" "$GUARD" clight
+assert_says "even one another pkgbase calls foreign" '^  cmake$'
+
+# 16. .SRCINFO is cached under XDG_CACHE_HOME/gatherd by the AUR's own
+#     LastModified, in gatherd-check-aur-deps's directory and file-name shape so
+#     the two populate each other. Without it a cgit outage fails the slow AUR
+#     tier with CERTAINTY on every x86_64 machine -- MISSING is never empty
+#     there, because the aarch64 pair is permanently absent -- and tells the
+#     operator to declare the one package they must not.
+cache="$WORK/live-cache"
+env XDG_CACHE_HOME="$cache" "$GUARD" claude-desktop >"$WORK/out" 2>&1
+if ls "$cache"/gatherd/claude-desktop.*.SRCINFO >/dev/null 2>&1; then
+    ok "the .SRCINFO is cached under its upstream LastModified"
+else
+    bad "the .SRCINFO is cached under its upstream LastModified"; ls -R "$cache" 2>&1
+fi
+
+assert_rc "a warm cache rides out a cgit outage" 0 \
+    env XDG_CACHE_HOME="$cache" AUR_SRCINFO=http://127.0.0.1:1/x "$GUARD" claude-desktop
+
+# 17. ...but only for what it actually holds. A cold cache and an unreachable
+#     cgit must still report, or the cache has bought silence rather than
+#     resilience.
+assert_rc "a cold cache does not" 1 \
+    env PATH="$WORK/shim:$PATH" XDG_CACHE_HOME="$WORK/cold-17" \
+        AUR_SRCINFO=http://127.0.0.1:1/x "$GUARD" clight
+assert_says "and names the dependency" '^  gsl$'
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

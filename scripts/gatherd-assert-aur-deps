@@ -92,6 +92,186 @@ MISSING=$(printf '%s\n' "$WANTED" | xargs -r pacman -T)
 
 [ -n "$MISSING" ] || exit 0
 
+# `aur depends` answers from the AUR's RPC, which flattens depends_x86_64 and
+# depends_aarch64 into one Depends list. makepkg honours only the suffix that
+# matches this machine, so claude-desktop's aarch64 QEMU pair
+# (qemu-system-aarch64, edk2-aarch64) reads as missing on every x86_64 machine
+# and fails the slow AUR tier over two packages makepkg will never ask for.
+# .SRCINFO is the one place the suffixes survive, so ask it -- as
+# gatherd-check-aur-deps already does, though the two still differ on the
+# aarch64 machine that does not exist yet: the gate carries those two names in
+# its ALLOWED table, and this does not.
+#
+# Three rules make this subtraction safe, and each of them was wrong first:
+#
+#   Drop only what a FOREIGN suffix declares and no native list mentions. The
+#   tempting shape -- keep what the native lists mention -- has the same answer
+#   on every package we build and a silent failure on a name in neither list
+#   (the RPC and .SRCINFO spelling a dependency differently, a body that parses
+#   to nothing). This sits after pacman -T, where the only thing it can do is
+#   turn a red green, so an unexplained name has to survive, not vanish.
+#
+#   Compare bare names on both sides. .SRCINFO writes bounds where it likes,
+#   and `depends = qemu-system-aarch64>=8` with `depends_aarch64 =
+#   qemu-system-aarch64` is one package named twice. Keep the raw strings and
+#   the bounded native entry never cancels the bare foreign one, so a
+#   dependency this architecture requires is dropped with no message and no
+#   exit code. Measured: that fixture goes rc=1 to rc=0. The mirror image, with
+#   the bound on the foreign line, is harmless -- raw strings can only shrink
+#   foreign membership, which only makes the filter more conservative -- and
+#   pinning that direction instead is how this went a round uncaught.
+#
+#   Ask only about the pkgbases that declare something in MISSING, cache the
+#   answer under the AUR's own LastModified, and when one of them cannot be
+#   read, keep ITS dependencies. A blanket skip on a cgit
+#   outage throws away a verdict that was already correct: clight's graph has no
+#   arch-suffixed list anywhere, so no answer from .SRCINFO could have changed
+#   `gsl` from missing to present, and exiting 0 there is exactly the swallowed
+#   dependency this script exists to prevent. Scoping also makes it one request
+#   on the slow tier rather than nine, which matters because MISSING is
+#   non-empty there on EVERY converge -- the aarch64 pair is permanently absent
+#   from every x86_64 machine, so this path is the normal one, not the rare one.
+#
+# The cache is gatherd-check-aur-deps's -- same directory, same file names,
+# <pkgbase>.<LastModified>.SRCINFO under XDG_CACHE_HOME/gatherd -- so the two
+# populate each other, and the upstream mtime in the name means a stale entry
+# can never be read as fresh. It is also what keeps a cgit outage from failing a
+# tier on a converged machine: without it the slow tier's exit 1 is CERTAIN
+# whenever cgit is down, because MISSING is never empty there, and the message
+# would tell the operator to declare the one package they must not.
+#
+# The .SRCINFO URL follows AUR_LOCATION, and AUR_SRCINFO overrides it outright:
+# the tests need to put this into states the network will not supply on demand,
+# and a build's own aurutils config (XDG_CONFIG_HOME/aurutils/env) is not read
+# here, so the two can in principle point at different hosts.
+#
+# uname -m is not strictly makepkg's authority -- it keys the suffixes off
+# CARCH from /etc/makepkg.conf. The two agree on x86_64 and aarch64 and differ
+# on 32-bit ARM (armv7l vs armv7h), which no gatherd machine is.
+SRC=$(mktemp) || exit 2
+PAIRS=$(mktemp) || exit 2
+INFO=$(mktemp) || exit 2
+trap 'rm -f "$ERR" "$SRC" "$PAIRS" "$INFO"' EXIT
+
+printf '%s\n' "$TABLE" | awk -F'\t' '$5 != "Self" { print $2 "\t" $3 }' | sort -u > "$PAIRS"
+
+# The pkgbases that declare something in MISSING, and their upstream mtimes,
+# asked of the RPC that has already answered once -- so the cache key costs no
+# new dependency on cgit. No answer just means no key: that pkgbase is fetched
+# fresh, exactly as it was before the cache.
+MISSING_BARE=$(printf '%s\n' "$MISSING" | sed 's/[<>=].*$//;/^$/d' | sort -u)
+mapfile -t _needed < <(
+    while IFS=$'\t' read -r dep base; do
+        grep -qxF "${dep%%[<>=]*}" <<<"$MISSING_BARE" && printf '%s\n' "$base"
+    done < "$PAIRS" | sort -u)
+
+if [ ${#_needed[@]} -gt 0 ]; then
+    # LastModified is a JSON number, hence str(): concatenating it raises, and
+    # the whole point of the fallback below is that a key we cannot build is
+    # simply a fetch we do not cache -- so the failure would have been silent.
+    timeout 60 aur query -t info "${_needed[@]}" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    for result in json.load(sys.stdin)["results"]:
+        for key in (result["Name"], result["PackageBase"]):
+            print(key + "\t" + str(result["LastModified"]))
+except Exception as failure:
+    print("cannot key the .SRCINFO cache:", failure, file=sys.stderr)
+' > "$INFO"
+fi
+
+KEPT=$(printf '%s\n' "$MISSING" | timeout 120 python3 -c '
+import os, re, sys, urllib.parse, urllib.request
+from pathlib import Path
+
+arch, base_url, pairs_path, info_path = sys.argv[1:5]
+
+def bare(name):
+    return re.split(r"[<>=]", name, maxsplit=1)[0].strip()
+
+# Which pkgbase declares which dependency, from the table the RPC already gave
+# us, so a name no pkgbase declares has no unreadable pkgbase to be excused by.
+declared = {}
+with open(pairs_path) as pairs:
+    for row in pairs:
+        dep, _, pkgbase = row.rstrip("\n").partition("\t")
+        if dep and pkgbase:
+            declared.setdefault(bare(dep), set()).add(pkgbase)
+
+modified = {}
+with open(info_path) as info:
+    for row in info:
+        key, _, mtime = row.rstrip("\n").partition("\t")
+        if key:
+            modified[key] = mtime
+
+cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "gatherd"
+
+def srcinfo(pkgbase):
+    """The raw .SRCINFO, from the cache when the AUR says it has not moved."""
+    mtime = modified.get(pkgbase)
+    name = urllib.parse.quote(pkgbase, safe="")
+    cached = cache / (name + "." + mtime + ".SRCINFO") if mtime else None
+    if cached is not None and cached.exists():
+        return cached.read_text()
+    with urllib.request.urlopen(base_url + name, timeout=20) as response:
+        text = response.read().decode("utf-8", "replace")
+    # A 404 raises; a 200 carrying something else (a cgit error page, a captive
+    # portal, a proxy interstitial) parses to no keys at all, which is
+    # indistinguishable from a package with no dependencies.
+    if "pkgbase" not in text:
+        raise ValueError("fetched something that is not a .SRCINFO")
+    if cached is not None:
+        cache.mkdir(parents=True, exist_ok=True)
+        for stale in cache.glob(name + ".*.SRCINFO"):
+            stale.unlink()
+        cached.write_text(text)
+    return text
+
+missing = [row.rstrip("\n") for row in sys.stdin if row.strip()]
+needed = set()
+for dep in missing:
+    needed |= declared.get(bare(dep), set())
+
+suffixed = re.compile(r"^(?:depends|makedepends|checkdepends)_(.+)$")
+native, foreign, unreadable = set(), set(), set()
+
+for pkgbase in sorted(needed):
+    try:
+        text = srcinfo(pkgbase)
+    except Exception as failure:
+        print(f"{pkgbase}: cannot read .SRCINFO ({failure})", file=sys.stderr)
+        unreadable.add(pkgbase)
+        continue
+    for row in text.splitlines():
+        key, sep, value = row.partition("=")
+        if not sep:
+            continue
+        key, value = key.strip(), bare(value)
+        match = suffixed.match(key)
+        if match:
+            (foreign if match.group(1) != arch else native).add(value)
+        elif key in ("depends", "makedepends", "checkdepends"):
+            native.add(value)
+
+for dep in missing:
+    name = bare(dep)
+    if name in foreign and name not in native and not declared.get(name, set()) & unreadable:
+        continue
+    print(dep)
+' "$(uname -m)" \
+    "${AUR_SRCINFO:-${AUR_LOCATION:-https://aur.archlinux.org}/cgit/aur.git/plain/.SRCINFO?h=}" \
+    "$PAIRS" "$INFO" 2>"$SRC")
+KEPT_RC=$?
+
+# Only a bug in the filter itself leaves MISSING as it was; every network- and
+# body-shaped failure is already decided per pkgbase above.
+if [ "$KEPT_RC" -eq 0 ]; then
+    MISSING=$KEPT
+    [ -n "$MISSING" ] || exit 0
+fi
+[ -s "$SRC" ] && sed 's/^/  /' "$SRC" >&2
+
 echo "Not installed, and makepkg cannot install them (PACMAN_AUTH=/bin/false):" >&2
 printf '%s\n' "$MISSING" | sed 's/^/  /' >&2
 echo >&2

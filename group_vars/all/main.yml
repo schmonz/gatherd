@@ -129,6 +129,7 @@ rest_packages:
   - go                     # captive-browser-git, claude-cowork-service
   - bash-completion        # clight
   - cmake                  # clight, clightd, libmodule, thinkfan
+  - gsl                    # clight
   - libconfig              # clight
   - ddcutil                # clightd
   - libiio                 # clightd
@@ -167,6 +168,10 @@ rest_packages:
   - qemu-system-x86
   - edk2-ovmf
   - virtiofsd
+  # waterfox-bin's mime-types. mailcap is the only provider, and it is not on
+  # the ISO -- it has been present only because github-cli happens to pull it
+  # in, which is not a dependency waterfox-bin gets to rely on.
+  - mailcap                # waterfox-bin
   - xcb-util-cursor        # zoom
   - xcb-util-image         # zoom
   - xcb-util-wm            # zoom

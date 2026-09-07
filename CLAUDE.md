@@ -124,6 +124,53 @@ nearly all of them: they are `state: absent` on files, so stale state just
 persists and `/etc/gatherd/last-run` still records `ok`. An entry becomes a
 deletion candidate only for someone already working in that file.
 
+## AUR dependencies
+
+Every AUR build runs with `PACMAN_AUTH=/bin/false`, so makepkg cannot install a
+dependency it finds missing — it dies, and takes its tier with it. Two checks
+guard that, and they are deliberately different shapes.
+
+**`scripts/gatherd-assert-aur-deps`, included before every `aur sync`.** It
+resolves what the build is about to need, drops the packages being built
+alongside it, and lets `pacman -T` say which of the rest are absent. Running
+immediately before the build is the whole trick: it inspects the machine at the
+one moment that matters, so it needs no model of which tier installs what when.
+A missing dependency becomes a one-second failure naming the package, instead of
+`ERROR: 'pacman' failed to install missing dependencies` fourteen minutes into a
+build with the real culprit buried in stdout. Add the include whenever you add
+an `aur sync`. It fails open on an unreachable AUR — a flaky network must not
+block a converge.
+
+**`scripts/gatherd-check-aur-deps`, run before committing.** The preflight only
+fires on the machine doing the converge; this one catches the same mistake in
+the edit that causes it. The rule it enforces is DECLARED, not PRESENT: a
+dependency counts only if it is installed by an earlier pacman task, is in
+`tests/base-manifest.txt`, or was built by an earlier `aur sync`. Never because
+something else happens to pull it in — that has failed three times now. `gsl` is
+reachable via guvcview-common, but from a tier running after clight builds.
+`mailcap`, the only provider of waterfox-bin's `mime-types`, was never declared;
+github-cli happens to need it. `python-cryptography` was present only because
+ansible-core drags it in. A reachability check passes all three.
+
+The gate reads tier order out of the playbooks rather than restating it. An
+earlier version kept the sequence in a constant, which meant reordering two
+blocks in `site-async.yml` left it green while every `rest_packages` dependency
+suddenly landed too late. Anything it cannot parse — an unreadable `aur sync`,
+a build in a file no playbook reaches — is a hard failure, never a silent skip.
+Exit 2 means it could not run; only exit 1 is a violation.
+
+`tests/base-manifest.txt` is measured, not derived. `pacman -Qq` asks the wrong
+question on a converged machine, and EndeavourOS's `netinstall.yaml` is
+documentation of intent that disagrees with the installed reality both ways.
+Regenerate it with `scripts/gatherd-capture-base-manifest` from a first-boot
+`/var/log/pacman.log` — a repave, or the `tests/create-base` snapshot. It cuts
+where Ansible enters the log, bootstrap included: counting gatherd's own
+`ansible` install as base is what certified `python-cryptography`.
+
+Do not hand-transcribe a PKGBUILD's `depends` and assume you got them all. That
+is exactly what produced the bug: clight's `bash-completion`, `cmake` and
+`libconfig` were transcribed correctly, and `gsl` was simply missed.
+
 ## Repave cadence
 
 Count the `verify_li` lines in `section_verify` in `scripts/gatherd-post-setup-notes`. If there are more than 10, suggest that it's time to repave and run through the verify checklist.

@@ -43,6 +43,11 @@
     executable: /bin/bash
   changed_when: false
 
+- name: Check the build dependencies of aur_packages
+  ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+  vars:
+    aur_assert_targets: "{{ aur_packages }}"
+
 - name: Build AUR packages into the local repository
   ansible.builtin.command: "{{ aur_sync_command }} {{ aur_packages | join(' ') }}"
   environment: "{{ aur_build_environment }}"

@@ -1,0 +1,487 @@
+#!/usr/bin/env python3
+"""Fail if an AUR package needs something nothing has installed yet.
+
+Every AUR build runs as target_user with PACMAN_AUTH=/bin/false, so makepkg
+cannot install a dependency it finds missing -- it just dies. A dependency that
+is not already on the machine when its build starts is a hard failure partway
+through gatherd-async.service, which is how a repave lost the whole hardware
+tier to one undeclared `gsl`.
+
+The rule this gate enforces is DECLARED, not PRESENT. A dependency counts as
+satisfied only if it is
+
+  * installed by an EARLIER pacman task, by name or through a provides, or
+  * in tests/base-manifest.txt, the measured EndeavourOS install, or
+  * an AUR package an EARLIER task built and installed.
+
+Nothing is closed over transitively, because "something else pulls it in" has
+already failed twice, once in each direction. `gsl` IS reachable --
+guvcview-common depends on it -- but that installs in a tier running after
+clight builds, so it landed nine minutes after the failure it would have
+prevented. And `mailcap`, the only provider of waterfox-bin's `mime-types`, was
+never declared at all: github-cli happens to depend on it, so nothing noticed.
+A gate asking "is this reachable?" passes both.
+
+Order is READ, not restated. An earlier version of this script kept the tier
+sequence in a hand-written constant, which meant reordering two blocks in
+site-async.yml left the gate green while every rest_packages dependency
+suddenly landed too late. So it walks the playbooks themselves -- plays in
+order, pre_tasks then roles then tasks then post_tasks, descending through
+import_role and include_tasks -- and the order falls out of the file that
+actually decides it.
+
+Three more things it models that are easy to get wrong:
+
+  BATCHES. `aur sync a b c` builds all three before anything is installed:
+  aur-build guards its install step with `if (( chroot )) || (( no_sync ));
+  then continue`, and aur_sync_command always passes --no-sync. So a package
+  cannot satisfy its neighbour in the same aur sync, only one an earlier task
+  already installed.
+
+  CONDITIONS. A task under `when: has_applesmc` has not installed anything for
+  a task under `when: has_thinkpad_hardware`. An install counts for a build
+  only when its conditions are a subset of the build's.
+
+  ARCHITECTURE. depends_aarch64 is not a dependency here, and depends_x86_64 is.
+  The AUR's RPC flattens both into one list, so this reads .SRCINFO instead.
+
+Anything it cannot read is a hard failure, never a silent skip: an aur sync
+whose targets will not parse, a build in a file the playbooks never reach, a
+task file that will not load.
+
+Needs the network (AUR .SRCINFO) and a synced pacman db (expac).
+
+Usage: gatherd-check-aur-deps [repo-root]
+       exit 0 clean, 1 on violations, 2 if the check could not be run
+"""
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+SRCINFO = 'https://aur.archlinux.org/cgit/aur.git/plain/.SRCINFO?h={}'
+CANNOT_RUN = 2
+
+# Repos every gatherd machine has. A developer's extra repos -- gatherd-aur
+# above all, which is full of packages this run is deciding whether to build --
+# must not answer questions about what a fresh machine provides.
+OFFICIAL = ('core', 'extra', 'multilib', 'endeavouros')
+
+# The playbooks, in the order the systemd units run them.
+ENTRY_POINTS = ('site-core.yml', 'site-async.yml')
+
+# Dependencies no gatherd machine has to satisfy, with the reason each is inert.
+ALLOWED = {
+    # claude-desktop's PKGBUILD carries depends_aarch64 for the VM its sandbox
+    # runs in. Read on an aarch64 machine they are real, and rest_packages
+    # names the x86_64 pair instead; there is no aarch64 machine to declare
+    # them for yet, and guessing at one is how the x86 list got its comment.
+    'qemu-system-aarch64': 'aarch64-only; no aarch64 machine converges yet',
+    'edk2-aarch64': 'aarch64-only; no aarch64 machine converges yet',
+}
+
+VERSIONED = re.compile(r'[<>=].*$')
+
+# `pacman` and `removed` are both real spellings: `ansible-doc
+# community.general.pacman` says "V(absent) and V(removed) remove the
+# specified package".
+REMOVES = ('absent', 'removed')
+
+
+class CannotRun(Exception):
+    """The check could not be performed -- as distinct from finding a problem."""
+
+
+def bare(dep):
+    """Strip a version constraint. pacman enforces versions; this gate does not."""
+    return VERSIONED.sub('', dep).strip()
+
+
+def run(argv):
+    out = subprocess.run(argv, capture_output=True, text=True)
+    if out.returncode:
+        raise CannotRun(f'{argv[0]} failed: {(out.stderr or out.stdout).strip()}')
+    return out.stdout
+
+
+def repo_provides():
+    """{package: everything installing it satisfies}, across the official repos.
+
+    Keyed forwards, by the package, because that is the direction the walk asks
+    in: it installs a name and needs to know which virtuals just became
+    available. `ttf-dejavu` answers `ttf-font`, `systemd` answers `udev`.
+    """
+    if not shutil.which('expac'):
+        raise CannotRun('expac is not installed (pacman -S expac)')
+    table = {}
+    for row in run(['expac', '-S', '%r\t%n\t%S']).splitlines():
+        repo, _, rest = row.partition('\t')
+        if repo not in OFFICIAL:
+            continue
+        name, _, provided = rest.partition('\t')
+        table.setdefault(name, {name}).update(bare(p) for p in provided.split())
+    if not table:
+        raise CannotRun('no official repos in the pacman db; run pacman -Sy')
+    return table
+
+
+def aur_info(names):
+    """{asked-for name: (pkgbase, LastModified)}, in one RPC call.
+
+    `aur sync` takes a pkgname as happily as a pkgbase, so the answer is keyed
+    by what the playbook asked for and carries the pkgbase .SRCINFO needs.
+    """
+    if not shutil.which('aur'):
+        raise CannotRun('aurutils is not installed')
+    payload = json.loads(run(['aur', 'query', '-t', 'info', *sorted(names)]))
+    found = {}
+    for result in payload['results']:
+        for key in (result['Name'], result['PackageBase']):
+            found[key] = (result['PackageBase'], result['LastModified'])
+    missing = set(names) - set(found)
+    if missing:
+        raise CannotRun('not in the AUR: ' + ', '.join(sorted(missing)))
+    return found
+
+
+def fetch_srcinfo(pkgbase, mtime):
+    """The raw .SRCINFO, cached. The AUR 429s a burst, so ask it as little as possible."""
+    cache = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'gatherd'
+    # The upstream mtime is in the name, so a stale entry can never be read as
+    # fresh, and yesterday's copy is simply never looked up again.
+    cached = cache / f'{urllib.parse.quote(pkgbase, safe="")}.{mtime}.SRCINFO'
+    if cached.exists():
+        return cached.read_text()
+    url = SRCINFO.format(urllib.parse.quote(pkgbase, safe=''))
+    try:
+        with urllib.request.urlopen(url, timeout=30) as body:
+            text = body.read().decode('utf-8', 'replace')
+    except (urllib.error.URLError, OSError) as failure:
+        raise CannotRun(f'{pkgbase}: cannot read .SRCINFO from the AUR ({failure})')
+    if 'pkgbase' not in text:
+        raise CannotRun(f'{pkgbase}: .SRCINFO looks empty; is it still in the AUR?')
+    cache.mkdir(parents=True, exist_ok=True)
+    for stale in cache.glob(f'{pkgbase}.*.SRCINFO'):
+        stale.unlink()
+    cached.write_text(text)
+    return text
+
+
+def srcinfo(text, arch):
+    """{'depends': {...}, 'provides': {...}, 'pkgnames': {...}} for one pkgbase."""
+    # makepkg needs all three before it will build, and honours the _<arch>
+    # suffixes for this machine only.
+    wanted = tuple(f'{kind}{suffix}'
+                   for kind in ('depends', 'makedepends', 'checkdepends')
+                   for suffix in ('', f'_{arch}'))
+    found = {'depends': set(), 'provides': set(), 'pkgnames': set()}
+    for row in text.splitlines():
+        key, sep, value = row.partition('=')
+        if not sep:
+            continue
+        key, value = key.strip(), value.strip()
+        if key in wanted:
+            found['depends'].add(value)
+        elif key in ('provides', f'provides_{arch}'):
+            found['provides'].add(bare(value))
+        elif key == 'pkgname':
+            found['pkgnames'].add(value)
+    return found
+
+
+def load(path):
+    import yaml
+    try:
+        return yaml.safe_load(path.read_text()) or []
+    except (yaml.YAMLError, OSError) as failure:
+        raise CannotRun(f'{path}: will not load ({failure})')
+
+
+def resolve(condition, arch):
+    """True if a `when:` always holds here, False if never, None if unknowable.
+
+    Only the architecture is decided, because it is the one fact this script
+    already knows for certain and the one roles/system/tasks/slow.yml turns on.
+    Everything else stays opaque and is compared by name.
+    """
+    text = str(condition).strip()
+    if text == 'is_aarch64':
+        return arch == 'aarch64'
+    if text in ('not is_aarch64', 'not | is_aarch64'):
+        return arch != 'aarch64'
+    return None
+
+
+def conditions_of(task, arch, inherited):
+    """The conditions guarding a task, or None if it cannot run on this machine."""
+    when = task.get('when') if isinstance(task, dict) else None
+    if when is None:
+        return inherited
+    conds = set(inherited)
+    for clause in (when if isinstance(when, list) else [when]):
+        verdict = resolve(clause, arch)
+        if verdict is False:
+            return None
+        if verdict is None:
+            conds.add(str(clause).strip())
+    return frozenset(conds)
+
+
+def role_tasks(root, task, key):
+    """The task file an import_role/include_role points at."""
+    spec = task[key]
+    if isinstance(spec, str):
+        spec = {'name': spec}
+    name = spec.get('name')
+    if not name or '{{' in str(name):
+        return None
+    entry = str(spec.get('tasks_from', 'main'))
+    if not entry.endswith(('.yml', '.yaml')):
+        entry += '.yml'
+    return root / 'roles' / str(name) / 'tasks' / entry
+
+
+def included_file(root, current, task, key):
+    """The task file an include_tasks/import_tasks points at."""
+    spec = task[key]
+    if isinstance(spec, dict):
+        spec = spec.get('file')
+    if not isinstance(spec, str) or '{{' in spec:
+        return None
+    for candidate in (current.parent / spec, root / spec):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def command_of(task):
+    """The command string of a command/shell task, whichever way it is spelled."""
+    for key in ('ansible.builtin.command', 'ansible.builtin.shell',
+                'command', 'shell'):
+        spec = task.get(key)
+        if isinstance(spec, str):
+            return spec
+        if isinstance(spec, dict) and isinstance(spec.get('cmd'), str):
+            return spec['cmd']
+    return None
+
+
+def names_from(value, gv):
+    """Resolve a pacman `name:` -- a literal, a list, or a {{ var }} -- to names."""
+    out = set()
+    for item in ([value] if isinstance(value, str) else (value or [])):
+        match = re.fullmatch(r'\{\{\s*(\w+)\s*\}\}', str(item).strip())
+        if match:
+            out |= set(gv.get(match.group(1)) or [])
+        elif '{{' not in str(item):
+            out.add(str(item))
+    return out
+
+
+def targets_from(command, gv):
+    """The packages an `aur sync` line builds, or None if it will not parse."""
+    _, _, rest = command.partition('aur_sync_command')
+    rest = rest.partition('}}')[2].strip().rstrip('"').strip()
+    targets = []
+    # Tokenised rather than split on whitespace: `{{ aur_packages | join(' ') }}`
+    # contains a space of its own and must stay one token.
+    for expression, word in re.findall(r'(\{\{.*?\}\})|([^\s{}]+)', rest):
+        if word:
+            if word.startswith('-'):
+                return None                 # a flag; this is not the shape we read
+            targets.append(word)
+            continue
+        joined = re.fullmatch(r'\{\{\s*(\w+)\s*\|\s*join\(.*?\)\s*\}\}',
+                              expression.strip())
+        if not joined:
+            return None                     # some other expansion; do not guess
+        listed = gv.get(joined.group(1))
+        if listed is None:
+            return None
+        targets += list(listed)
+    return targets or None
+
+
+def visit(root, path, gv, arch, conds, seen, events):
+    """Emit the build and install events in one task file, in order."""
+    if path in seen:
+        return
+    seen.add(path)
+    for task in flatten(load(path)):
+        here = conditions_of(task, arch, conds)
+        if here is None:
+            continue
+        for key in ('ansible.builtin.import_role', 'ansible.builtin.include_role',
+                    'import_role', 'include_role'):
+            if key in task:
+                target = role_tasks(root, task, key)
+                if target and target.is_file():
+                    visit(root, target, gv, arch, here, seen, events)
+        for key in ('ansible.builtin.include_tasks', 'ansible.builtin.import_tasks',
+                    'include_tasks', 'import_tasks'):
+            if key in task:
+                target = included_file(root, path, task, key)
+                if target:
+                    visit(root, target, gv, arch, here, seen, events)
+
+        command = command_of(task)
+        if command and 'aur_sync_command' in command:
+            where = path.relative_to(root).as_posix()
+            targets = targets_from(command, gv)
+            if targets is None:
+                events.append(('unreadable',
+                               f'{where}: {task.get("name", "?")}: '
+                               f'cannot tell which packages `{command.strip()}` builds'))
+            else:
+                events.append(('build', (where, task.get('name', '?'), targets, here)))
+
+        pacman = task.get('community.general.pacman')
+        if isinstance(pacman, dict) and str(pacman.get('state', 'present')) not in REMOVES:
+            events.append(('install', names_from(pacman.get('name'), gv), here))
+
+
+def flatten(node):
+    """Every task under a play or task list, in the order Ansible runs them."""
+    if isinstance(node, list):
+        for item in node:
+            yield from flatten(item)
+        return
+    if not isinstance(node, dict):
+        return
+    if 'hosts' in node:                       # a play: this is Ansible's order
+        yield from flatten(node.get('pre_tasks'))
+        for entry in (node.get('roles') or []):
+            # `roles:` entries are bare names or {role: name}; both mean the
+            # same thing an import_role task does.
+            name = entry.get('role') if isinstance(entry, dict) else entry
+            spec = dict(entry) if isinstance(entry, dict) else {}
+            spec['name'] = name
+            yield {'ansible.builtin.import_role': spec,
+                   'name': f'role {name}', 'when': spec.get('when')}
+        for section in ('tasks', 'post_tasks'):
+            yield from flatten(node.get(section))
+        return
+    yield node
+    for section in ('block', 'rescue', 'always'):
+        yield from flatten(node.get(section))
+
+
+def unreachable(root, seen):
+    """Files that build an AUR package but no playbook ever reaches."""
+    skip = ('.git', 'docs', '.ansible', 'plans')
+    found = []
+    for path in sorted(root.rglob('*.y*ml')):
+        if any(part in skip for part in path.parts) or path.suffix not in ('.yml', '.yaml'):
+            continue
+        if path in seen or 'group_vars' in path.parts:
+            continue
+        try:
+            text = path.read_text()
+        except OSError:
+            continue
+        if 'aur_sync_command' in text:
+            found.append(path.relative_to(root).as_posix())
+    return found
+
+
+def check(root):
+    gv = load(root / 'group_vars/all/main.yml')
+    arch = platform.machine()
+
+    manifest = root / 'tests/base-manifest.txt'
+    if not manifest.exists():
+        raise CannotRun(f'{manifest} is missing; regenerate it with '
+                        'scripts/gatherd-capture-base-manifest on a freshly '
+                        'installed machine')
+    rows = manifest.read_text().splitlines()
+    # The manifest is one architecture's install. Using x86_64's answer on an
+    # aarch64 machine would quietly mark the wrong packages present, so refuse.
+    measured = next((row.split(':', 1)[1].strip() for row in rows
+                     if row.startswith('# arch:')), None)
+    if measured != arch:
+        raise CannotRun(f'{manifest} was measured on '
+                        f'{measured or "an unrecorded architecture"}, but this is '
+                        f'{arch}; regenerate it with '
+                        f'scripts/gatherd-capture-base-manifest on a freshly '
+                        f'installed {arch} machine')
+
+    events, seen = [], set()
+    for entry in ENTRY_POINTS:
+        visit(root, root / entry, gv, arch, frozenset(), seen, events)
+    for path in unreachable(root, seen):
+        events.append(('unreadable',
+                       f'{path}: builds an AUR package, but no playbook reaches it'))
+
+    unreadable = [detail for kind, detail in
+                  ((e[0], e[1]) for e in events) if kind == 'unreadable']
+    if unreadable:
+        print('Builds this gate cannot account for. Every one of these is a place\n'
+              'an undeclared dependency could hide, so none of them is skippable:\n')
+        for detail in unreadable:
+            print(f'  {detail}')
+        return 1
+
+    asked = {pkg for kind, *rest in events if kind == 'build' for pkg in rest[0][2]}
+    info = aur_info(asked)
+    cache = {name: srcinfo(fetch_srcinfo(*info[name]), arch) for name in sorted(asked)}
+
+    provides = repo_provides()
+    base = {row.strip() for row in rows if row.strip() and not row.startswith('#')}
+    # (name, conditions) for everything installed so far, so a build can ask
+    # whether the install that would satisfy it actually runs alongside it. The
+    # base image satisfies its provides too: 1password asks for libgtk-3.so,
+    # helium-browser-bin for udev, and gtk3 and systemd are what answer.
+    installed = [(satisfied, frozenset())
+                 for name in base for satisfied in provides.get(name, {name})]
+
+    violations = []
+    for event in events:
+        if event[0] == 'install':
+            _, names, conds = event
+            for name in names:
+                for satisfied in provides.get(name, {name}):
+                    installed.append((satisfied, conds))
+            continue
+        where, task, targets, conds = event[1]
+        available = {name for name, guard in installed if guard <= conds}
+        for target in targets:
+            for dep in sorted(cache[target]['depends']):
+                name = bare(dep)
+                if name in ALLOWED or name in available:
+                    continue
+                if any(name in cache[built]['provides'] | cache[built]['pkgnames']
+                       for built in cache if built in available):
+                    continue
+                violations.append((where, task, target, dep))
+    if violations:
+        print('AUR dependencies nothing installs before the build that needs them.\n'
+              'Declare each in the *_packages var for a tier that runs EARLIER, or\n'
+              'add it to ALLOWED in this script with the reason it is inert:\n')
+        for where, task, target, dep in violations:
+            print(f'  {where}: {task}\n      {target} needs {dep}')
+        return 1
+
+    print(f'{len(cache)} AUR package(s) build against declared dependencies '
+          f'on {arch}; {len(seen)} playbook file(s) walked, '
+          f'{len(ALLOWED)} documented exception(s).')
+    return 0
+
+
+def main():
+    root = Path(sys.argv[1] if sys.argv[1:] else Path(__file__).resolve().parent.parent)
+    try:
+        return check(root)
+    except CannotRun as failure:
+        print(f'cannot run: {failure}', file=sys.stderr)
+        return CANNOT_RUN
+
+
+if __name__ == '__main__':
+    sys.exit(main())

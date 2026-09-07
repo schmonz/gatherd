@@ -1,5 +1,10 @@
 ---
 - block: # noqa: name[missing]
+    - name: Check the build dependencies of aur_slow_packages
+      ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+      vars:
+        aur_assert_targets: "{{ aur_slow_packages }}"
+
     - name: Build slow AUR packages into the local repository
       ansible.builtin.command: "{{ aur_sync_command }} {{ aur_slow_packages | join(' ') }}"
       environment: "{{ aur_build_environment }}"
@@ -24,6 +29,11 @@
         update_cache: "{{ _aur_sync_slow.changed }}"
       become: true
       become_user: root
+
+    - name: Check the build dependencies of aur_slow_avx_packages
+      ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+      vars:
+        aur_assert_targets: "{{ aur_slow_avx_packages }}"
 
     - name: Build programs that use AVX or newer instructions
       # claude-code is a native Node bundle that uses AVX/SSE4 instructions and
@@ -70,6 +80,11 @@
 
         # Named -git because that is the only fprintd-clients in the AUR; the
         # plain name open-fprintd and python-validity ask for is a provides.
+        - name: Check the build dependencies of fprintd-clients-git
+          ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+          vars:
+            aur_assert_targets: ['fprintd-clients-git']
+
         - name: Build fprintd-clients-git
           ansible.builtin.command: "{{ aur_sync_command }} fprintd-clients-git"
           environment: "{{ aur_build_environment }}"
@@ -84,6 +99,11 @@
           become: true
           become_user: root
 
+        - name: Check the build dependencies of open-fprintd
+          ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+          vars:
+            aur_assert_targets: ['open-fprintd']
+
         - name: Build open-fprintd
           ansible.builtin.command: "{{ aur_sync_command }} open-fprintd"
           environment: "{{ aur_build_environment }}"
@@ -97,6 +117,11 @@
             update_cache: "{{ _aur_sync_open_fprintd.changed }}"
           become: true
           become_user: root
+
+        - name: Check the build dependencies of python-validity
+          ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+          vars:
+            aur_assert_targets: ['python-validity']
 
         - name: Build python-validity
           ansible.builtin.command: "{{ aur_sync_command }} python-validity"

@@ -3,6 +3,11 @@
 # an AUR package. makepkg checks depends before it builds, and with no sudoers
 # grant nothing can install one mid-build, so the firmware is built and
 # installed first.
+- name: Check the build dependencies of facetimehd-firmware
+  ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+  vars:
+    aur_assert_targets: ['facetimehd-firmware']
+
 - name: Build the FaceTime HD firmware into the local AUR repository
   ansible.builtin.command: "{{ aur_sync_command }} facetimehd-firmware"
   environment: "{{ aur_build_environment }}"
@@ -16,6 +21,11 @@
     name: facetimehd-firmware
     state: present
     update_cache: "{{ _aur_sync_facetimehd_firmware.changed }}"
+
+- name: Check the build dependencies of facetimehd-dkms
+  ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+  vars:
+    aur_assert_targets: ['facetimehd-dkms']
 
 - name: Build the FaceTime HD webcam driver into the local AUR repository
   ansible.builtin.command: "{{ aur_sync_command }} facetimehd-dkms"

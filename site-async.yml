@@ -140,6 +140,11 @@
         gatherd_tier: thinkfan
       when: has_thinkpad_hardware
       block:
+        - name: Check the build dependencies of thinkfan
+          ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+          vars:
+            aur_assert_targets: ['thinkfan']
+
         - name: Build thinkfan into the local AUR repository
           ansible.builtin.command: "{{ aur_sync_command }} thinkfan"
           environment: "{{ aur_build_environment }}"

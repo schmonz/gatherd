@@ -1,0 +1,171 @@
+#!/bin/sh
+# Unit tests for gatherd-check-aur-deps.
+#
+# The gate exists because a dependency that is merely PRESENT is not a
+# dependency that is DECLARED, and only the second one survives a repave. So
+# the cases that matter are the ones a reachability check gets wrong:
+#
+#   * a declared dependency removed while something else still drags it in
+#     (github-cli depends on mailcap, so nothing would have missed it)
+#   * a dependency declared in a LATER tier than the build that needs it,
+#     which is exactly how gsl reached the machine nine minutes too late
+#   * a file that builds an AUR package without being placed in the converge
+#     order, which is how thinkfan went unchecked
+#
+# And the case it must NOT flag: a dependency that really is on the ISO.
+#
+# Runs against a copy of the real repo, so it needs a synced pacman db and the
+# network. The .SRCINFO cache under ~/.cache/gatherd makes repeat runs cheap.
+#
+# Usage: tests/check-aur-deps
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+PASS=0
+FAIL=0
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+cp -R "$REPO" "$WORK/repo"
+GATE="$WORK/repo/scripts/gatherd-check-aur-deps"
+VARS="$WORK/repo/group_vars/all/main.yml"
+AMBIENT="$WORK/repo/roles/hardware/tasks/ambient_light.yml"
+APPLESMC="$WORK/repo/roles/hardware/tasks/applesmc.yml"
+cp "$VARS" "$WORK/pristine"
+cp "$AMBIENT" "$WORK/pristine-ambient"
+cp "$APPLESMC" "$WORK/pristine-applesmc"
+cp "$GATE" "$WORK/pristine-gate"
+cp "$WORK/repo/site-async.yml" "$WORK/pristine-async"
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+restore() { cp "$WORK/pristine" "$VARS"; }
+undeclare() { sed -i "/^  - $1  */d" "$VARS"; }
+
+assert_rc() {
+    _d=$1; _want=$2
+    # Guarded by if so a nonzero exit is data, not a set -e abort.
+    if "$GATE" "$WORK/repo" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want rc=$_want got rc=$_got)"; cat "$WORK/out"; fi
+}
+
+assert_says() {
+    _d=$1; _want=$2
+    if grep -q "$_want" "$WORK/out"; then ok "$_d"; else bad "$_d (no '$_want' in output)"; fi
+}
+
+# 1. The working tree is green, or nothing below means anything. This is the
+#    tree, not HEAD: the point is to check what you are about to commit.
+assert_rc "the working tree exits 0" 0
+
+# 2. An undeclared dependency is caught even though the machine still has it.
+#    mailcap is reported as mime-types: the gate says what the AUR asked for,
+#    not what happens to supply it.
+for pair in gsl:gsl mailcap:mime-types yaml-cpp:yaml-cpp libconfig:libconfig zip:zip; do
+    undeclare "${pair%:*}"
+    assert_rc "undeclared ${pair%:*} exits 1" 1
+    assert_says "undeclared ${pair%:*} is named" "needs ${pair#*:}"
+    restore
+done
+
+# 3. A dependency the EndeavourOS install already provides needs no declaration,
+#    and must not be reported just because rest_packages stopped naming it.
+for pkg in gtk3 ttf-dejavu linux-api-headers; do
+    undeclare "$pkg"
+    assert_rc "$pkg is on the ISO, so dropping it exits 0" 0
+    restore
+done
+
+# 4. The gsl failure itself: declared, but in a tier that runs after the build.
+#    Reachability says yes; the machine said no.
+undeclare gsl
+sed -i 's/^rest_slow_packages:/rest_slow_packages:\n  - gsl/' "$VARS"
+assert_rc "gsl declared in a later tier exits 1" 1
+assert_says "gsl declared in a later tier is named" "needs gsl"
+restore
+
+# 5. A file that builds an AUR package but no playbook reaches is not skipped.
+mkdir -p "$WORK/repo/roles/newthing/tasks"
+cat > "$WORK/repo/roles/newthing/tasks/main.yml" <<'FIXTURE'
+---
+- name: Build something nobody reaches
+  ansible.builtin.command: "{{ aur_sync_command }} mbpfan"
+  changed_when: false
+FIXTURE
+assert_rc "an unreachable AUR build exits 1" 1
+assert_says "the unreachable file is named" "roles/newthing/tasks/main.yml"
+rm -rf "$WORK/repo/roles/newthing"
+
+# 6. The dict spelling of command: is read, not silently skipped. Respelling
+#    the clight build this way once made the whole gsl case vanish.
+python3 - "$AMBIENT" <<'PATCH'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+p.write_text(p.read_text().replace(
+    '  ansible.builtin.command: "{{ aur_sync_command }} clight"\n',
+    '  ansible.builtin.command:\n    cmd: "{{ aur_sync_command }} clight"\n'))
+PATCH
+undeclare gsl
+assert_rc "a dict-spelled command: is still checked" 1
+assert_says "the dict-spelled build is named" "needs gsl"
+restore
+cp "$WORK/pristine-ambient" "$AMBIENT"
+
+# 7. An aur sync line this gate cannot parse is a failure, not a quiet pass.
+sed -i 's|{{ aur_sync_command }} mbpfan|{{ aur_sync_command }} --rebuild mbpfan|' "$APPLESMC"
+assert_rc "an unparseable aur sync line exits 1" 1
+assert_says "the unparseable line is named" "cannot tell which packages"
+cp "$WORK/pristine-applesmc" "$APPLESMC"
+
+# 8. Order comes from site-async.yml, not from a constant in the gate. Building
+#    the hardware tier before the system tier that installs its dependencies is
+#    the original bug, wholesale.
+python3 - "$WORK/repo/site-async.yml" <<'PATCH'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+text = p.read_text()
+start = text.index('    - name: Converge the network-dependent system tier')
+mid = text.index('    - name: Converge hardware-specific configuration')
+end = text.index('- name: User configuration')
+system, hardware = text[start:mid], text[mid:end]
+p.write_text(text[:start] + hardware + system + text[end:])
+PATCH
+assert_rc "hardware before the system tier exits 1" 1
+assert_says "the reordered tier is reported" "needs"
+cp "$WORK/pristine-async" "$WORK/repo/site-async.yml"
+
+# 9. `when:` is honoured: an install behind one hardware gate has not satisfied
+#    a build behind a different one.
+undeclare yaml-cpp
+python3 - "$APPLESMC" <<'PATCH'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+p.write_text('---\n- name: Install yaml-cpp somewhere unrelated\n'
+             '  community.general.pacman:\n    name: yaml-cpp\n'
+             '    state: present\n\n' + p.read_text().replace('---\n', '', 1))
+PATCH
+assert_rc "an install behind another hardware gate does not count" 1
+assert_says "the cross-gated dependency is named" "needs yaml-cpp"
+restore
+cp "$WORK/pristine-applesmc" "$APPLESMC"
+
+# 10. `state: removed` removes, the same as absent -- so it must not be read as
+#     an install. (ansible-doc community.general.pacman: "V(absent) and
+#     V(removed) remove the specified package".)
+sed -i 's/^    state: present$/    state: removed/' "$AMBIENT"
+assert_rc "state: removed is not an install" 1
+assert_says "the un-installed AUR dependency is named" "clight needs clightd"
+cp "$WORK/pristine-ambient" "$AMBIENT"
+
+# 11. Infrastructure trouble is rc=2, so it can never be mistaken for a repo
+#     that violates the rule.
+sed -i 's|^SRCINFO = .*|SRCINFO = "http://127.0.0.1:1/{}"|' "$GATE"
+# A cold cache, or the fetch never happens and the breakage is invisible.
+XDG_CACHE_HOME="$WORK/cold" assert_rc "an unreachable AUR exits 2, not 1" 2
+cp "$WORK/pristine-gate" "$GATE"
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

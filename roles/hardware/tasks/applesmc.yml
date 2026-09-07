@@ -1,4 +1,9 @@
 ---
+- name: Check the build dependencies of mbpfan
+  ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+  vars:
+    aur_assert_targets: ['mbpfan']
+
 - name: Build mbpfan into the local AUR repository
   ansible.builtin.command: "{{ aur_sync_command }} mbpfan"
   environment: "{{ aur_build_environment }}"

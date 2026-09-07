@@ -13,6 +13,11 @@
 # are AUR packages. makepkg checks depends before it builds, and with no
 # sudoers grant nothing can install one mid-build, so each layer is built as
 # target_user and installed as root before the next is attempted.
+- name: Check the build dependencies of libmodule
+  ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+  vars:
+    aur_assert_targets: ['libmodule']
+
 - name: Build libmodule into the local AUR repository
   ansible.builtin.command: "{{ aur_sync_command }} libmodule"
   environment: "{{ aur_build_environment }}"
@@ -27,6 +32,11 @@
     state: present
     update_cache: "{{ _aur_sync_libmodule.changed }}"
 
+- name: Check the build dependencies of clightd
+  ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+  vars:
+    aur_assert_targets: ['clightd']
+
 - name: Build clightd into the local AUR repository
   ansible.builtin.command: "{{ aur_sync_command }} clightd"
   environment: "{{ aur_build_environment }}"
@@ -40,6 +50,11 @@
     name: clightd
     state: present
     update_cache: "{{ _aur_sync_clightd.changed }}"
+
+- name: Check the build dependencies of clight
+  ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+  vars:
+    aur_assert_targets: ['clight']
 
 - name: Build clight into the local AUR repository
   ansible.builtin.command: "{{ aur_sync_command }} clight"

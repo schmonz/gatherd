@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Print the package set an EndeavourOS install leaves behind, before gatherd.
+
+tests/base-manifest.txt is the answer to one question the AUR dependency gate
+cannot answer any other way: which packages are already on a machine when the
+first `aur sync` runs? Guessing it is what let `gsl` go undeclared -- clight
+needed it, something else happened to pull it in on the developer's machine,
+and nobody noticed until a repave built clight before that something else.
+
+The obvious source, EndeavourOS's netinstall.yaml, is documentation of intent
+and disagrees with reality in both directions: it omits packages Calamares
+installs anyway, and names two (eos-settings-sway, eos-sway-tools) that are in
+no enabled repo. It is also a mutable branch on GitHub, so a gate reading it
+goes red on a repo nobody touched. /var/log/pacman.log is the machine saying
+what it actually did.
+
+The cut is the first Ansible-issued transaction. Ansible's pacman module spells
+the binary as an absolute path; Calamares and the EndeavourOS post-install
+scripts spell it bare. Measured on a first-boot log, the two never interleave:
+
+    $ grep "\\[PACMAN\\] Running" /var/log/pacman.log | sed "s/.*Running '\\([^ ]*\\).*/\\1/" | uniq -c
+         10 pacman
+         19 /usr/bin/pacman
+
+Run this on a machine whose pacman.log still reaches back to its install --
+a fresh repave, or the tests/create-base snapshot -- and commit the result.
+A converged machine cannot reconstruct this; its log has already been through
+gatherd, and `pacman -Qq` answers a different question entirely.
+
+Usage: gatherd-capture-base-manifest [pacman.log]   (writes the manifest to stdout)
+"""
+import platform
+import re
+import sys
+from pathlib import Path
+
+LOG = Path(sys.argv[1]) if sys.argv[1:] else Path('/var/log/pacman.log')
+RUN = re.compile(r"^\[(?P<ts>[^\]]+)\] \[PACMAN\] Running '(?P<argv0>\S+)")
+ALPM = re.compile(r"^\[(?P<ts>[^\]]+)\] \[ALPM\] (?P<verb>installed|removed) (?P<pkg>\S+)")
+
+
+def main():
+    if not LOG.exists():
+        sys.exit(f'{LOG}: not found')
+    rows = LOG.read_text(errors='replace').splitlines()
+
+    cut = None
+    for row in rows:
+        match = RUN.match(row)
+        if not match:
+            continue
+        # Two things end the base install, whichever comes first: Ansible's own
+        # first transaction, and the bootstrap that installs Ansible to run it.
+        # The bootstrap is the reason a repave and a tests/create-base snapshot
+        # used to disagree by seven packages -- and one of them,
+        # python-cryptography, is a dependency of python-validity that nothing
+        # declares. Counting it as base is how this file would certify the very
+        # bug the gate exists to catch.
+        if match['argv0'].startswith('/') or re.search(r'\bansible\b', row):
+            cut = match['ts']
+            break
+    if cut is None:
+        sys.exit(f'{LOG}: no Ansible-issued transaction; is this a pre-gatherd log?')
+
+    packages = set()
+    for row in rows:
+        match = ALPM.match(row)
+        if not match or match['ts'] >= cut:
+            continue
+        # A package the installer put down and took away again was never part
+        # of the base; replaced-by-upgrade never logs a bare `removed`.
+        (packages.add if match['verb'] == 'installed' else packages.discard)(match['pkg'])
+
+    if not packages:
+        sys.exit(f'{LOG}: nothing installed before {cut}')
+
+    print(f'# arch: {platform.machine()}')
+    print(f'# Packages present after the EndeavourOS install, before gatherd.')
+    print(f'# Measured by scripts/gatherd-capture-base-manifest from a first-boot')
+    print(f'# pacman.log; the cut is where Ansible enters that log, {cut}.')
+    print(f'# {len(packages)} packages. Regenerate on a repave, not by hand.')
+    print('\n'.join(sorted(packages)))
+
+
+if __name__ == '__main__':
+    main()

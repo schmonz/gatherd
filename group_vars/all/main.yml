@@ -152,6 +152,10 @@ rest_packages:
   - python-setuptools      # open-fprintd, python-validity
   - zip                    # piavpn-bin
   - innoextract            # python-validity
+  # python-validity's, and on every machine so far it has been present only
+  # because ansible-core depends on it -- which is not a promise ansible-core
+  # makes to us.
+  - python-cryptography    # python-validity
   - python-pyusb           # python-validity
   - python-yaml            # python-validity
   - electron42             # slack-electron, teams-for-linux-electron-bin

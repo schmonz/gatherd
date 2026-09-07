@@ -1,0 +1,52 @@
+#!/bin/bash
+# Fail fast, and by name, when an AUR build is about to miss a dependency.
+#
+# aur sync builds with PACMAN_AUTH=/bin/false, so makepkg cannot install a
+# missing dependency. What it does instead is build every package that IS
+# satisfiable first and die on the one that is not, so the operator sees
+#
+#     ==> ERROR: 'pacman' failed to install missing dependencies.
+#
+# fourteen minutes in, with the name of the actual culprit ("Missing
+# dependencies: -> gsl") buried in stdout above it. This asks the same question
+# aurutils would, before any of that: resolve the targets' dependencies, drop
+# the ones that are themselves AUR packages in this build, and let pacman say
+# which of the rest are absent.
+#
+# Run immediately before the aur sync it guards. That placement is the whole
+# trick -- it inspects the machine at the one moment that matters, so it needs
+# no model of which tier installs what when.
+#
+# Usage: gatherd-assert-aur-deps <pkgbase>...   (exit 0 clean, 1 with the list)
+
+set -eu
+
+[ $# -gt 0 ] || { echo "usage: $0 <pkgbase>..." >&2; exit 2; }
+
+TABLE=$(aur depends --table "$@") || {
+    # No answer is not the same as a bad answer: let the build proceed and fail
+    # in its own way rather than blocking a converge on a flaky AUR.
+    echo "gatherd-assert-aur-deps: cannot reach the AUR; skipping the check" >&2
+    exit 0
+}
+
+# Column 1 is the pkgbase of every package in this build, column 2 a dependency
+# of it. Anything in column 1 gets built here, so it is not required up front.
+AUR=$(printf '%s\n' "$TABLE" | cut -f1 | sort -u)
+DEPS=$(printf '%s\n' "$TABLE" | awk -F'\t' '$5 != "Self" { print $2 }' | sort -u)
+WANTED=$(comm -23 <(printf '%s\n' "$DEPS") <(printf '%s\n' "$AUR"))
+
+[ -n "$WANTED" ] || exit 0
+
+# pacman -T prints the ones it cannot satisfy, and understands both version
+# constraints and provides.
+MISSING=$(printf '%s\n' "$WANTED" | xargs pacman -T || true)
+
+[ -n "$MISSING" ] || exit 0
+
+echo "Not installed, and makepkg cannot install them (PACMAN_AUTH=/bin/false):" >&2
+printf '%s\n' "$MISSING" | sed 's/^/  /' >&2
+echo >&2
+echo "Building: $*" >&2
+echo "Declare each in a *_packages var that converges BEFORE this build." >&2
+exit 1

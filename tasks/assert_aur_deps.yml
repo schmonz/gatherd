@@ -1,0 +1,9 @@
+---
+# Guards one `aur sync`. Include it immediately before the build, with
+# aur_assert_targets set to exactly what that build names -- the check is only
+# cheap and only correct because it runs at that moment, against the machine as
+# it actually is, rather than against a model of which tier installs what.
+- name: Assert the AUR build dependencies are already installed
+  ansible.builtin.command:
+    argv: "{{ [setup_dir ~ '/scripts/gatherd-assert-aur-deps'] + aur_assert_targets }}"
+  changed_when: false

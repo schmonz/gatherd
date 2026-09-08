@@ -19,6 +19,22 @@ while :; do
     LC_ALL=C stdbuf -oL nmcli monitor 2>/dev/null | while IFS= read -r line; do
         case "$line" in
             *[Cc]onnectivity*[Pp]ortal*)
+                # captive-browser and the helium profile it drives are both AUR packages the
+                # REST tier installs -- and a portal is exactly what stops REST fetching them.
+                # Measured: the base image contains no browser at all, not netsurf, firefox,
+                # chromium, epiphany, falkon, qutebrowser, links, lynx, w3m or elinks, only the
+                # webkit2gtk-4.1 library. So during a first pave there is genuinely nothing to
+                # launch, and the only useful thing this watcher can do is say so rather than
+                # go quiet. libnotify and mako are both in tests/base-manifest.txt, so this
+                # reaches the screen at the first login.
+                command -v captive-browser >/dev/null 2>&1 || {
+                    printf '\n===== portal detected %s; captive-browser not installed yet =====\n' \
+                        "$(date '+%F %T')" >>"$log"
+                    notify-send --urgency=critical --icon=dialog-warning --expire-time=300000 \
+                        "Captive portal" \
+                        "This network needs a sign-in, and captive-browser is not installed yet. Clear the portal from another device, or connect to a different network -- setup cannot download anything until you do."
+                    continue
+                }
                 pgrep -x captive-browser >/dev/null || {
                     printf '\n===== portal detected %s; launching captive-browser =====\n' \
                         "$(date '+%F %T')" >>"$log"

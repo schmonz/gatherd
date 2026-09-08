@@ -47,7 +47,15 @@
 #     layer of indirection (core.yml imports A, A imports B, B installs the
 #     barrier) is not a shape this gate follows. It does not run Ansible: a
 #     `when:` that is always false, or a `dest:` that never matches this host,
-#     would still count as installed here.
+#     would still count as installed here. Narrower still: import resolution
+#     follows only a bare, unquoted, one-level `import_tasks:`/`include_tasks:`
+#     relative to the referencing file -- a quoted or templated ref, or the
+#     `include_tasks:` + separate `file:` sub-key spelling, is not resolved.
+#     Loop detection recognizes only the block-sequence spelling (`loop:` then
+#     items at exactly four spaces) -- inline flow (`loop: [a, b]`), a
+#     variable-driven loop, and items nested inside a `block:` are not. Any of
+#     these is rc=2 ("could not run"), not a silent rc=0 -- loud, not a
+#     mystery, but still a real edge someone will eventually hit.
 #   - A barrier call hidden inside a heredoc or a multi-line quoted string
 #     would be counted as the real invocation if it matched the anchor
 #     pattern below. That shape exists in this file today -- start_when's own
@@ -118,9 +126,19 @@ file_installs_barrier() {
         '- name:'*) _templated=no; _in_loop=no ;;
         esac
 
-        case "$_l" in
-        [[:space:]]*src:*scripts/"$barrier"*) return 0 ;;
-        [[:space:]]*src:*'scripts/{{'*item*'}}'*) _templated=yes ;;
+        # A `case` glob's `[[:space:]]*` matches exactly ONE whitespace char
+        # then a wildcard for anything -- it is not "zero or more spaces", so
+        # an unstripped line let `src:`/`loop:` match anywhere past column 1:
+        # inside a comment (`  # src: .../scripts/gatherd-await-async`), or
+        # inside an unrelated key's quoted value (`msg: "src: scripts/... was
+        # removed"`). Strip a trailing comment and leading whitespace first,
+        # then anchor the patterns to the START of what is left.
+        _code=${_l%%#*}
+        _code=$(printf '%s' "$_code" | sed 's/^[[:space:]]*//')
+
+        case "$_code" in
+        src:*scripts/"$barrier"*) return 0 ;;
+        src:*'scripts/{{'*item*'}}'*) _templated=yes ;;
         esac
 
         if [ "$_in_loop" = yes ]; then
@@ -134,8 +152,8 @@ file_installs_barrier() {
             esac
         fi
 
-        case "$_l" in
-        [[:space:]]*loop:*|[[:space:]]*with_items:*)
+        case "$_code" in
+        loop:*|with_items:*)
             [ "$_templated" = yes ] && _in_loop=yes
             ;;
         esac
@@ -198,10 +216,34 @@ fail() { printf 'FAIL %s\n' "$1" >&2; rc=1; }
 # that happens to contain one of these words ("use start_later instead") is
 # not itself mistaken for a call. This is the same reason a real start_now's
 # OWN `# needs:` comment must not add to its line's call count.
+#
+# A line with a backslash-escaped quote (`\"` or `\'`) skips this and is
+# passed through RAW instead. A single-pass, no-lookahead scanner cannot both
+# handle that escape correctly AND keep a launch nested inside it visible --
+# `eval "start_now \"$bin/x\""` is genuinely, unambiguously inside the outer
+# quote by the time the escape is even seen, so no per-character fix recovers
+# it; and this gate exists to never silently hide a launch. Falling back to
+# the raw line is what round 1 already did for every line (with no
+# sanitization at all) and was proven correct there for exactly these
+# constructs, at the cost of occasionally flagging a merely-decorative escaped
+# quote as a false "does not begin its line" -- the safe direction to be
+# wrong in. A bare `\n`/`\t`/etc (escaping a non-quote character) does not
+# trigger this: it is not a quoting ambiguity, so normal sanitization stays
+# more useful there.
 awk '
     BEGIN { dq = "\""; sq = sprintf("%c", 39) }
     {
-        line = $0; out = ""; q = ""
+        line = $0
+        has_escaped_quote = 0
+        for (i = 1; i < length(line); i++) {
+            if (substr(line, i, 1) == "\\") {
+                nc = substr(line, i + 1, 1)
+                if (nc == dq || nc == sq) { has_escaped_quote = 1; break }
+            }
+        }
+        if (has_escaped_quote) { print line; next }
+
+        out = ""; q = ""
         for (i = 1; i <= length(line); i++) {
             c = substr(line, i, 1)
             if (q != "") { if (c == q) q = ""; continue }

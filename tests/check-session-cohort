@@ -330,11 +330,24 @@ assert_says "and says so" "installs scripts/gatherd-await-async"
 mv "$WORK/core.yml.orig" "$WORK/roles/desktop/tasks/core.yml"
 
 # 21. A bare comment naming the path is a mention, not an install -- a plain
-#     grep for the path would be satisfied by this.
+#     grep for the path would be satisfied by this. INDENTED, which is the
+#     shape that actually occurs (a real YAML task comment is never at column
+#     0) -- a `case` glob's `[[:space:]]*` matches one space then a wildcard
+#     for anything, so an unstripped line let `src:` match past a leading `#`
+#     just as easily as past a leading space.
 cp "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.orig"
-printf -- '# src: "{{ setup_dir }}/scripts/gatherd-await-async"\n' \
+printf -- '  # src: "{{ setup_dir }}/scripts/gatherd-await-async"\n' \
     > "$WORK/roles/desktop/tasks/core.yml"
-assert_rc "a bare comment does not count as installing the barrier" 2
+assert_rc "an indented comment does not count as installing the barrier" 2
+assert_says "and says so" "installs scripts/gatherd-await-async"
+mv "$WORK/core.yml.orig" "$WORK/roles/desktop/tasks/core.yml"
+
+# 21b. The same anchoring bug, different door: `src:` as a plain substring of
+#     an unrelated key's quoted VALUE, not a key of its own.
+cp "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.orig"
+printf -- '- name: Unrelated\n  ansible.builtin.debug:\n    msg: "src: scripts/gatherd-await-async was removed"\n' \
+    > "$WORK/roles/desktop/tasks/core.yml"
+assert_rc "src: inside an unrelated value does not count as installing the barrier" 2
 assert_says "and says so" "installs scripts/gatherd-await-async"
 mv "$WORK/core.yml.orig" "$WORK/roles/desktop/tasks/core.yml"
 
@@ -551,6 +564,57 @@ EOF
 assert_rc "one unquoted launch past nine total still fails cleanly" 1
 assert_says "and names exactly that line" "line 9: launch argument"
 assert_fail_count "and only that one line -- not one per launch after it" 1
+
+# 38. A launch nested inside a backslash-escaped quote (`eval "start_now
+#     \"$bin/x\""`) is genuinely, unambiguously inside the outer quote by the
+#     time the escape is even seen -- no per-character quote tracker can both
+#     handle the escape correctly AND keep it visible. It must not be
+#     silently hidden either way: falling back to the raw line for this one
+#     restores round 1's already-proven-correct handling of it.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+eval "start_now \"$bin/wayvnc\""
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "a launch nested inside an escaped quote is not silently hidden" 1
+assert_says "and says it does not begin its line" "does not begin its line"
+
+# 39. An escaped single quote inside a single-quoted string, used to embed a
+#     literal apostrophe (`'don'\''t'`), leaves an ODD count of raw apostrophe
+#     characters -- a naive toggle-per-character scanner (no escape handling
+#     at all) ends the line permanently "inside a quote", swallowing every
+#     launch after it, including one that is genuinely unquoted code.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+echo 'don'\''t' && start_now "$bin/wayvnc"
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "an escaped single quote does not swallow a later launch" 1
+assert_says "and says it does not begin its line" "does not begin its line"
+
+# 40. Regression guard: a backslash escaping something OTHER than a quote
+#     (`\n` inside a single-quoted string) is not a quoting ambiguity and
+#     must keep using normal sanitization -- test 31 depends on this exact
+#     shape staying hidden.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+printf 'start_later is the default\n' >&2
+start_now "$bin/watcher"  # needs: fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "an escaped non-quote character still sanitizes normally" 0
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

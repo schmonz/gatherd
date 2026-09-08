@@ -217,21 +217,43 @@ fail() { printf 'FAIL %s\n' "$1" >&2; rc=1; }
 # not itself mistaken for a call. This is the same reason a real start_now's
 # OWN `# needs:` comment must not add to its line's call count.
 #
-# A line with a backslash-escaped quote (`\"` or `\'`) skips this and is
-# passed through RAW instead. A single-pass, no-lookahead scanner cannot both
-# handle that escape correctly AND keep a launch nested inside it visible --
-# `eval "start_now \"$bin/x\""` is genuinely, unambiguously inside the outer
-# quote by the time the escape is even seen, so no per-character fix recovers
-# it; and this gate exists to never silently hide a launch. Falling back to
-# the raw line is what round 1 already did for every line (with no
-# sanitization at all) and was proven correct there for exactly these
-# constructs, at the cost of occasionally flagging a merely-decorative escaped
-# quote as a false "does not begin its line" -- the safe direction to be
-# wrong in. A bare `\n`/`\t`/etc (escaping a non-quote character) does not
-# trigger this: it is not a quoting ambiguity, so normal sanitization stays
-# more useful there.
+# Two kinds of line skip sanitizing and are used RAW instead, for two
+# unrelated reasons. Neither fallback resolves anything: it only puts the
+# launch back in view, so the "share one line" / "does not begin its line"
+# rules below reject it -- the outcome this gate wants for a launch it cannot
+# parse.
+#
+#   - A backslash immediately followed by a quote (`\"` or `\'`). This scanner
+#     has no escape handling, so it counts such a quote as real: the five raw
+#     apostrophes in `echo 'don'\''t'` leave it stuck "inside a quote" to the
+#     end of the line, swallowing whatever follows. A bare `\n`/`\t` is not a
+#     quoting ambiguity and does not trigger this, so a `printf 'start_later
+#     is the default\n'` still sanitizes normally and stays correctly silent.
+#
+#   - Sanitizing LOST a form word AND the raw line names an evaluating
+#     construct (`eval`, `sh`, `bash`, `dash`, `env`). Quoting is precisely how
+#     those constructs carry code: in `eval "start_now $bin/x"` and `sh -c
+#     'start_now $bin/x'` the launch really is inside a quote, so a correct
+#     quote tracker MUST drop it -- the escape in the `\"` spelling is
+#     incidental, the quote is the mechanism. Dropping it is what silently
+#     hid the launch, which is the one outcome this gate must never produce.
+#     The scope is what makes this safe to do: falling back whenever a form
+#     word is lost would also drag round 2's legal shapes (a trailing comment
+#     naming another form, `msg="use start_later instead"`) onto the raw line
+#     and fail them. Both fallbacks can still be loudly wrong -- a decorative
+#     escaped quote, or an inert mention of a form word sharing a line with an
+#     `sh` -- and a loud false positive is the direction to be wrong in. What
+#     the word list does NOT cover stays hidden: measured, `su - "$u" -c
+#     'start_now $bin/x'` is rc=0 with no output. (`command start_now "$x"`,
+#     `$(start_now "$x")` and a backticked one are all caught, because there
+#     the form word is not inside a quote at all.) Closing that class properly
+#     needs a shell parser, not a longer word list.
 awk '
-    BEGIN { dq = "\""; sq = sprintf("%c", 39) }
+    BEGIN {
+        dq = "\""; sq = sprintf("%c", 39)
+        FORM = "(^|[^a-zA-Z0-9_])start_(now|later|when)([^a-zA-Z0-9_]|$)"
+        EVALS = "(^|[^a-zA-Z0-9_])(eval|sh|bash|dash|env)([^a-zA-Z0-9_]|$)"
+    }
     {
         line = $0
         has_escaped_quote = 0
@@ -251,6 +273,7 @@ awk '
             if (c == "#") break
             out = out c
         }
+        if (line ~ FORM && out !~ FORM && line ~ EVALS) { print line; next }
         print out
     }
 ' "$hfile" > "$cfile"

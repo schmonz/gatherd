@@ -35,6 +35,7 @@ printf '#!/bin/sh\nexit 0\n' > "$WORK/scripts/gatherd-await-async"
 chmod 755 "$WORK/scripts/gatherd-await-async"
 printf -- '- name: Install gatherd-await-async barrier script\n  ansible.builtin.copy:\n    src: "{{ setup_dir }}/scripts/gatherd-await-async"\n' \
     > "$WORK/roles/desktop/tasks/core.yml"
+cp "$WORK/roles/desktop/tasks/core.yml" "$WORK/core.yml.real"
 
 helpers() { cat > "$WORK/scripts/gatherd-session-helpers"; }
 
@@ -615,6 +616,72 @@ start_now "$bin/watcher"  # needs: fuzzel
 } &
 EOF
 assert_rc "an escaped non-quote character still sanitizes normally" 0
+
+# 41. The same launch WITHOUT the backslash. `eval "start_now $bin/wayvnc"` is
+#     inside the outer double quote opened right after `eval`, so a correct
+#     quote tracker drops it and the launch vanishes -- rc=0, no output. The
+#     escape in test 38's spelling was never the mechanism; the quote was, and
+#     an `eval` is what makes a quoted string into code.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+eval "start_now $bin/wayvnc"
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "a launch inside an unescaped eval string is not silently hidden" 1
+assert_says "and says it does not begin its line" "does not begin its line"
+
+# 42. Same mechanism through the other spelling, and with single quotes, so
+#     the fix cannot be keyed on `eval` or on the quote character either.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+sh -c 'start_now $bin/x'
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "a launch inside an sh -c string is not silently hidden" 1
+assert_says "and says it does not begin its line" "does not begin its line"
+
+# 43. The trailing comment on a REAL install line names the barrier while the
+#     `src:` names something else. Without stripping the comment before
+#     anchoring, that certifies an install this file does not perform -- and
+#     the anchoring fix alone does not catch it, because `src:` genuinely is
+#     at the start of the code.
+printf -- '- name: Install the conky launcher\n  ansible.builtin.copy:\n    src: "{{ setup_dir }}/scripts/gatherd-conky"  # sibling of scripts/gatherd-await-async\n' \
+    > "$WORK/roles/desktop/tasks/core.yml"
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/watcher"  # needs: fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "a comment naming the barrier on another src: line is not an install" 2
+assert_says "and says so" "tasks/core.yml"
+mv "$WORK/core.yml.real" "$WORK/roles/desktop/tasks/core.yml"
+
+# 44. The other direction of the `\"` fallback: a perfectly ordinary launch
+#     whose ARGUMENT contains escaped quotes is still one call, still begins
+#     its line, and still declares a base package. Passing the raw line
+#     through must not turn it into a violation.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+start_now "$bin/notify \"all set\""  # needs: fuzzel
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "a launch whose argument contains escaped quotes passes" 0
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

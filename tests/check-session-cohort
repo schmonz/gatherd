@@ -683,5 +683,26 @@ start_now "$bin/notify \"all set\""  # needs: fuzzel
 EOF
 assert_rc "a launch whose argument contains escaped quotes passes" 0
 
+# 45. KNOWN BLIND SPOT, pinned so a future change trips over it rather than
+#     silently widening it. A quoted form word -- `"start_now" "$bin/x"` -- is
+#     a real launch the shell would run, but sanitizing drops it and the line
+#     names no evaluating construct, so neither fallback fires and the gate
+#     says nothing. Measured across every generation of the gate: rc=0 at
+#     b3358f7, rc=1 at f37aea7 only, rc=0 again from 4ec0d31 onward -- so
+#     round 2's quote-aware scanner reopened it. Unlike the `su -c` class it
+#     needs no second interpreter. Left open because nobody quotes a function
+#     name, NOT because it is checked. If this case starts failing, the gate
+#     got better and this fixture is the thing to delete.
+helpers <<'EOF'
+start_now()   { sh -c "$1" & }
+start_later() { sh -c "$1" & }
+"start_now" "$bin/x"
+{
+    "$bin/gatherd-await-async"
+    start_later "$bin/other"
+} &
+EOF
+assert_rc "a quoted form word with no eval word is a known blind spot" 0
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

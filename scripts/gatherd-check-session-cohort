@@ -218,10 +218,12 @@ fail() { printf 'FAIL %s\n' "$1" >&2; rc=1; }
 # OWN `# needs:` comment must not add to its line's call count.
 #
 # Two kinds of line skip sanitizing and are used RAW instead, for two
-# unrelated reasons. Neither fallback resolves anything: it only puts the
-# launch back in view, so the "share one line" / "does not begin its line"
-# rules below reject it -- the outcome this gate wants for a launch it cannot
-# parse.
+# unrelated reasons. Neither fallback resolves anything: it only puts the line
+# back in view so the "share one line" / "does not begin its line" rules below
+# judge it, which rejects it unless the raw line is itself a well-formed
+# launch. A launch whose ARGUMENT merely contains escaped quotes takes the
+# first fallback and is accepted, because the raw line still anchors and still
+# counts one call.
 #
 #   - A backslash immediately followed by a quote (`\"` or `\'`). This scanner
 #     has no escape handling, so it counts such a quote as real: the five raw
@@ -242,12 +244,30 @@ fail() { printf 'FAIL %s\n' "$1" >&2; rc=1; }
 #     naming another form, `msg="use start_later instead"`) onto the raw line
 #     and fail them. Both fallbacks can still be loudly wrong -- a decorative
 #     escaped quote, or an inert mention of a form word sharing a line with an
-#     `sh` -- and a loud false positive is the direction to be wrong in. What
-#     the word list does NOT cover stays hidden: measured, `su - "$u" -c
-#     'start_now $bin/x'` is rc=0 with no output. (`command start_now "$x"`,
-#     `$(start_now "$x")` and a backticked one are all caught, because there
-#     the form word is not inside a quote at all.) Closing that class properly
-#     needs a shell parser, not a longer word list.
+#     `sh` -- and a loud false positive is the direction to be wrong in.
+#
+#     What the word list does NOT cover stays hidden, and the class is wider
+#     than one example. Measured on this machine, all rc=0 with no output:
+#     `su - "$u" -c '...'`, `doas -u "$u" '...'`, `ssh host '...'`,
+#     `zsh -c '...'`, `ksh -c '...'`, `systemd-run --user '...'`. Measured
+#     caught, rc=1: `sh -c`, `/bin/sh -c`, `sudo sh -c`, `nohup sh -c`,
+#     `xargs -I{} sh -c`, `setsid /usr/bin/env sh -c`, `bash -c`, `dash -c`,
+#     `env`, `eval`. (`command start_now "$x"`, `$(start_now "$x")` and a
+#     backticked one are caught too, but for a different reason: there the
+#     form word is not inside a quote at all, so sanitizing never loses it.)
+#     Every uncovered member needs an interpreter other than the one
+#     gatherd-session-helpers's own header commits it to ("depends only on
+#     sway + POSIX sh"), so each would be a defect on its own terms before
+#     this gate ever mattered. Closing the class properly needs a
+#     shell parser, not a longer word list -- more short words would only
+#     widen the false-positive surface above.
+#
+#   - One more shape needs no evaluator at all and is likewise hidden: a
+#     quoted form word, `"start_now" "$bin/x"`, which the shell runs and
+#     sanitizing drops. Measured rc=0 here, rc=1 only at f37aea7 -- round 2's
+#     quote-aware scanner reopened it. Left open because nobody quotes a
+#     function name, and pinned by tests/check-session-cohort case 45 so a
+#     future change trips over it instead of widening it silently.
 awk '
     BEGIN {
         dq = "\""; sq = sprintf("%c", 39)

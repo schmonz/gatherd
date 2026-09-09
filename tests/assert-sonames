@@ -140,7 +140,11 @@ db() {
 
 check() {  # check <db directory> [environment overrides...]
     _dbdir=$1; shift
-    env PATH="$WORK/shim:$PATH" GATHERD_TEST_DB="$_dbdir" "$@" "$CHECK"
+    # GATHERD_TSV is this suite's spelling of the --tsv flag, so a case can ask
+    # for it through the same environment-override list every other case uses.
+    _flag=''
+    case " $* " in *' GATHERD_TSV=1 '*) _flag=--tsv ;; esac
+    env PATH="$WORK/shim:$PATH" GATHERD_TEST_DB="$_dbdir" "$@" "$CHECK" ${_flag:+"$_flag"}
 }
 
 # The fixtures are only fixtures if they are in the state the cases assume. A
@@ -305,6 +309,22 @@ chmod +x "$WORK/tools/ldd"
 assert_rc "an ldd that will not answer exits 2" 2 only_tools "$BROKEN"
 assert_says "and names the executable it could not answer for" 'ldd .* failed'
 ln -sf "$(command -v ldd)" "$WORK/tools/ldd"
+
+# 16. --tsv, the shape a consumer reads. gatherd-post-setup-notes rebuilds the
+#     Libraries section from this at every login, and parsing the prose tree
+#     above would couple that script to how this one indents.
+assert_rc "--tsv reports the same finding with rc=1" 1 check "$BROKEN" GATHERD_TSV=1
+assert_says "one tab-separated row per (package, executable, soname)" \
+    "^broken-pkg	$FS/broken/bin/broken	libgatherdmissing.so.1$"
+assert_silent "and none of the prose" 'AUR package under-declaring'
+
+assert_rc "--tsv on a clean machine says nothing at all" 0 check "$CLEAN" GATHERD_TSV=1
+assert_count "literally nothing" 0 '.'
+
+# 17. The exit-2 half still speaks, because a consumer that cannot tell "clean"
+#     from "could not look" is the whole reason this file exists.
+assert_rc "--tsv still exits 2 when it cannot run" 2 check "$EMPTY" GATHERD_TSV=1
+assert_says "and still says why" 'found no packages to check'
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

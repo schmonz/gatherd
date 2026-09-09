@@ -63,10 +63,26 @@
 # them. Telling the operator to install a library the package already carries is
 # how a check like this gets switched off.
 #
-# Usage: gatherd-assert-sonames
+# Usage: gatherd-assert-sonames [--tsv]
 #        exit 0 clean, 1 with the list, 2 if the check could not be run
+#
+#        --tsv prints the findings as `package<TAB>executable<TAB>soname` rows
+#        and nothing else -- no prose, and nothing at all when there is nothing
+#        to report. gatherd-post-setup-notes rebuilds its Libraries section from
+#        this at every login; without it that script would have to parse the
+#        indentation of the tree below, which is a coupling neither file could
+#        see. The exit codes do not change, and exit 2 still says why on stderr:
+#        a consumer that cannot tell "clean" from "could not look" is the whole
+#        reason this file exists.
 
 set -u
+
+tsv=no
+case "${1:-}" in
+    '')    ;;
+    --tsv) tsv=yes ;;
+    *)     echo "gatherd-assert-sonames: unknown option: $1" >&2; exit 2 ;;
+esac
 
 cannot() {
     echo "gatherd-assert-sonames: $1" >&2
@@ -181,6 +197,10 @@ packages=$(wc -l < "$WORK/packages")
     "found no executables among $packages package(s): is readelf GNU's, and does xargs take -d?"
 
 if [ -s "$WORK/findings" ]; then
+    if [ "$tsv" = yes ]; then
+        sort -u "$WORK/findings"
+        exit 1
+    fi
     echo "Installed by gatherd, and unable to load a library it links against:" >&2
     echo >&2
     sort -u "$WORK/findings" |
@@ -197,4 +217,5 @@ if [ -s "$WORK/findings" ]; then
     exit 1
 fi
 
-echo "$packages package(s), $executables executable(s): every soname resolves."
+[ "$tsv" = yes ] ||
+    echo "$packages package(s), $executables executable(s): every soname resolves."

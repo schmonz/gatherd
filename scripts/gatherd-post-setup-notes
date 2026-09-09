@@ -175,6 +175,42 @@ prune_section() {
     ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
 }
 
+# Remove a section's DERIVED bullets while keeping anything you wrote under the
+# header, and drop the header if nothing of yours is left. prune_section cannot
+# do this job: it matches a bullet by its exact text, and a derived bullet's
+# text is computed from the machine, so last login's wording is not knowable
+# today. What IS knowable is the opening this script gives every bullet it
+# generates for such a section, which is what this matches on.
+prune_derived() {
+    PRUNE_MARK="- $2" awk -v hdr="# $1" '
+        BEGIN { mark = ENVIRON["PRUNE_MARK"]; ml = length(mark) }
+        # A bullet group is a "- " line plus its "  " continuation lines. Kept
+        # verbatim unless it opens with the marker, in which case it is ours.
+        function endgrp(   j, m, gl) {
+            if (!ingrp) return
+            if (substr(g, 1, ml) != mark) {
+                m = split(g, gl, "\n")
+                for (j = 1; j <= m; j++) { out[++on] = gl[j]; if (gl[j] != "") nonblank = 1 }
+            }
+            ingrp = 0; g = ""
+        }
+        function flush(   j) {
+            endgrp()
+            if (nonblank) { print hdr; for (j = 1; j <= on; j++) print out[j] }
+            on = 0; nonblank = 0
+        }
+        $0 == hdr      { inseg = 1; on = 0; nonblank = 0; ingrp = 0; g = ""; next }
+        inseg && /^# / { flush(); inseg = 0; print; next }
+        inseg {
+            if ($0 ~ /^- /)          { endgrp(); ingrp = 1; g = $0; next }
+            if (ingrp && $0 ~ /^  /) { g = g "\n" $0; next }
+            endgrp(); out[++on] = $0; if ($0 != "") nonblank = 1; next
+        }
+                       { print }
+        END            { if (inseg) flush() }
+    ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+}
+
 collapse_blanks() {
     awk 'prev_blank && /^$/ { next } { prev_blank=(/^$/); print }' \
         "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
@@ -327,6 +363,84 @@ section_unmanaged_wifi() {
     rm -f "$_blk"
 }
 
+section_sonames() {
+    # What gatherd built, and whether the loader can start it. Recomputed from
+    # live state at every login, because the defect it catches arrives without
+    # any edit to this repo: an AUR package under-declares what upstream links
+    # against, upstream changes what it links against, and a program that
+    # worked yesterday stops opening its window.
+    #
+    # A verify_li step cannot hold this. A verify step is a manual acceptance
+    # check for a newly intended behaviour and is DELETED once exercised
+    # (CLAUDE.md, Repave cadence), so after the next repave nothing would
+    # invoke gatherd-assert-sonames at all.
+    #
+    # Nor a task in site-async.yml: that play writes async-complete only when
+    # no tier failed, and gatherd-await-and-run gates the whole REST run on
+    # that sentinel, so one unresolved soname would re-run every REST tier on
+    # every boot, forever, over a tray icon.
+    #
+    # The opening every generated bullet carries, so prune_derived can find
+    # them again next login. Everything after it is computed.
+    _mark='gatherd built '
+
+    # REST is what builds the packages this asks about, so before it has
+    # converged there is nothing to ask -- and gatherd-assert-sonames would
+    # exit 2 saying [gatherd-aur] has no sync database, at every login of a
+    # first pave. Existence rather than freshness (which is what
+    # gatherd-show-slow-progress needs): the question is what this machine can
+    # load, not whether the repo has moved on since it converged.
+    _sentinel="${GATHERD_ASYNC_SENTINEL:-/etc/gatherd/async-complete}"
+    [ -f "$_sentinel" ] || { prune_derived 'Libraries' "$_mark"; return; }
+
+    _tsv=$(mktemp)
+    _why=$(mktemp)
+    "${GATHERD_HOME:-/usr/local/lib/gatherd}/scripts/gatherd-assert-sonames" --tsv \
+        > "$_tsv" 2> "$_why"
+    _rc=$?
+
+    set --
+    if [ "$_rc" -eq 1 ]; then
+        while IFS="$(printf '\t')" read -r _pkg _exe _soname; do
+            [ -n "$_soname" ] || continue
+            set -- "$@" "$_mark$_pkg, and $_exe cannot load $_soname. Find the\
+ provider -- \`sudo pacman -Fy\` once, then \`pacman -F $_soname\` -- and declare\
+ it in the *_packages var for a tier that converges BEFORE that build."
+        done < "$_tsv"
+    elif [ "$_rc" -ne 0 ]; then
+        # Exit 2 is not exit 0. A check that could not look at the machine has
+        # not said the machine is fine, and saying nothing here would be the
+        # silent skip gatherd-assert-sonames refuses to make about itself.
+        set -- "${_mark}packages nothing has checked: $(head -1 "$_why"). Until\
+ that is fixed, nothing here says this machine can start what it installed."
+    fi
+    rm -f "$_tsv" "$_why"
+
+    prune_derived 'Libraries' "$_mark"
+    [ "$#" -gt 0 ] || return
+
+    # A header that survived the prune has notes of yours under it; appending
+    # keeps them together instead of splicing a second header above them.
+    if section_present 'Libraries'; then
+        append_to_section 'Libraries' "$@"
+        return
+    fi
+
+    # Build the block on its own, then splice it under the top "Manual steps
+    # remaining:" line, the way section_unmanaged_wifi does. h() and li() can
+    # only append at end of file, which would file a broken program below the
+    # verify list.
+    _blk=$(mktemp)
+    _main=$OUTPUT
+    OUTPUT=$_blk
+    h 'Libraries'
+    for _b in "$@"; do li "$_b"; done
+    OUTPUT=$_main
+    { head -n 1 "$OUTPUT"; cat "$_blk"; tail -n +2 "$OUTPUT"; } \
+        > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+    rm -f "$_blk"
+}
+
 section_vault() {
     # Ask gatherd-vault-pass-needed rather than watching for vault-complete. The
     # sentinel says the vault PLAY has converged, which is minutes later and a
@@ -402,6 +516,7 @@ section_verify() {
     verify_li 'The cohort waits for REST rather than racing it: `~/.local/bin/gatherd-await-async; echo done` returns immediately on this converged machine, and `env GATHERD_ASYNC_SENTINEL=/nonexistent GATHERD_AWAIT_ASYNC_TIMEOUT=5 ~/.local/bin/gatherd-await-async; echo done` takes about 5s and pops a notification saying it gave up. On a fresh pave the Tailscale and 1Password tabs open without logging out and back in.'
     verify_li 'The slow-package window reads the sentinel the same way the barrier does: from a foot tab, `env GATHERD_ASYNC_SENTINEL=/nonexistent ~/.local/bin/gatherd-show-slow-progress` tails the async journal in place (no new window -- stdout is already a pty) and keeps waiting; Ctrl-C to stop it. With no override it prints nothing and exits 0.'
     verify_li 'Claude Code usage rides in waybar between the idle inhibitor and the CPU meter, showing Claude Desktop'"'"'s tray starburst and reading `n%·n%` with no spaces around the dot; hovering breaks out 5h and 7d with reset countdowns, and clicking opens the usage dashboard.'
+    verify_li 'A soname gatherd cannot resolve reaches the login notes unasked: `gatherd-post-setup-notes && sed -n "/^# Libraries/,/^$/p" ~/.config/gatherd-post-setup.md` names it on a machine that has one and prints nothing on a machine that does not.'
     verify_li 'Everything gatherd built can find its libraries: `/usr/local/lib/gatherd/scripts/gatherd-assert-sonames` exits `0` and ends `every soname resolves`, and LocalSend opens its window.'
 }
 
@@ -412,6 +527,7 @@ section_verify() {
 [ -f "$OUTPUT" ] || printf 'Manual steps remaining:\n' > "$OUTPUT"
 
 section_unmanaged_wifi
+section_sonames
 section_verify
 section_vault
 section_1password

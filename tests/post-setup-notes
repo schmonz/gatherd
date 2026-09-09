@@ -1,5 +1,6 @@
 #!/bin/sh
-# Unit tests for the Vault section of gatherd-post-setup-notes.
+# Unit tests for gatherd-post-setup-notes: the Vault section, and the
+# Libraries section that reports what gatherd built and cannot load.
 #
 # The section used to key on /etc/gatherd/vault-complete, which answers "has the
 # vault PLAY finished" -- minutes after, and a different question from, "does a
@@ -44,9 +45,48 @@ cp "$REPO/scripts/gatherd-vault-pass-needed" "$WORK/gatherd/scripts/"
 password_stored()     { : > "$WORK/gatherd/.vault_pass"; }
 password_not_stored() { rm -f "$WORK/gatherd/.vault_pass"; }
 
+# A stand-in for gatherd-assert-sonames, because the three answers that matter
+# are machine states no test can ask for: a converged machine whose AUR packages
+# under-declare what they link against, one where they do not, and one where the
+# check cannot run at all. The real script has its own suite (tests/assert-sonames);
+# what is under test here is what the notes do with each answer.
+SONAMES_MODE="$WORK/soname-mode"
+printf 'clean' > "$SONAMES_MODE"
+cat > "$WORK/gatherd/scripts/gatherd-assert-sonames" <<'STUB'
+#!/bin/sh
+case "$(cat "$GATHERD_TEST_SONAMES" 2>/dev/null)" in
+    broken)
+        [ "${1:-}" = --tsv ] &&
+            printf 'localsend-bin\t/opt/localsend/localsend\tlibayatana-indicator3.so.7\n'
+        exit 1 ;;
+    cannot)
+        echo 'gatherd-assert-sonames: no sync database for [gatherd-aur]; run pacman -Sy' >&2
+        exit 2 ;;
+    *)
+        [ "${1:-}" = --tsv ] || echo '28 package(s), 77 executable(s): every soname resolves.'
+        exit 0 ;;
+esac
+STUB
+chmod +x "$WORK/gatherd/scripts/gatherd-assert-sonames"
+
+# The sentinel the section gates on. Present by default, because "this machine
+# has converged" is the state every case below but the last one is about.
+SENTINEL="$WORK/async-complete"
+: > "$SENTINEL"
+
+sonames() { printf '%s' "$1" > "$SONAMES_MODE"; }
+
+above() {  # above <header> <header> -- true when the first comes first
+    _a=$(grep -n "^# $1\$" "$OUT" | cut -d: -f1)
+    _b=$(grep -n "^# $2\$" "$OUT" | cut -d: -f1)
+    [ -n "$_a" ] && [ -n "$_b" ] && [ "$_a" -lt "$_b" ]
+}
+
 generate() {
     HOME="$WORK/home" GATHERD_HOME="$WORK/gatherd" \
-        XDG_STATE_HOME="$WORK/state" sh "$NOTES" >/dev/null 2>&1
+        XDG_STATE_HOME="$WORK/state" \
+        GATHERD_ASYNC_SENTINEL="${SENTINEL_OVERRIDE:-$SENTINEL}" \
+        GATHERD_TEST_SONAMES="$SONAMES_MODE" sh "$NOTES" >/dev/null 2>&1
 }
 
 has()     { grep -qF -- "$1" "$OUT"; }
@@ -86,6 +126,73 @@ assert "keeps a hand-written note while the reminder stands" has 'my own note ab
 password_stored; generate
 assert "and keeps it after the reminder is pruned"          has 'my own note about the vault'
 assert "keeping the header alive for it"                    grep -q '^# Vault$' "$OUT"
+
+# ---------------------------------------------------------------- Libraries
+#
+# This section is why gatherd-assert-sonames is not left to the verify list. A
+# verify step is designed to be deleted once exercised, and the defect it
+# catches -- an AUR package's `depends` changing upstream -- arrives without any
+# edit to this repo. So the check has to recompute from live state at every
+# login, say something only when there is something to say, and gate nothing.
+
+# 6. Something to say.
+rm -f "$OUT"; password_stored; sonames broken; generate
+assert "reports a soname nothing on the machine provides" \
+    has 'libayatana-indicator3.so.7'
+assert "naming the package that under-declares it"  has 'localsend-bin'
+assert "and the executable that cannot start"       has '/opt/localsend/localsend'
+assert "under a Libraries header"                   grep -q '^# Libraries$' "$OUT"
+assert "above Verify, where the standing checks are" above Libraries Verify
+
+# 7. Saying it twice is saying it wrong.
+generate
+# Bullets, not lines: the soname appears twice inside one bullet, once in the
+# sentence and once in the `pacman -F` that finds its provider. `|| :` because
+# grep -c exits 1 on a count of zero, which under set -e would abort the suite
+# instead of failing this assertion.
+_n=$(grep -c '^- gatherd built ' "$OUT" || :)
+assert "re-running does not duplicate the finding (found $_n)" test "$_n" -eq 1
+
+# 8. A hand-written note under the header survives the finding being there...
+# Under the header, not at end of file: what is being tested is a note living
+# inside the section this run rewrites.
+sed -i '/^# Libraries$/a - ask upstream about the ayatana split' "$OUT"
+generate
+assert "keeps a hand-written note while the finding stands" \
+    has 'ask upstream about the ayatana split'
+
+# 9. ...and survives the finding going away, which is what section_remove (the
+#    Unmanaged WiFi pruner) would have eaten.
+sonames clean; generate
+refute "drops the finding once every soname resolves" has 'libayatana-indicator3.so.7'
+assert "while keeping the hand-written note"          has 'ask upstream about the ayatana split'
+assert "and the header it lives under"                grep -q '^# Libraries$' "$OUT"
+
+# 10. Nothing to say, and nothing of yours to keep: no header at all.
+rm -f "$OUT"; sonames clean; generate
+refute "says nothing when every soname resolves" grep -q '^# Libraries$' "$OUT"
+
+# 11. Could not run is not clean. A login-time check that answers "fine" to a
+#     machine it never looked at is worse than no check -- the same rule
+#     gatherd-assert-sonames enforces on itself.
+rm -f "$OUT"; sonames cannot; generate
+assert "says so when the check could not run" grep -q '^# Libraries$' "$OUT"
+assert "quoting the reason it could not"      has 'run pacman -Sy'
+
+# 12. A machine that has not converged is not a machine with an answer. REST
+#     builds the AUR packages this asks about, so before it finishes there is
+#     nothing to ask -- and the check would fail for that reason at every
+#     login of the first pave.
+rm -f "$OUT"; sonames broken
+SENTINEL_OVERRIDE=/nonexistent generate
+refute "stays quiet until REST has converged" grep -q '^# Libraries$' "$OUT"
+
+# 13. And it cleans up after itself when the sentinel goes: a finding left
+#     standing from a converged machine is a claim nothing is checking.
+sonames broken; generate
+assert "the finding is back once the sentinel is"    has 'libayatana-indicator3.so.7'
+SENTINEL_OVERRIDE=/nonexistent generate
+refute "and gone again when the sentinel is not"     has 'libayatana-indicator3.so.7'
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

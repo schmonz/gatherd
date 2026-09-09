@@ -162,11 +162,11 @@ assert_says "the un-installed AUR dependency is named" "clight needs clightd"
 cp "$WORK/pristine-ambient" "$AMBIENT"
 
 # 11. Infrastructure trouble is rc=2, so it can never be mistaken for a repo
-#     that violates the rule.
-sed -i 's|^SRCINFO = .*|SRCINFO = "http://127.0.0.1:1/{}"|' "$GATE"
+#     that violates the rule. Port 1 refuses at once, so this is the
+#     connection-refused half of "the AUR is unreachable".
 # A cold cache, or the fetch never happens and the breakage is invisible.
-XDG_CACHE_HOME="$WORK/cold" assert_rc "an unreachable AUR exits 2, not 1" 2
-cp "$WORK/pristine-gate" "$GATE"
+AUR_SRCINFO='http://127.0.0.1:1/' XDG_CACHE_HOME="$WORK/cold" \
+    assert_rc "an unreachable AUR exits 2, not 1" 2
 
 # 12. A build must be guarded, and by a guard with the same when: it has. The
 #     AVX guard once ran unconditionally in front of a `when: has_avx` build,
@@ -202,6 +202,79 @@ PATCH
 assert_rc "an unguarded build exits 1" 1
 assert_says "the unguarded build is named" "no assert_aur_deps guard"
 cp "$WORK/pristine-ambient" "$AMBIENT"
+
+# 14. Which failures are the AUR's and which are ours. The gate's header
+#     promises "1 on violations, 2 if the check could not be run", and CLAUDE.md
+#     turns on the same line: an unreachable AUR is weather, a target the AUR
+#     has never heard of is this repo naming a package wrong. Both directions
+#     have to be pinned, because collapsing them is silent either way -- a
+#     misspelt package excused as an outage forever, or every 429 reported as a
+#     repo bug, which is what sent tests/gates red on a day nothing had changed.
+#
+#     Against a local stand-in for the AUR, not the real one: none of these
+#     states can be asked of aur.archlinux.org on demand, and a suite that
+#     waited for a real 429 would be a suite nobody could run.
+STUB="$TESTSDIR/fixtures/stub-aur.py"
+python3 "$STUB" "$WORK" &
+STUB_PID=$!
+trap 'kill "$STUB_PID" 2>/dev/null; rm -rf "$WORK"' EXIT
+
+_waited=0
+while [ ! -s "$WORK/stub-port" ]; do
+    _waited=$((_waited + 1))
+    [ "$_waited" -gt 100 ] && { bad "the stub AUR never came up"; break; }
+    sleep 0.1
+done
+STUB_URL="http://127.0.0.1:$(cat "$WORK/stub-port" 2>/dev/null || echo 1)"
+
+# `aur query` reads AUR_LOCATION itself and the gate derives its .SRCINFO URL
+# from the same variable, so this points both halves at the stub. A cold cache
+# per case, or a cached .SRCINFO answers instead of the mode under test.
+stub() {
+    _d=$1; _want=$2; _mode=$3; _absent=${4:-}
+    printf '%s' "$_mode" > "$WORK/stub-mode"
+    printf '%s' "$_absent" > "$WORK/stub-absent"
+    rm -rf "$WORK/stubcache"
+    if AUR_LOCATION="$STUB_URL" XDG_CACHE_HOME="$WORK/stubcache" \
+        "$GATE" "$WORK/repo" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want rc=$_want got rc=$_got)"; sed 's/^/       /' "$WORK/out"; fi
+}
+
+# The stub has to be a good enough AUR that the failures below mean something:
+# every target resolves, every .SRCINFO parses, nothing is declared, so a green
+# run here is the control.
+stub "a healthy stub AUR exits 0" 0 healthy
+
+stub "an RPC 429 exits 2, not 1" 2 rpc429
+assert_says "the 429 is named" "429"
+
+# The measured original bug. curl -f turns a 429 STATUS into a failed `aur
+# query`, which was already rc=2 -- but a rate limiter that answers 200 with an
+# HTML page does not, and json.loads raised straight out of main() as an
+# uncaught traceback, which is exit 1.
+stub "a 200 carrying HTML exits 2, not 1" 2 rpchtml
+assert_says "the unparseable reply is described" "JSON aurweb sends"
+
+# aurweb reports its own rate limit in the body. Its results list is empty, so
+# without reading `type: error` every target reads as "not in the AUR" -- the
+# outage arriving as the one verdict that must mean the repo is wrong.
+stub "aurweb's own error body exits 2, not 1" 2 rpcjson
+assert_says "the AUR's reason is quoted" "Rate limit reached"
+
+stub "a cgit 429 exits 2, not 1" 2 cgit429
+assert_says "the cgit failure is named" "would not serve .SRCINFO"
+
+# And the direction that must NOT fail open. rclone left the AUR for [extra]
+# and captive-browser is only a provides of captive-browser-git; both were this
+# repo naming a package the AUR does not have.
+stub "a package the AUR does not have exits 1" 1 healthy clight
+assert_says "the missing target is named" "clight"
+assert_says "the missing target is called a missing target" "no such target"
+
+stub "a cgit 404 exits 1, not 2" 1 cgit404
+assert_says "the 404 says the package is gone" "no such package"
+
+kill "$STUB_PID" 2>/dev/null
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

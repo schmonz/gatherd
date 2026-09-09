@@ -49,6 +49,12 @@ Anything it cannot read is a hard failure, never a silent skip: an aur sync
 whose targets will not parse, a build in a file the playbooks never reach, a
 task file that will not load.
 
+An AUR that will not answer is a different failure, and gets the different exit
+code. 429, 5xx, a timeout, a refused connection, a DNS failure, a proxy page
+served in aurweb's place: all of those are exit 2, because the check could not
+be run. Only the AUR positively answering that a target does not exist is exit
+1, because that is this repo naming a package wrong.
+
 Needs the network (AUR .SRCINFO) and a synced pacman db (expac).
 
 Usage: gatherd-check-aur-deps [repo-root]
@@ -66,7 +72,14 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-SRCINFO = 'https://aur.archlinux.org/cgit/aur.git/plain/.SRCINFO?h={}'
+# Follows AUR_LOCATION, and AUR_SRCINFO overrides it outright -- the same two
+# variables, with the same precedence, that gatherd-assert-aur-deps honours, and
+# for the same reason: tests/check-aur-deps has to put this script into states
+# the real AUR will not supply on demand (a 429, a proxy interstitial, a package
+# that does not exist). `aur query` already reads AUR_LOCATION itself, so with
+# both pointed at one stub the gate talks to nothing but that stub.
+AUR_LOCATION = os.environ.get('AUR_LOCATION', 'https://aur.archlinux.org')
+SRCINFO = os.environ.get('AUR_SRCINFO', AUR_LOCATION + '/cgit/aur.git/plain/.SRCINFO?h=') + '{}'
 CANNOT_RUN = 2
 
 # Repos every gatherd machine has. A developer's extra repos -- gatherd-aur
@@ -99,6 +112,20 @@ REMOVES = ('absent', 'removed')
 
 class CannotRun(Exception):
     """The check could not be performed -- as distinct from finding a problem."""
+
+
+class Violation(Exception):
+    """The AUR answered, and its answer says this repo is wrong.
+
+    The one direction that must not fail open. CLAUDE.md: an unreachable AUR is
+    weather, but a target the AUR has never heard of is this repo naming a
+    package wrong, which it has done twice -- rclone left for [extra], and
+    `captive-browser` is only a provides of captive-browser-git. Folding the two
+    into one exit code loses the distinction in whichever direction the fold
+    goes: as CannotRun, a misspelt package is excused as an outage forever; as a
+    violation, every 429 is reported as a repo bug, which is what sent
+    tests/gates red on a day nothing in the repo had changed.
+    """
 
 
 def bare(dep):
@@ -142,14 +169,39 @@ def aur_info(names):
     """
     if not shutil.which('aur'):
         raise CannotRun('aurutils is not installed')
-    payload = json.loads(run(['aur', 'query', '-t', 'info', *sorted(names)]))
-    found = {}
-    for result in payload['results']:
-        for key in (result['Name'], result['PackageBase']):
-            found[key] = (result['PackageBase'], result['LastModified'])
+    reply = run(['aur', 'query', '-t', 'info', *sorted(names)])
+    # An outage does not always arrive as a non-zero exit. aurutils shells out
+    # to `curl -fgLsSq`, so an HTTP 429 or 5xx does become a failed `run()`
+    # above -- but a rate limiter, proxy or captive portal that answers 200 with
+    # an HTML page does not, and neither does aurweb's own JSON error body.
+    # Measured before this guard existed: a 200 carrying HTML raised
+    # JSONDecodeError out of json.loads, which is an uncaught traceback, which
+    # is exit 1 -- an AUR outage reported as a repo violation.
+    try:
+        payload = json.loads(reply)
+        results = payload['results']
+        found = {}
+        for result in results:
+            for key in (result['Name'], result['PackageBase']):
+                found[key] = (result['PackageBase'], result['LastModified'])
+    except (ValueError, KeyError, TypeError) as failure:
+        raise CannotRun('the AUR did not answer with the JSON aurweb sends '
+                        f'({failure}); first 200 bytes: {reply[:200]!r}')
+    # aurweb reports its own rate limit in the body, and has served it as a 200
+    # in the past, so the shape has to be read rather than the status code
+    # trusted. `type: error` means the AUR declined to answer, not that these
+    # packages are absent -- and its results list is empty either way, so
+    # without this the whole target list reads as "not in the AUR".
+    if payload.get('type') == 'error':
+        raise CannotRun('the AUR declined the query: '
+                        + str(payload.get('error') or 'no reason given'))
     missing = set(names) - set(found)
     if missing:
-        raise CannotRun('not in the AUR: ' + ', '.join(sorted(missing)))
+        raise Violation('Named as AUR packages, but the AUR has no such target:\n  '
+                        + '\n  '.join(sorted(missing))
+                        + '\n\nCheck the pkgbase: a plain name is often only a provides of'
+                          '\na -git or -bin package, and packages do leave the AUR for the'
+                          '\nofficial repos.')
     return found
 
 
@@ -165,10 +217,27 @@ def fetch_srcinfo(pkgbase, mtime):
     try:
         with urllib.request.urlopen(url, timeout=30) as body:
             text = body.read().decode('utf-8', 'replace')
+    except urllib.error.HTTPError as failure:
+        # 404/410 is cgit saying it has no such repository -- an answer, and the
+        # same repo-is-wrong answer the RPC gives above. Every other status is
+        # the AUR failing to answer: 429 when a burst is rate-limited, 5xx when
+        # it is down, 403 when something in front of it objects. urlopen raises
+        # HTTPError for all of them alike (measured against a local 429), so the
+        # status has to be read to tell the two apart.
+        if failure.code in (404, 410):
+            raise Violation(f'{pkgbase}: the AUR has no such package '
+                            f'(HTTP {failure.code} for {url})')
+        raise CannotRun(f'{pkgbase}: the AUR would not serve .SRCINFO ({failure})')
     except (urllib.error.URLError, OSError) as failure:
+        # DNS failure, connection refused, timeout, TLS trouble: weather.
         raise CannotRun(f'{pkgbase}: cannot read .SRCINFO from the AUR ({failure})')
+    # A 200 that is not a .SRCINFO is an interstitial, a proxy error page or a
+    # captive portal -- something answering in the AUR's place. That is an
+    # outage, not the AUR telling us the package is gone; cgit says that with a
+    # 404, handled above.
     if 'pkgbase' not in text:
-        raise CannotRun(f'{pkgbase}: .SRCINFO looks empty; is it still in the AUR?')
+        raise CannotRun(f'{pkgbase}: fetched something that is not a .SRCINFO from '
+                        f'{url}; first 200 bytes: {text[:200]!r}')
     cache.mkdir(parents=True, exist_ok=True)
     for stale in cache.glob(f'{pkgbase}.*.SRCINFO'):
         stale.unlink()
@@ -516,6 +585,9 @@ def main():
     root = Path(sys.argv[1] if sys.argv[1:] else Path(__file__).resolve().parent.parent)
     try:
         return check(root)
+    except Violation as failure:
+        print(failure, file=sys.stderr)
+        return 1
     except CannotRun as failure:
         print(f'cannot run: {failure}', file=sys.stderr)
         return CANNOT_RUN

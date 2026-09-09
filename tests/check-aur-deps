@@ -217,7 +217,12 @@ cp "$WORK/pristine-ambient" "$AMBIENT"
 STUB="$TESTSDIR/fixtures/stub-aur.py"
 python3 "$STUB" "$WORK" &
 STUB_PID=$!
-trap 'kill "$STUB_PID" 2>/dev/null; rm -rf "$WORK"' EXIT
+# `|| :` because `set -e` applies inside the trap: once the stub has already
+# been reaped, kill exits 1, the trap aborts before the rm, and the suite exits
+# 1 having printed "0 failed" and leaked its temporary directory. Measured --
+# adding cases after the explicit kill below was enough to make the child
+# reapable in time, and a green run came out as rc=1.
+trap 'kill "$STUB_PID" 2>/dev/null || :; rm -rf "$WORK"' EXIT
 
 _waited=0
 while [ ! -s "$WORK/stub-port" ]; do
@@ -300,9 +305,39 @@ assert_says "the RPC timeout says what did not answer" "did not answer within"
 
 stub "a cgit that never answers exits 2" 2 cgithang
 assert_says "the cgit timeout is weather, not a missing package" "cannot read .SRCINFO"
+
 STUB_TIMEOUT=30
 
-kill "$STUB_PID" 2>/dev/null
+kill "$STUB_PID" 2>/dev/null || :
+
+# 17. A bound the environment set to something that is not a bound. Measured
+#     before this was handled: `abc` and `` (which
+#     `export GATHERD_AUR_TIMEOUT=$SOMETHING_UNSET` produces) each ended in a
+#     ValueError traceback and exit 1 -- this gate's spelling of "the repo
+#     declares a dependency it does not install", sending a committer hunting a
+#     violation that is not there. `0` and `-5` are here because they must not
+#     become permissive: `timeout 0` means no timeout at all, so the value that
+#     used to fail closed would stop failing closed under a different bound.
+#     No stub needed: none of these reaches the network.
+for _bad in abc '' 0 -5; do
+    if GATHERD_AUR_TIMEOUT="$_bad" "$GATE" "$WORK/repo" >"$WORK/out" 2>&1; then
+        _got=0
+    else
+        _got=$?
+    fi
+    if [ "$_got" = 2 ]; then
+        ok "GATHERD_AUR_TIMEOUT='$_bad' is could-not-run, not a violation"
+    else
+        bad "GATHERD_AUR_TIMEOUT='$_bad' exited $_got, wanted 2"
+        sed 's/^/       /' "$WORK/out"
+    fi
+    assert_says "and says which variable is wrong for '$_bad'" 'GATHERD_AUR_TIMEOUT'
+    if grep -q 'Traceback' "$WORK/out"; then
+        bad "GATHERD_AUR_TIMEOUT='$_bad' still reports by traceback"
+    else
+        ok "and does not report it by traceback"
+    fi
+done
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

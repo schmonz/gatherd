@@ -96,8 +96,11 @@ CANNOT_RUN = 2
 # it. tests/gates runs this gate live, so tests/gates hung with it.
 #
 # Overridable for the same reason AUR_LOCATION is: tests/check-aur-deps has to
-# reach this branch without waiting out the real bound.
-TIMEOUT = float(os.environ.get('GATHERD_AUR_TIMEOUT', 30))
+# reach this branch without waiting out the real bound. Read as a string and
+# parsed in timeout_seconds() below, because a float() here runs at import,
+# outside main()'s handlers, and a bad value came out as a traceback and exit 1
+# -- a committer sent hunting a dependency violation that does not exist.
+TIMEOUT_RAW = os.environ.get('GATHERD_AUR_TIMEOUT', '30')
 
 # Repos every gatherd machine has. A developer's extra repos -- gatherd-aur
 # above all, which is full of packages this run is deciding whether to build --
@@ -145,20 +148,48 @@ class Violation(Exception):
     """
 
 
+def timeout_seconds():
+    """The bound, or CannotRun if the environment set it to something else.
+
+    Measured: `GATHERD_AUR_TIMEOUT=abc` and `GATHERD_AUR_TIMEOUT=` (which
+    `export GATHERD_AUR_TIMEOUT=$SOMETHING_UNSET` produces) each ended the run
+    with a ValueError traceback and exit 1. Exit 1 is this gate saying the repo
+    declares a dependency it does not install; a typo in a shell variable is not
+    that.
+
+    Non-positive is refused rather than left to the bound itself: 0 and -5 do
+    reach exit 2 today, but only by timing every request out at once -- the
+    right verdict for the wrong reason, and one that depends on which bound is
+    in use. NaN fails the comparison and lands here too.
+    """
+    try:
+        seconds = float(TIMEOUT_RAW)
+    except ValueError:
+        raise CannotRun(
+            f'GATHERD_AUR_TIMEOUT is not a number of seconds: {TIMEOUT_RAW!r}'
+        ) from None
+    if not seconds > 0:
+        raise CannotRun(
+            f'GATHERD_AUR_TIMEOUT must be more than zero seconds: {TIMEOUT_RAW!r}'
+        )
+    return seconds
+
+
 def bare(dep):
     """Strip a version constraint. pacman enforces versions; this gate does not."""
     return VERSIONED.sub('', dep).strip()
 
 
 def run(argv):
+    seconds = timeout_seconds()
     try:
-        out = subprocess.run(argv, capture_output=True, text=True, timeout=TIMEOUT)
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=seconds)
     except subprocess.TimeoutExpired:
         # Prompt, because killing `aur` closes the pipe read here. The curl it
         # spawned is a grandchild and survives that kill -- measured, one was
         # still holding the dead connection after this returned -- so a run cut
         # short this way leaves one behind.
-        raise CannotRun(f'{argv[0]} did not answer within {TIMEOUT:g}s')
+        raise CannotRun(f'{argv[0]} did not answer within {seconds:g}s')
     if out.returncode:
         raise CannotRun(f'{argv[0]} failed: {(out.stderr or out.stdout).strip()}')
     return out.stdout
@@ -239,7 +270,7 @@ def fetch_srcinfo(pkgbase, mtime):
         return cached.read_text()
     url = SRCINFO.format(urllib.parse.quote(pkgbase, safe=''))
     try:
-        with urllib.request.urlopen(url, timeout=TIMEOUT) as body:
+        with urllib.request.urlopen(url, timeout=timeout_seconds()) as body:
             text = body.read().decode('utf-8', 'replace')
     except urllib.error.HTTPError as failure:
         # 404/410 is cgit saying it has no such repository -- an answer, and the
@@ -492,6 +523,9 @@ def unreachable(root, seen):
 
 
 def check(root):
+    # Before the playbook walk, not after: a malformed bound is the run's
+    # problem whether or not the walk gets as far as asking the AUR anything.
+    timeout_seconds()
     gv = load(root / 'group_vars/all/main.yml')
     arch = platform.machine()
 

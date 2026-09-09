@@ -56,8 +56,16 @@ cat > "$WORK/gatherd/scripts/gatherd-assert-sonames" <<'STUB'
 #!/bin/sh
 case "$(cat "$GATHERD_TEST_SONAMES" 2>/dev/null)" in
     broken)
-        [ "${1:-}" = --tsv ] &&
+        # Two rows, and the second one has a space in its path on purpose. TSV
+        # is not decoration here: the reader in section_libraries splits on a
+        # literal tab, and /opt is full of vendor drops that put a space in a
+        # directory name. With the default IFS the same row parses as
+        # exe=/opt/JetBrains and soname=Toolbox/..., which is a bullet naming a
+        # file that does not exist and a soname that is not one.
+        [ "${1:-}" = --tsv ] && {
             printf 'localsend-bin\t/opt/localsend/localsend\tlibayatana-indicator3.so.7\n'
+            printf 'jetbrains-toolbox\t/opt/JetBrains Toolbox/jetbrains-toolbox\tlibgbm.so.1\n'
+        }
         exit 1 ;;
     cannot)
         echo 'gatherd-assert-sonames: no sync database for [gatherd-aur]; run pacman -Sy' >&2
@@ -90,6 +98,9 @@ generate() {
 }
 
 has()     { grep -qF -- "$1" "$OUT"; }
+# Bullets are wrapped to a width, so a phrase long enough to be worth asserting
+# on straddles a line break. Continuation lines are indented; join them back.
+flows()   { sed -e ':a' -e 'N' -e '$!ba' -e 's/\n  */ /g' "$OUT" | grep -qF -- "$1"; }
 assert()  { _d=$1; shift; if "$@"; then ok "$_d"; else bad "$_d"; fi; }
 refute()  { _d=$1; shift; if "$@"; then bad "$_d"; else ok "$_d"; fi; }
 
@@ -141,6 +152,12 @@ assert "reports a soname nothing on the machine provides" \
     has 'libayatana-indicator3.so.7'
 assert "naming the package that under-declares it"  has 'localsend-bin'
 assert "and the executable that cannot start"       has '/opt/localsend/localsend'
+# The tab is the field separator, not whitespace. Drop the IFS from the reader
+# in section_libraries and this is the assertion that goes red: the path splits
+# at its space and the bullet names /opt/JetBrains as the file and
+# Toolbox/jetbrains-toolbox as the library.
+assert "reading a path with a space in it as one field" \
+    flows '/opt/JetBrains Toolbox/jetbrains-toolbox cannot load libgbm.so.1'
 assert "under a Libraries header"                   grep -q '^# Libraries$' "$OUT"
 assert "above Verify, where the standing checks are" above Libraries Verify
 
@@ -151,7 +168,7 @@ generate
 # grep -c exits 1 on a count of zero, which under set -e would abort the suite
 # instead of failing this assertion.
 _n=$(grep -c '^- gatherd built ' "$OUT" || :)
-assert "re-running does not duplicate the finding (found $_n)" test "$_n" -eq 1
+assert "re-running does not duplicate the findings (found $_n)" test "$_n" -eq 2
 
 # 8. A hand-written note under the header survives the finding being there...
 # Under the header, not at end of file: what is being tested is a note living

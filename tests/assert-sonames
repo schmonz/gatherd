@@ -63,7 +63,8 @@ assert_count() {
 # ---------------------------------------------------------------- fixtures
 
 FS=$WORK/fs
-mkdir -p "$FS/hidden" "$FS/clean" "$FS/broken/bin" "$FS/bundled/lib" "$FS/plugin"
+mkdir -p "$FS/hidden" "$FS/clean" "$FS/broken/bin" "$FS/bundled/lib" "$FS/plugin" \
+         "$FS/foreign" "$FS/nointerp"
 
 echo 'int gatherd_probe(void) { return 0; }'                      > "$WORK/lib.c"
 echo 'int gatherd_probe(void); int main(void) { return gatherd_probe(); }' > "$WORK/user.c"
@@ -89,6 +90,21 @@ cc -o "$FS/bundled/bundled" "$WORK/user.c" -L"$FS/bundled/lib" -lgatherdbundled
 cc -o "$FS/plugin/plugin" "$WORK/plain.c"
 cc -shared -fPIC -o "$FS/plugin/libplug.so" "$WORK/lib.c" -L"$FS/hidden" -lgatherdplugin
 
+# An ELF for another architecture, made by overwriting e_machine (2 bytes at
+# offset 0x12) with 243, RISC-V. A cross toolchain would be a truer fixture and
+# a much worse dependency; what the cases below need is only that the file keeps
+# its PT_INTERP -- so it is in scope -- while no loader on ldd's RTLDLIST will
+# --verify it. The real thing is ordinary packaging: `pacman -Qoq
+# /usr/lib/go/src/debug/elf/testdata/gcc-riscv64-linux-exec` says `go`.
+cc -o "$FS/foreign/prog" "$WORK/plain.c"
+printf '\363\000' | dd of="$FS/foreign/prog" bs=1 seek=18 conv=notrunc 2>/dev/null
+
+# An executable whose program interpreter is not on the disk -- the shape a
+# -bin package has when it ships a binary built against a loader this
+# distribution does not install. ldd is no help here and case 19 pins that.
+cc -o "$FS/nointerp/prog" "$WORK/plain.c" \
+    -Wl,--dynamic-linker="$FS/nointerp/ld-gatherd-nowhere.so"
+
 mkdir -p "$WORK/owned"
 # A trailing-slash line in every list, because pacman -Qlq emits directories and
 # readelf given one would be a stray error with a file name attached to it.
@@ -96,6 +112,8 @@ printf '%s/\n%s\n' "$FS/clean" "$FS/clean/clean" > "$WORK/owned/clean-pkg"
 printf '%s/\n%s\n%s\n' "$FS/broken" "$FS/broken/bin/broken" "$FS/broken/broken-link" > "$WORK/owned/broken-pkg"
 printf '%s/\n%s\n%s\n' "$FS/bundled" "$FS/bundled/bundled" "$FS/bundled/lib/libgatherdbundled.so.1" > "$WORK/owned/bundled-pkg"
 printf '%s/\n%s\n%s\n' "$FS/plugin" "$FS/plugin/plugin" "$FS/plugin/libplug.so" > "$WORK/owned/plugin-pkg"
+printf '%s/\n%s\n' "$FS/foreign" "$FS/foreign/prog" > "$WORK/owned/aaa-foreign-pkg"
+printf '%s/\n%s\n' "$FS/nointerp" "$FS/nointerp/prog" > "$WORK/owned/nointerp-pkg"
 
 mkdir -p "$WORK/shim"
 cat > "$WORK/shim/pacman" <<'SHIM'
@@ -171,6 +189,25 @@ assert_interp() {  # assert_interp <description> <count> <file>
 
 assert_interp "an executable fixture has a PT_INTERP" 1 "$FS/broken/bin/broken"
 assert_interp "the plugin fixture has none" 0 "$FS/plugin/libplug.so"
+assert_interp "the foreign fixture is still in scope" 1 "$FS/foreign/prog"
+assert_interp "so is the missing-interpreter one" 1 "$FS/nointerp/prog"
+
+# The two fixtures cases 18 and 19 rest on, and the reason they are two cases
+# and not one: ldd's answer for them differs, so one is caught by ldd's status
+# and the other cannot be caught by ldd at all.
+assert_ldd_rc() {  # assert_ldd_rc <description> <rc> <file>
+    if ldd "$3" >/dev/null 2>&1; then _r=0; else _r=$?; fi
+    if [ "$_r" = "$2" ]; then ok "$1"; else bad "$1 (ldd on $3 exited $_r, wanted $2)"; fi
+}
+
+assert_ldd_rc "ldd refuses to answer for the foreign fixture" 1 "$FS/foreign/prog"
+assert_ldd_rc "and answers happily for the missing-interpreter one" 0 "$FS/nointerp/prog"
+
+if [ -e "$FS/nointerp/ld-gatherd-nowhere.so" ]; then
+    bad "the missing-interpreter fixture's interpreter exists after all"
+else
+    ok "the missing-interpreter fixture asks for a loader that is not there"
+fi
 
 # ---------------------------------------------------------------- the cases
 
@@ -295,10 +332,12 @@ assert_rc "an xargs that rejects -d exits 2" 2 only_tools "$BROKEN"
 assert_says "and says it found no executables too" 'found no executables'
 ln -sf "$(command -v xargs)" "$WORK/tools/xargs"
 
-# 15. An ldd that will not answer. Measured: real ldd exits 0 whether or not it
-#     resolves everything (rc=0 on /opt/localsend/localsend, which cannot find
-#     two sonames), so a non-zero exit is the loader declining to answer -- and
-#     an unanswered question printing nothing looks exactly like a clean one.
+# 15. An ldd that answers for nothing at all. Not the same claim as "a non-zero
+#     ldd means ldd is broken", which was false and which case 18 pins the other
+#     way: this is ldd failing for EVERY executable it is handed. It has to be
+#     exit 2, because `ldd "$exe" > "$WORK/ldd"` truncates the answer file on
+#     redirect before ldd runs, so a failed ldd leaves an empty answer that the
+#     `=> not found` parse reads exactly as it reads a clean one.
 rm -f "$WORK/tools/ldd"
 cat > "$WORK/tools/ldd" <<'SHIM'
 #!/bin/sh
@@ -306,8 +345,8 @@ echo 'ldd: exited with unknown exit code (139)' >&2
 exit 1
 SHIM
 chmod +x "$WORK/tools/ldd"
-assert_rc "an ldd that will not answer exits 2" 2 only_tools "$BROKEN"
-assert_says "and names the executable it could not answer for" 'ldd .* failed'
+assert_rc "an ldd that answers for nothing exits 2" 2 only_tools "$BROKEN"
+assert_says "and says it got no answers at all" 'answered for none of the'
 ln -sf "$(command -v ldd)" "$WORK/tools/ldd"
 
 # 16. --tsv, the shape a consumer reads. gatherd-post-setup-notes rebuilds the
@@ -325,6 +364,24 @@ assert_count "literally nothing" 0 '.'
 #     from "could not look" is the whole reason this file exists.
 assert_rc "--tsv still exits 2 when it cannot run" 2 check "$EMPTY" GATHERD_TSV=1
 assert_says "and still says why" 'found no packages to check'
+
+# 18. One file ldd will not answer for is a finding about that file, and the
+#     scan carries on. It used to abort, and the walk is alphabetical, so
+#     aaa-foreign-pkg took broken-pkg -- the LocalSend class this whole file
+#     exists for -- down with it, reported as "could not run".
+FOREIGN_ARCH=$(db foreignarch aaa-foreign-pkg broken-pkg)
+assert_rc "a file ldd will not answer for does not abort the scan" 1 check "$FOREIGN_ARCH"
+assert_says "the unloadable file is named" "$FS/foreign/prog"
+assert_says "and so is the package the abort used to mask" 'libgatherdmissing.so.1'
+
+# 19. The program interpreter, which ldd will not report on: it hands the file
+#     to a loader from its own RTLDLIST rather than the one the ELF asks for,
+#     so this fixture gets a clean bill from ldd (asserted above) while being
+#     unable to start. readelf already knows the path; the check reads it.
+NO_INTERP=$(db nointerp clean-pkg nointerp-pkg)
+assert_rc "an executable whose interpreter is missing exits 1" 1 check "$NO_INTERP"
+assert_says "the package is named" 'nointerp-pkg'
+assert_says "and the interpreter that is not there" 'ld-gatherd-nowhere.so'
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -55,6 +55,23 @@
 # both times, so read the ratios rather than the seconds.) The whole check is
 # about a second.
 #
+# readelf also answers one question ldd will not: whether the program
+# interpreter named in the PT_INTERP is on the disk. Measured with
+# `ldd (GNU libc) 2.44`, ldd hands the file to a loader out of its own
+# hard-coded RTLDLIST rather than to the one the ELF asks for, so a native
+# x86-64 program linked with `-Wl,--dynamic-linker=/lib64/ld-nope.so` gets
+# rc=0 and a full resolution list out of ldd while refusing to start:
+#
+#     $ ./prog-nope
+#     bash: ./prog-nope: cannot execute: required file not found   (rc=127)
+#     $ ldd ./prog-nope
+#     	/lib64/ld-nope.so => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f5c...)
+#     rc=0
+#
+# That is the symptom at the top of this file with the first dependency of all
+# missing, so it is a finding, and naming the absent path says more than
+# anything ldd would have.
+#
 # A soname the package itself ships under that name is NOT reported. Measured:
 # /opt/zoom/ZoomWebviewHost cannot resolve libcef.so on its own and
 # /opt/zoom/cef/libcef.so is right there; /opt/zoom/zoom cannot resolve
@@ -68,8 +85,11 @@
 #
 #        --tsv prints the findings as `package<TAB>executable<TAB>soname` rows
 #        and nothing else -- no prose, and nothing at all when there is nothing
-#        to report. gatherd-post-setup-notes rebuilds its Libraries section from
-#        this at every login; without it that script would have to parse the
+#        to report. The third column is whatever that executable cannot load:
+#        usually a library name, sometimes an absent program interpreter, and
+#        in parentheses when the file cannot be loaded on this machine at all.
+#        gatherd-post-setup-notes rebuilds its Libraries section from this at
+#        every login; without it that script would have to parse the
 #        indentation of the tree below, which is a coupling neither file could
 #        see. The exit codes do not change, and exit 2 still says why on stderr:
 #        a consumer that cannot tell "clean" from "could not look" is the whole
@@ -88,6 +108,8 @@ cannot() {
     echo "gatherd-assert-sonames: $1" >&2
     exit 2
 }
+
+TAB=$(printf '\t')
 
 repo=${GATHERD_AUR_REPO:-gatherd-aur}
 
@@ -129,6 +151,8 @@ sort -u "$WORK/built" "$WORK/foreign" > "$WORK/packages"
 
 : > "$WORK/findings"
 executables=0
+ldd_asked=0
+ldd_failed=0
 
 while IFS= read -r pkg; do
     [ -n "$pkg" ] || continue
@@ -142,31 +166,80 @@ while IFS= read -r pkg; do
     # exactly one file would otherwise produce output with nothing to attribute
     # it to. /dev/null is not an ELF, so it costs one line on stderr and nothing
     # else.
+    #
+    # The interpreter path travels with the file: it is the one dependency ldd
+    # will not answer for (see WITH WHAT above), and re-deriving it later would
+    # mean a second readelf pass over every executable.
     xargs -d '\n' readelf -W -l /dev/null < "$WORK/paths" 2>/dev/null |
         awk '/^File: /       { file = substr($0, 7) }
-             /Requesting program interpreter/ { print file }' |
+             /Requesting program interpreter/ {
+                 # Only with a "File:" to attribute it to. A readelf that
+                 # prints none (eu-readelf does) would otherwise contribute
+                 # rows whose first field is empty, and `read` with IFS=<tab>
+                 # strips that leading tab -- tab is IFS white space -- so the
+                 # interpreter path would be read as the executable path, and
+                 # the no-executables guard below would never fire.
+                 if (file == "") next
+                 interp = $0
+                 sub(/^.*Requesting program interpreter: /, "", interp)
+                 sub(/\].*$/, "", interp)
+                 print file "\t" interp
+             }' |
         sort -u > "$WORK/execs"
     [ -s "$WORK/execs" ] || continue
 
     # Deduplicated by target, because a package that ships /usr/bin/localsend as
     # a symlink to /opt/localsend/localsend would otherwise report the same
     # unresolved sonames twice.
-    while IFS= read -r exe; do
-        readlink -f "$exe" 2>/dev/null
+    while IFS="$TAB" read -r exe interp; do
+        real=$(readlink -f "$exe" 2>/dev/null) || real=''
+        [ -n "$real" ] || continue
+        printf '%s\t%s\n' "$real" "$interp"
     done < "$WORK/execs" | sort -u > "$WORK/real"
 
     sed 's|.*/||' "$WORK/paths" | sort -u > "$WORK/shipped"
 
-    while IFS= read -r exe; do
+    while IFS="$TAB" read -r exe interp; do
         [ -n "$exe" ] || continue
         executables=$((executables + 1))
-        # ldd's status as well as its output. Measured on this machine, ldd
-        # exits 0 whether or not it resolves everything -- rc=0 on /bin/ls and
-        # rc=0 on /opt/localsend/localsend, which cannot find two sonames -- so
-        # a non-zero exit is ldd declining to answer at all, and an unanswered
-        # question prints exactly what a clean one does.
-        ldd "$exe" > "$WORK/ldd" 2>/dev/null ||
-            cannot "ldd $exe failed; the loader could not answer for it"
+
+        # No interpreter, no chance of ldd's answer meaning anything: the
+        # program stops at execve. Measured, `./prog` built against a
+        # nonexistent --dynamic-linker dies with "cannot execute: required
+        # file not found" while ldd on it exits 0 and resolves everything.
+        if [ -n "$interp" ] && [ ! -e "$interp" ]; then
+            printf '%s\t%s\t%s\n' "$pkg" "$exe" "$interp"
+            continue
+        fi
+
+        # One file ldd will not answer for is a finding about that file, never
+        # an abort for the scan. The comment that used to sit here inferred
+        # from two samples that a non-zero ldd meant ldd itself was broken;
+        # measured, files squarely in scope do it. An ELF for another
+        # architecture is the ordinary case -- ldd hands the file to a loader
+        # from its own RTLDLIST, none of which will --verify a foreign machine
+        # type, so it prints "not a dynamic executable" on stderr and exits 1
+        # with nothing on stdout:
+        #
+        #     $ cp /usr/lib/go/src/debug/elf/testdata/gcc-riscv64-linux-exec rv
+        #     $ chmod +x rv && ldd rv
+        #     	not a dynamic executable
+        #     rc=1
+        #
+        # (that file has a PT_INTERP and `pacman -Qoq` says `go`, so it is the
+        # shape rather than a hypothetical; the copy is only so ldd does not
+        # prepend its no-execute-permission warning). Packages walked here are
+        # alphabetical, so aborting on one such fixture inside a -bin drop hid
+        # every package after it -- including the LocalSend class this file
+        # exists for.
+        ldd_asked=$((ldd_asked + 1))
+        if ! ldd "$exe" > "$WORK/ldd" 2>/dev/null; then
+            ldd_failed=$((ldd_failed + 1))
+            printf '%s\t%s\t%s\n' "$pkg" "$exe" \
+                '(ldd would not answer: wrong architecture?)'
+            continue
+        fi
+
         sed -n 's/^[[:space:]]*\(.*\) => not found$/\1/p' "$WORK/ldd" |
             while IFS= read -r soname; do
                 grep -qxF "$soname" "$WORK/shipped" && continue
@@ -196,6 +269,19 @@ packages=$(wc -l < "$WORK/packages")
 [ "$executables" -gt 0 ] || cannot \
     "found no executables among $packages package(s): is readelf GNU's, and does xargs take -d?"
 
+# The narrow case the abort above was reaching for, kept and no wider than it
+# has to be: ldd failing for every executable it was handed is ldd not working,
+# and that must not read as clean. It would, silently: `ldd "$exe" >
+# "$WORK/ldd"` truncates the file on redirect before ldd runs, so a failed ldd
+# leaves an empty answer that the `=> not found` parse reads exactly as it
+# reads a resolved one, and the executables guard above is already satisfied.
+# Measured with an ldd shim that only ever `exit 1`s, this is the difference
+# between exit 2 and "3 package(s), 3 executable(s): every soname resolves."
+# Some-but-not-all is a different animal and is reported per file above.
+if [ "$ldd_asked" -gt 0 ] && [ "$ldd_failed" -eq "$ldd_asked" ]; then
+    cannot "ldd answered for none of the $ldd_asked executable(s) it was asked about"
+fi
+
 if [ -s "$WORK/findings" ]; then
     if [ "$tsv" = yes ]; then
         sort -u "$WORK/findings"
@@ -210,10 +296,12 @@ if [ -s "$WORK/findings" ]; then
                        { printf "      %s\n", $3 }
         ' >&2
     echo >&2
-    echo "Each of these is an AUR package under-declaring what upstream links" >&2
-    echo "against. Find the provider -- 'sudo pacman -Fy' once, then" >&2
-    echo "'pacman -F <soname>' -- and declare it in the *_packages var for a tier" >&2
-    echo "that converges BEFORE the build that needs it." >&2
+    echo "A soname or interpreter path above is an AUR package under-declaring" >&2
+    echo "what upstream links against. Find the provider -- 'sudo pacman -Fy'" >&2
+    echo "once, then 'pacman -F <soname>' -- and declare it in the" >&2
+    echo "*_packages var for a tier that converges BEFORE the build that" >&2
+    echo "needs it. A parenthesised line is not that: it is a file this" >&2
+    echo "machine cannot load at all, shipped for another architecture." >&2
     exit 1
 fi
 

@@ -64,9 +64,15 @@ for suite in check-package-tiers check-migrations check-aur-deps assert-aur-deps
              assert-sonames census-removals migration-checks await-and-run \
              check-vault-units needs-run await-async check-session-cohort \
              post-setup-notes; do
-    # An `if`, not `[ -x ] && run`: under `set -eu` that && list returns 1 for a
-    # suite that is not executable, and the whole run exits there -- no summary,
-    # remaining suites silently unrun. A missing suite is reported, not skipped.
+    # An `if`, not `[ -x ] && run`. The comment here used to say that && list
+    # aborts the run under `set -eu`; it does not, and what it does instead is
+    # worse. `set -e` is ignored for any command of an AND-OR list but the last
+    # (POSIX, and bash, which is /bin/sh here), so a `[ -x ]` that fails is
+    # simply skipped. Measured against the previous revision of this file with
+    # tests/needs-run made non-executable: rc=0, the summary printed, "23
+    # passed, 0 failed", and the word needs-run nowhere in the output. A green
+    # run that silently did not run a listed test is the one thing CLAUDE.md
+    # will not have; a suite that cannot run is a named failure.
     if [ -x "$REPO/tests/$suite" ]; then
         run "$REPO/tests/$suite"
     else

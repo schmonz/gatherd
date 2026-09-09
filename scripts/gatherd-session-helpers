@@ -59,9 +59,16 @@ for _pid in $(pgrep -f "$bin/gatherd-" 2>/dev/null); do
     case "$(ps -o args= -p "$_pid" 2>/dev/null)" in
         # gatherd-show-slow-progress still needs sparing: it is a
         # current-session sibling sway `exec` in its own process group, and
-        # its `foot` wrapper's cmdline matches the glob above. It
-        # self-terminates once async-complete is current, so a prior session
-        # never leaves a stale one.
+        # its `foot` wrapper's cmdline matches the glob above. It does NOT
+        # self-terminate -- every branch ends by printing
+        # "Press Enter to close... " and blocking on `read`, so it outlives
+        # the install it was watching by however long the window sits there
+        # (measured under a pty with stdin held open: still running at an 8s
+        # bound, "Installation complete." already printed). What keeps a prior
+        # session from leaving a stale one is its window, not its exit: foot
+        # dies when its compositor does. Measured with a nested headless sway
+        # whose config was `exec foot -e sleep 300` -- SIGTERM to sway, and
+        # the foot it had spawned was gone.
         *gatherd-show-slow-progress*) continue ;;
     esac
     # polkit-agent needs no skip here: it is a cohort child (below), in our

@@ -23,6 +23,11 @@
 #   - a timeout value that is all digits but not a safe one (a leading zero, or
 #     one big enough to overflow the deadline arithmetic) must not crash the
 #     script, release it early, or be read as octal instead of decimal;
+#   - it must SAY SO when it waits long enough to notice and when it gives up,
+#     because a silent multi-minute wait is the same empty session the cohort
+#     fix exists to remove -- and it must stay silent on the converged path,
+#     which is every login after the first;
+#   - a missing notify-send must cost it nothing, because it must always exit 0;
 #   - it must always exit 0, because it is a wait and not a predicate.
 #
 # Usage: tests/await-async
@@ -48,6 +53,22 @@ git -C "$HOMEDIR" init -q
 git -C "$HOMEDIR" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
 HEAD=$(git -C "$HOMEDIR" rev-parse HEAD)
 
+# notify-send is stubbed for every run below, both to assert on the calls and so
+# a test run never fires real desktop notifications at whoever is running it.
+mkdir -p "$WORK/stub"
+NOTIFY_LOG="$WORK/notify.log"
+cat > "$WORK/stub/notify-send" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >> "$NOTIFY_LOG"
+STUB
+chmod 755 "$WORK/stub/notify-send"
+
+# `grep -c` on no match prints 0 AND exits 1, so a naive `|| echo 0` fallback
+# emits the count twice; both helpers must yield exactly one number whether the
+# log is missing, empty, or unmatched.
+notify_lines() { _n=$(grep -c '' "$NOTIFY_LOG" 2>/dev/null) || _n=0; printf '%s\n' "${_n:-0}"; }
+notify_grep()  { _n=$(grep -c "$1" "$NOTIFY_LOG" 2>/dev/null) || _n=0; printf '%s\n' "${_n:-0}"; }
+
 SENTINEL="$WORK/async-complete"
 STAMP="$WORK/async-complete-finished"
 LASTRUN="$WORK/last-run"
@@ -61,9 +82,11 @@ printf 'ok\n' > "$LASTRUN"
 BARRIER_HOME="$HOMEDIR"
 
 run_barrier() {
+    rm -f "$NOTIFY_LOG"
     _start=$(date +%s)
     GATHERD_HOME="$BARRIER_HOME" GATHERD_ASYNC_SENTINEL="$SENTINEL" \
         GATHERD_CORE_MARKER="$LASTRUN" GATHERD_CORE_COMPLETE="$CORE_COMPLETE" \
+        PATH="$WORK/stub:$PATH" \
         "$@" sh "$BARRIER" >/dev/null 2>&1 && RC=0 || RC=$?
     ELAPSED=$(( $(date +%s) - _start ))
 }
@@ -224,6 +247,49 @@ BARRIER_HOME="$BROKENHOME"
 run_barrier env GATHERD_AWAIT_ASYNC_TIMEOUT=3
 BARRIER_HOME="$HOMEDIR"
 assert "a non-executable gatherd-needs-run still waits (${ELAPSED}s)" "$ELAPSED" -ge 2
+assert "and exits 0 (rc=$RC)" "$RC" -eq 0
+
+# 14. The converged path is every login after the first. A notification there
+# would be a popup at every single login, which is worse than the silence this
+# change removes.
+rm -f "$STAMP"
+printf '%s\n' "$HEAD" > "$SENTINEL"
+run_barrier env
+assert "says nothing when it returns at once ($(notify_lines) calls)" "$(notify_lines)" -eq 0
+
+# 15. Running out the bound releases the cohort in front of a machine that may
+# still be installing. Before this change that happened in total silence, which
+# is also where `git pull` + logout/login with no reboot lands: async already ran
+# to completion this boot at the old HEAD, so no fresh sentinel or stamp is ever
+# coming and the wait can only end here.
+printf '%s\n' 0000000000000000000000000000000000000000 > "$SENTINEL"
+rm -f "$STAMP"
+run_barrier env GATHERD_AWAIT_ASYNC_TIMEOUT=3
+assert "announces the expiry ($(notify_grep 'timed out') calls)" "$(notify_grep 'timed out')" -eq 1
+assert "and still exits 0 (rc=$RC)" "$RC" -eq 0
+
+# 16. And a wait that is merely long says so once, well before the bound -- the
+# whole point being to explain an empty session while it is still happening.
+release_stamp_after 6
+run_barrier env GATHERD_AWAIT_ASYNC_TIMEOUT=60 GATHERD_AWAIT_ASYNC_NOTIFY_AFTER=2
+wait
+assert "announces a long wait ($(notify_grep 'Setting up') calls)" "$(notify_grep 'Setting up')" -eq 1
+assert "exactly once ($(notify_lines) calls)" "$(notify_lines)" -eq 1
+assert "and not as an expiry ($(notify_grep 'timed out') calls)" "$(notify_grep 'timed out')" -eq 0
+assert "and exits 0 (rc=$RC)" "$RC" -eq 0
+
+# 17. notify-send is guarded, not depended on: a machine without libnotify must
+# get the same wait and the same exit 0. PATH here holds only the tools the
+# barrier and gatherd-needs-run actually reach for.
+MINPATH="$WORK/minpath"
+mkdir -p "$MINPATH"
+for _t in sh date sleep sed git head; do
+    ln -sf "$(command -v "$_t")" "$MINPATH/$_t"
+done
+printf '%s\n' 0000000000000000000000000000000000000000 > "$SENTINEL"
+rm -f "$STAMP"
+run_barrier env PATH="$MINPATH" GATHERD_AWAIT_ASYNC_TIMEOUT=3
+assert "waits out the bound with no notify-send (${ELAPSED}s)" "$ELAPSED" -ge 2
 assert "and exits 0 (rc=$RC)" "$RC" -eq 0
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

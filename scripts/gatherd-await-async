@@ -28,6 +28,9 @@
 # runner blocked before the playbook. Reading gatherd's own files instead is both
 # correct and one less thing the Artix/s6 rebase has to answer.
 #
+# Not silent. A wait long enough to notice, and an expiry, each say so once via
+# notify-send -- see announce() below.
+#
 # Always exits 0. It is a wait, not a predicate -- a helper must never be
 # suppressed because the barrier itself could not decide.
 set -u
@@ -44,6 +47,20 @@ core_marker="${GATHERD_CORE_MARKER:-/etc/gatherd/last-run}"
 core_complete="${GATHERD_CORE_COMPLETE:-/etc/gatherd/core-complete}"
 stamp="${sentinel}-finished"
 
+# Spec section 6's principle, applied to this file: a helper that cannot do its
+# job at the moment it is asked to must say so. Waiting minutes in silence is the
+# same empty session the cohort fix exists to remove, only with the barrier as
+# its cause instead of a lost helper.
+#
+# Guarded because the barrier must still always exit 0: libnotify is in
+# tests/base-manifest.txt and gatherd-prompt-lastrun already notifies at login,
+# so the path exists at the first login, but a notify-send that is missing or
+# fails must cost the cohort nothing.
+announce() {
+    command -v notify-send >/dev/null 2>&1 || return 0
+    notify-send "$@" >/dev/null 2>&1 || true
+}
+
 # Freshness, not existence. site-async.yml overwrites the sentinel at the end of
 # a run and never removes it at the start, so after a `git pull` the file is
 # still on disk holding the OLD commit while REST re-runs the whole tier. A test
@@ -59,12 +76,20 @@ current() {
     [ "$?" -eq 1 ]
 }
 
-# A bound, so a hung run cannot hold the cohort for a whole session. Validated
-# rather than trusted: `$(( ${VAR:-3600} ))` on a non-numeric value throws under
-# `set -u`, which would break the always-exit-0 invariant this file states twice.
-timeout=${GATHERD_AWAIT_ASYNC_TIMEOUT:-3600}
+# A bound, so a hung run cannot hold the cohort for a whole session. Two hours
+# rather than a tight fit around the one measured run: expiry releases the cohort
+# into an install that is still going, so the cost of a bound that is too short
+# is the exact failure this file exists to prevent, while the cost of one that is
+# too long is a wait the human can now see (announce() above). The header's
+# measured run wrote its sentinel at 11:49:44, about 16 minutes after the
+# 11:33:55 session start; a slower machine or a big AUR compile has room here.
+#
+# Validated rather than trusted: `$(( ${VAR:-7200} ))` on a non-numeric value
+# throws under `set -u`, which would break the always-exit-0 invariant this file
+# states twice.
+timeout=${GATHERD_AWAIT_ASYNC_TIMEOUT:-7200}
 case "$timeout" in
-'' | *[!0-9]*) timeout=3600 ;;
+'' | *[!0-9]*) timeout=7200 ;;
 esac
 
 # All-digit is not the same as safe. A leading zero makes `$(( ))` read the rest
@@ -98,7 +123,25 @@ case "$timeout" in
 *) timeout=$max_timeout ;;
 esac
 
-deadline=$(( $(date +%s) + timeout ))
+# How long a wait has to last before it is worth interrupting the human about.
+# Short enough to explain an empty session, long enough that a converged machine
+# -- which returns from the loop below on its first pass -- never sees it.
+# Overridable only so both notifications can be exercised in tests, the same
+# reason the bound above is.
+#
+# Unlike the bound, this value is only ever compared with `[ -ge ]` and never fed
+# to `$(( ))`, so neither the octal reading nor the overflow the sanitizers above
+# exist for can reach it: measured under this machine's /bin/sh (bash),
+# `[ 30 -ge 08 ]` is true and `[ 30 -ge 9223372036854775807 ]` is false, and
+# neither errors. Non-digits still would, so those are still rejected.
+notify_after=${GATHERD_AWAIT_ASYNC_NOTIFY_AFTER:-20}
+case "$notify_after" in
+'' | *[!0-9]*) notify_after=20 ;;
+esac
+
+started=$(date +%s)
+deadline=$(( started + timeout ))
+announced=no
 
 while :; do
     # The run converged at this commit.
@@ -135,7 +178,32 @@ while :; do
         [ "$status" != ok ] && break
     fi
 
-    [ "$(date +%s)" -lt "$deadline" ] || break
+    now=$(date +%s)
+
+    # Expiry is a real outcome, not a formality: the cohort is about to start
+    # against a machine that may still be installing its subjects. Say so.
+    #
+    # It is also where `git pull` + logout/login with no reboot lands --
+    # gatherd-async.service already ran to completion this boot at the old HEAD,
+    # so nothing will write a fresh sentinel or stamp until the next boot and the
+    # wait can only ever end here. Telling that state apart from "REST is about
+    # to run" needs unit state, which this file deliberately does not consult
+    # (see the systemctl note in the header), so the honest answer is to make the
+    # wait visible rather than to guess at its cause.
+    if [ "$now" -ge "$deadline" ]; then
+        announce --urgency=critical --icon=dialog-warning \
+            "Desktop setup wait timed out" \
+            "gatherd background setup has not finished. Starting the session helpers anyway -- some may be missing until the next login."
+        break
+    fi
+
+    if [ "$announced" = no ] && [ "$(( now - started ))" -ge "$notify_after" ]; then
+        announced=yes
+        announce --icon=system-run \
+            "Setting up this machine" \
+            "Waiting for gatherd background setup to finish before starting the desktop session helpers."
+    fi
+
     sleep 2
 done
 

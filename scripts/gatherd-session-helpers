@@ -60,7 +60,7 @@ for _pid in $(pgrep -f "$bin/gatherd-" 2>/dev/null); do
         # gatherd-show-slow-progress still needs sparing: it is a
         # current-session sibling sway `exec` in its own process group, and
         # its `foot` wrapper's cmdline matches the glob above. It
-        # self-terminates once async-complete exists, so a prior session
+        # self-terminates once async-complete is current, so a prior session
         # never leaves a stale one.
         *gatherd-show-slow-progress*) continue ;;
     esac

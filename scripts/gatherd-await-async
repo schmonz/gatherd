@@ -54,11 +54,33 @@ stamp="${sentinel}-finished"
 #
 # Guarded because the barrier must still always exit 0: libnotify is in
 # tests/base-manifest.txt and gatherd-prompt-lastrun already notifies at login,
-# so the path exists at the first login, but a notify-send that is missing or
-# fails must cost the cohort nothing.
+# so the path exists at the first login, but a notify-send that is missing, that
+# fails, or that never returns must cost the cohort nothing.
+#
+# That last one is why the call is bounded. notify-send has no timeout of its
+# own, and it can block indefinitely: measured on this machine against a unix
+# socket that accepts the connection and then never speaks,
+# `DBUS_SESSION_BUS_ADDRESS=unix:path=... notify-send x y` was still running
+# when a `timeout 30` killed it (rc=124, 30006ms). It hangs in the D-Bus auth
+# handshake, before any method call is made, so GDBus's own 25s call timeout
+# never applies. announce() runs on the barrier's only thread, so a hang here
+# holds the session cohort for the whole login -- the exact failure this file
+# exists to prevent, reintroduced by the notification added to explain it.
+#
+# The realistic neighbours all return at once and need no bound: measured,
+# unsetting DBUS_SESSION_BUS_ADDRESS gives rc=0 in 16ms and pointing it at a
+# path nothing is listening on gives rc=1 in 10ms. Only the half-open bus hangs.
+#
+# When `timeout` is absent the notification is dropped rather than made
+# unbounded: this function has one hard requirement (cost the cohort nothing)
+# and one soft one (say something), and only the hard one is worth an unbounded
+# call. The branch is unreachable in practice anyway -- `timeout` and the
+# `date` this script already calls unconditionally are the same coreutils, which
+# is in tests/base-manifest.txt.
 announce() {
     command -v notify-send >/dev/null 2>&1 || return 0
-    notify-send "$@" >/dev/null 2>&1 || true
+    command -v timeout >/dev/null 2>&1 || return 0
+    timeout 5 notify-send "$@" >/dev/null 2>&1 || true
 }
 
 # Freshness, not existence. site-async.yml overwrites the sentinel at the end of

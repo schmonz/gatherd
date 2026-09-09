@@ -411,8 +411,14 @@ section_sonames() {
         # Exit 2 is not exit 0. A check that could not look at the machine has
         # not said the machine is fine, and saying nothing here would be the
         # silent skip gatherd-assert-sonames refuses to make about itself.
-        set -- "${_mark}packages nothing has checked: $(head -1 "$_why"). Until\
- that is fixed, nothing here says this machine can start what it installed."
+        # A reason is not guaranteed: exit 2 with nothing on stderr would
+        # otherwise leave the bullet reading "... nothing has checked: ." The
+        # script that produces it always says why, so this is the belt to that
+        # brace rather than an observed state.
+        _why1=$(head -1 "$_why")
+        set -- "${_mark}packages nothing has checked: ${_why1:-the check gave no\
+ reason}. Until that is fixed, nothing here says this machine can start what it\
+ installed."
     fi
     rm -f "$_tsv" "$_why"
 

@@ -70,6 +70,8 @@ case "$(cat "$GATHERD_TEST_SONAMES" 2>/dev/null)" in
     cannot)
         echo 'gatherd-assert-sonames: no sync database for [gatherd-aur]; run pacman -Sy' >&2
         exit 2 ;;
+    mute)
+        exit 2 ;;
     *)
         [ "${1:-}" = --tsv ] || echo '28 package(s), 77 executable(s): every soname resolves.'
         exit 0 ;;
@@ -195,6 +197,13 @@ refute "says nothing when every soname resolves" grep -q '^# Libraries$' "$OUT"
 rm -f "$OUT"; sonames cannot; generate
 assert "says so when the check could not run" grep -q '^# Libraries$' "$OUT"
 assert "quoting the reason it could not"      has 'run pacman -Sy'
+
+# 11a. Could not run, and would not say why. The real script always says; this
+#      pins that the bullet stays a sentence if one ever does not, rather than
+#      degrading to "packages nothing has checked: ."
+rm -f "$OUT"; sonames mute; generate
+assert "still says the machine went unchecked" grep -q '^# Libraries$' "$OUT"
+refute "without an empty reason where a reason goes" has 'has checked: .'
 
 # 12. A machine that has not converged is not a machine with an answer. REST
 #     builds the AUR packages this asks about, so before it finishes there is

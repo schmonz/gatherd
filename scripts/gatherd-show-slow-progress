@@ -8,21 +8,39 @@
 # The outer instance gates, then re-execs itself inside foot only when there is
 # work to show; the inner instance (env flag set) skips the gate and displays.
 #
-# Pass --demo to bypass the async-complete gate so both display paths (in-place
-# tail in a foot tab, foot window otherwise) can be exercised on an already-
-# converged machine; the loop below then exits at once and reports completion.
+# Pass --demo to bypass the gate so both display paths (in-place tail in a foot
+# tab, foot window otherwise) can be exercised on an already-converged machine;
+# the loop below then exits at once and reports completion.
+
+# Overridable only so the gate can be pointed at a sandbox, the same reason
+# gatherd-await-async takes them.
+gatherd_home="${GATHERD_HOME:-/usr/local/lib/gatherd}"
+sentinel="${GATHERD_ASYNC_SENTINEL:-/etc/gatherd/async-complete}"
+
+# Freshness of the sentinel, not its existence, and via the same helper
+# gatherd-await-async uses. site-async.yml overwrites the sentinel at the end of
+# a run and never removes it at the start, so after a `git pull` the file is
+# still on disk holding the OLD commit while REST re-runs every tier. The two
+# consumers have to agree about that file: the barrier holds the session cohort
+# for the whole re-run, so a window that reads the stale file as "done" leaves
+# the human several minutes of empty session with nothing on screen explaining
+# it -- the same harm, relocated.
+#
+# Only exit 1 means converged, matching the barrier: a missing script exits 127
+# and a non-executable one 126, and reading either as converged would silently
+# turn the gate into "never show anything".
+converged() {
+    "$gatherd_home/scripts/gatherd-needs-run" "$sentinel"
+    [ "$?" -eq 1 ]
+}
 
 if [ -z "${GATHERD_SLOW_PROGRESS_TERM:-}" ]; then
-    # The async-complete sentinel is the whole gate: it is absent only on the
-    # first boot while slow packages are still pending or installing, and present
-    # forever after. So its absence means "there is work to watch" — show
-    # progress; its presence means "done" — stay silent, no flash on later
-    # logins. We deliberately do NOT also probe gatherd-async.service state:
-    # at autostart time that service may not have reached 'active' yet, so gating
-    # on it raced the window away before async came up. Waiting for the sentinel
-    # in the loop below is race-free and keeps this decision init-agnostic.
+    # We deliberately do NOT also probe gatherd-async.service state: at autostart
+    # time that service may not have reached 'active' yet, so gating on it raced
+    # the window away before async came up. Waiting on the sentinel in the loop
+    # below is race-free and keeps this decision init-agnostic.
     if [ "${1:-}" != "--demo" ]; then
-        [ -f /etc/gatherd/async-complete ] && exit 0
+        converged && exit 0
     fi
 
     # Display in-place only when stdout is a pseudo-terminal — i.e. the user ran
@@ -45,7 +63,7 @@ echo ""
 journalctl -fn 50 -u gatherd-async.service &
 jctl_pid=$!
 
-while [ ! -f /etc/gatherd/async-complete ]; do
+while ! converged; do
     systemctl is-failed --quiet gatherd-async.service && break
     sleep 2
 done
@@ -56,7 +74,7 @@ wait "$jctl_pid" 2>/dev/null
 
 echo ""
 echo "----------------------------------------"
-if [ -f /etc/gatherd/async-complete ]; then
+if converged; then
     echo "Installation complete."
 else
     echo "Installation failed."

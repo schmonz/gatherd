@@ -146,8 +146,17 @@ rest_packages:
   - xcb-util-keysyms       # jetbrains-toolbox, zoom
   - noto-fonts             # koreader-bin
   - ttf-droid              # koreader-bin
+  # localsend-bin's depends stops at libayatana-appindicator, which does not
+  # depend on either of these. /opt/localsend/lib/libtray_manager_plugin.so is a
+  # DT_NEEDED of /opt/localsend/localsend -- loaded at startup, not dlopen'd --
+  # and links libayatana-indicator3.so.7 and libayatana-ido3-0.4.so.0 as well, so
+  # without them LocalSend dies before its window appears. libayatana-indicator
+  # does depend on ayatana-ido, but this file is DECLARED-not-PRESENT: a
+  # dependency we lean on transitively is one nobody promised us.
+  - ayatana-ido            # localsend-bin
   - fuse2                  # localsend-bin
   - libayatana-appindicator  # localsend-bin
+  - libayatana-indicator   # localsend-bin
   - xdg-user-dirs          # localsend-bin
   - python-setuptools      # open-fprintd, python-validity
   - zip                    # piavpn-bin

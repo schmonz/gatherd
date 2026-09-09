@@ -157,10 +157,12 @@ def timeout_seconds():
     declares a dependency it does not install; a typo in a shell variable is not
     that.
 
-    Non-positive is refused rather than left to the bound itself: 0 and -5 do
-    reach exit 2 today, but only by timing every request out at once -- the
-    right verdict for the wrong reason, and one that depends on which bound is
-    in use. NaN fails the comparison and lands here too.
+    Non-positive is refused here rather than left to the bound itself, because
+    the two disagree about what it means. subprocess.run(timeout=0) timed
+    everything out at once, so 0 reached exit 2 for the wrong reason but the
+    right verdict; `timeout 0` means NO timeout at all, so the same value would
+    now buy back the unbounded wait this bound exists to prevent. NaN fails the
+    comparison and lands here too.
     """
     try:
         seconds = float(TIMEOUT_RAW)
@@ -182,13 +184,30 @@ def bare(dep):
 
 def run(argv):
     seconds = timeout_seconds()
+    # Bounded by timeout(1) rather than by subprocess.run(timeout=), which is
+    # what scripts/gatherd-assert-aur-deps already does one file over. The
+    # difference is the process group: `aur query` shells out to
+    # `curl -A aurutils -fgLsSq` with neither --max-time nor --connect-timeout
+    # (AUR/Query.pm), and killing `aur` only closes the pipe -- the curl is a
+    # grandchild and outlives it, immortal against a server that accepts the
+    # connection and then says nothing. Measured against exactly that socket:
+    #
+    #     subprocess.run(['aur','query',...], timeout=3)   -> 1 curl still alive
+    #     timeout 3 aur query ...                          -> 0, rc=124
+    #
+    # timeout(1) signals the whole process group, so the curl goes with it.
+    if not shutil.which('timeout'):
+        raise CannotRun('timeout(1) is not installed (pacman -S coreutils)')
     try:
-        out = subprocess.run(argv, capture_output=True, text=True, timeout=seconds)
+        out = subprocess.run(['timeout', f'{seconds:g}', *argv],
+                             capture_output=True, text=True, timeout=seconds + 10)
     except subprocess.TimeoutExpired:
-        # Prompt, because killing `aur` closes the pipe read here. The curl it
-        # spawned is a grandchild and survives that kill -- measured, one was
-        # still holding the dead connection after this returned -- so a run cut
-        # short this way leaves one behind.
+        # timeout(1) itself not returning is not a case anything has produced;
+        # the outer bound is here so a hang has nowhere left to hide.
+        raise CannotRun(f'{argv[0]} did not answer within {seconds:g}s')
+    # 124 is timeout(1)'s documented "the command timed out". Nothing run
+    # through here exits 124 of its own accord.
+    if out.returncode == 124:
         raise CannotRun(f'{argv[0]} did not answer within {seconds:g}s')
     if out.returncode:
         raise CannotRun(f'{argv[0]} failed: {(out.stderr or out.stdout).strip()}')

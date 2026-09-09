@@ -306,6 +306,23 @@ assert_says "the RPC timeout says what did not answer" "did not answer within"
 stub "a cgit that never answers exits 2" 2 cgithang
 assert_says "the cgit timeout is weather, not a missing package" "cannot read .SRCINFO"
 
+# 16. And nothing still holding the dead connection afterwards. `aur query`
+#     shells out to `curl -A aurutils -fgLsSq` with neither --max-time nor
+#     --connect-timeout, so the curl is a grandchild that outlives its parent:
+#     measured against this same never-answering socket,
+#     subprocess.run(['aur','query',...], timeout=3) left one curl alive two
+#     seconds later and `timeout 3 aur query` left none, because timeout(1)
+#     signals the process group. Case 15 above just timed one out, so a leak
+#     shows up right here.
+sleep 1
+_leaked=$(pgrep -f "curl -A aurutils.*${STUB_URL#http://}" | wc -l)
+if [ "$_leaked" -eq 0 ]; then
+    ok "a timed-out RPC leaves no curl behind"
+else
+    bad "a timed-out RPC left $_leaked curl(s) holding the dead connection"
+    pgrep -af "curl -A aurutils.*${STUB_URL#http://}" | sed 's/^/       /'
+fi
+
 STUB_TIMEOUT=30
 
 kill "$STUB_PID" 2>/dev/null || :
@@ -317,7 +334,7 @@ kill "$STUB_PID" 2>/dev/null || :
 #     declares a dependency it does not install", sending a committer hunting a
 #     violation that is not there. `0` and `-5` are here because they must not
 #     become permissive: `timeout 0` means no timeout at all, so the value that
-#     used to fail closed would stop failing closed under a different bound.
+#     used to fail closed would otherwise buy back the unbounded wait.
 #     No stub needed: none of these reaches the network.
 for _bad in abc '' 0 -5; do
     if GATHERD_AUR_TIMEOUT="$_bad" "$GATE" "$WORK/repo" >"$WORK/out" 2>&1; then

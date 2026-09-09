@@ -75,7 +75,11 @@ cannot() {
 
 repo=${GATHERD_AUR_REPO:-gatherd-aur}
 
-for tool in pacman readelf ldd readlink; do
+# xargs and awk are as load-bearing as readelf: the pipeline below is the only
+# thing that finds executables, and without either of them it prints nothing,
+# which reads as "these packages ship nothing you can run" rather than as a
+# broken check.
+for tool in pacman readelf ldd readlink xargs awk; do
     command -v "$tool" >/dev/null 2>&1 || cannot "$tool is not installed"
 done
 
@@ -140,8 +144,14 @@ while IFS= read -r pkg; do
     while IFS= read -r exe; do
         [ -n "$exe" ] || continue
         executables=$((executables + 1))
-        ldd "$exe" 2>/dev/null |
-            sed -n 's/^[[:space:]]*\(.*\) => not found$/\1/p' |
+        # ldd's status as well as its output. Measured on this machine, ldd
+        # exits 0 whether or not it resolves everything -- rc=0 on /bin/ls and
+        # rc=0 on /opt/localsend/localsend, which cannot find two sonames -- so
+        # a non-zero exit is ldd declining to answer at all, and an unanswered
+        # question prints exactly what a clean one does.
+        ldd "$exe" > "$WORK/ldd" 2>/dev/null ||
+            cannot "ldd $exe failed; the loader could not answer for it"
+        sed -n 's/^[[:space:]]*\(.*\) => not found$/\1/p' "$WORK/ldd" |
             while IFS= read -r soname; do
                 grep -qxF "$soname" "$WORK/shipped" && continue
                 printf '%s\t%s\t%s\n' "$pkg" "$exe" "$soname"
@@ -150,6 +160,25 @@ while IFS= read -r pkg; do
 done < "$WORK/packages"
 
 packages=$(wc -l < "$WORK/packages")
+
+# The other half of the never-a-silent-skip rule above, and the half that was
+# missing. Zero executables across a non-empty package set does not mean those
+# packages ship nothing runnable; it means the readelf pipeline stopped
+# producing answers. Measured on the machine this was written on, with
+# /usr/bin/eu-readelf (elfutils, already installed here, and a readelf a PATH
+# can legitimately find first) shimmed in as `readelf`:
+#
+#     $ scripts/gatherd-assert-sonames                  -> exit 1, names LocalSend
+#     $ PATH=<eu-readelf shim>:$PATH  same script       -> exit 0,
+#           "28 package(s), 0 executable(s): every soname resolves."
+#
+# eu-readelf prints "[Requesting program interpreter: ...]" with no "File:"
+# header, so the awk above has nothing to attribute and yields nothing. An
+# xargs without -d (the BSD and busybox shape) goes silent the same way. The
+# tool loop cannot catch either: both tools are present and both are readelf
+# and xargs.
+[ "$executables" -gt 0 ] || cannot \
+    "found no executables among $packages package(s): is readelf GNU's, and does xargs take -d?"
 
 if [ -s "$WORK/findings" ]; then
     echo "Installed by gatherd, and unable to load a library it links against:" >&2

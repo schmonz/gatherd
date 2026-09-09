@@ -228,5 +228,83 @@ assert_rc "a missing tool exits 2" 2 \
     env PATH="$WORK/shim" GATHERD_TEST_DB="$CLEAN" "$CHECK"
 assert_says "and names the tool" 'readelf is not installed'
 
+# A PATH holding exactly what the check shells out to, so a tool can be taken
+# away one at a time. Every name here appears in the script; ldd is a bash
+# script and readelf is not, which is why both are copied rather than assumed.
+mkdir -p "$WORK/tools"
+cp "$WORK/shim/pacman" "$WORK/tools/pacman"
+for _t in readelf ldd readlink xargs awk sort comm grep sed wc cat mktemp rm sh bash; do
+    _p=$(command -v "$_t") || { echo "tests/assert-sonames: $_t is not installed" >&2; exit 2; }
+    ln -sf "$_p" "$WORK/tools/$_t"
+done
+
+only_tools() {  # only_tools <db directory> -- nothing on PATH but $WORK/tools
+    env -i PATH="$WORK/tools" HOME="$HOME" GATHERD_TEST_DB="$1" sh "$CHECK"
+}
+
+# 11. The curated PATH is a fixture too: if it did not suffice, cases 12-13
+#     would exit 2 for a reason that has nothing to do with the tool removed.
+assert_rc "the curated tool PATH runs the check unchanged" 1 only_tools "$BROKEN"
+assert_says "and reaches the same finding" 'libgatherdmissing.so.1'
+
+# 12. xargs and awk are as load-bearing as readelf: the pipeline that finds
+#     executables is silent without either, and silence reads as "this package
+#     ships nothing you can run".
+for _t in xargs awk; do
+    mv "$WORK/tools/$_t" "$WORK/$_t.away"
+    assert_rc "a missing $_t exits 2" 2 only_tools "$BROKEN"
+    assert_says "and names $_t" "$_t is not installed"
+    mv "$WORK/$_t.away" "$WORK/tools/$_t"
+done
+
+# 13. A readelf that prints no "File:" header. Not hypothetical: /usr/bin/eu-readelf
+#     from elfutils is a readelf a machine can have first on PATH, and it prints
+#     "[Requesting program interpreter: ...]" with no header to attribute it to,
+#     so the awk yields nothing for every package. Measured on the machine this
+#     was written on, before the guard existed:
+#         $ PATH=<eu-readelf shim>:$PATH scripts/gatherd-assert-sonames
+#         28 package(s), 0 executable(s): every soname resolves.   (exit 0)
+#     while the same command with GNU readelf exited 1 naming LocalSend.
+rm -f "$WORK/tools/readelf"
+cat > "$WORK/tools/readelf" <<SHIM
+#!/bin/sh
+for f; do
+    case \$f in -*|/dev/null) continue ;; esac
+    $(command -v readelf) -W -l "\$f" 2>/dev/null | grep 'Requesting program interpreter'
+done
+SHIM
+chmod +x "$WORK/tools/readelf"
+assert_rc "a readelf that prints no File: header exits 2" 2 only_tools "$BROKEN"
+assert_says "and says it found no executables" 'found no executables'
+ln -sf "$(command -v readelf)" "$WORK/tools/readelf"
+
+# 14. An xargs that rejects -d, which is the BSD and busybox shape. Same silence
+#     as case 13, reached a different way, and the tool loop cannot see it.
+rm -f "$WORK/tools/xargs"
+cat > "$WORK/tools/xargs" <<SHIM
+#!/bin/sh
+case " \$* " in *" -d "*) echo 'xargs: illegal option -- d' >&2; exit 1 ;; esac
+exec $(command -v xargs) "\$@"
+SHIM
+chmod +x "$WORK/tools/xargs"
+assert_rc "an xargs that rejects -d exits 2" 2 only_tools "$BROKEN"
+assert_says "and says it found no executables too" 'found no executables'
+ln -sf "$(command -v xargs)" "$WORK/tools/xargs"
+
+# 15. An ldd that will not answer. Measured: real ldd exits 0 whether or not it
+#     resolves everything (rc=0 on /opt/localsend/localsend, which cannot find
+#     two sonames), so a non-zero exit is the loader declining to answer -- and
+#     an unanswered question printing nothing looks exactly like a clean one.
+rm -f "$WORK/tools/ldd"
+cat > "$WORK/tools/ldd" <<'SHIM'
+#!/bin/sh
+echo 'ldd: exited with unknown exit code (139)' >&2
+exit 1
+SHIM
+chmod +x "$WORK/tools/ldd"
+assert_rc "an ldd that will not answer exits 2" 2 only_tools "$BROKEN"
+assert_says "and names the executable it could not answer for" 'ldd .* failed'
+ln -sf "$(command -v ldd)" "$WORK/tools/ldd"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

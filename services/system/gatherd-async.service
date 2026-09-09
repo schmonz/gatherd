@@ -4,9 +4,11 @@ After=network-online.target nss-lookup.target gatherd.service
 Wants=network-online.target nss-lookup.target
 
 [Service]
-# Type=simple, not oneshot: the script blocks waiting for the vault password to
-# appear, so the unit stays cleanly "active (running)" while it waits rather
-# than "activating" against a start timeout. It runs once per boot — there is no
+# Type=simple, not oneshot: the script blocks waiting for CORE to finish before
+# it runs the play, so the unit stays cleanly "active (running)" while it waits
+# rather than "activating" against a start timeout. It no longer waits for the
+# vault password — site-async.yml reads nothing from the vault, and this unit
+# passes no --needs-vault. It runs once per boot — there is no
 # path watcher to re-fire it, so no start-limit loop. The wait, the needs-run
 # check, the galaxy install and the sleep inhibit all live in the script, which
 # keeps this unit portable to non-systemd inits.

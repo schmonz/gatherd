@@ -108,7 +108,11 @@ start_when() {
     sh -c '
         # Overridable only so the expiry path can be exercised in tests --
         # same idiom as GATHERD_AWAIT_ASYNC_TIMEOUT in gatherd-await-async.
-        # 1800 iterations * the 2s sleep below = 3600s, matching that bound.
+        # 1800 iterations * the 2s sleep below = 3600s. A bound of its own,
+        # not a copy of the barrier bound: this waits for one package, and in
+        # the measured run nowayprompt was installed at 11:37:48, about four
+        # minutes after the 11:33:55 session start, where the barrier waits for
+        # the whole tier.
         _bound=${GATHERD_START_WHEN_TIMEOUT:-1800}
         case "$_bound" in
         "" | *[!0-9]*) _bound=1800 ;;
@@ -134,10 +138,10 @@ start_now "/usr/lib/xdg-desktop-portal"  # needs: xdg-desktop-portal
 # A watcher, not a probe, so it is immediate even though captive-browser itself
 # arrives with REST: what it needs at start is nmcli, and it must already be
 # listening when a portal appears. It cannot actually clear one during a pave --
-# nothing in the base image can, measured -- so today a portal hit during a
-# pave just logs "command not found" to captive-browser.log with nothing shown
-# on screen; a user-visible announcement is a later task's work, not yet built.
-start_now "$bin/gatherd-prompt-captiveportal"  # needs: networkmanager coreutils procps-ng sway
+# nothing in the base image can, measured -- so on a portal hit with no
+# captive-browser installed it logs the detection and raises a critical
+# notification telling the human to clear the portal from another device.
+start_now "$bin/gatherd-prompt-captiveportal"  # needs: networkmanager coreutils procps-ng sway libnotify
 # Reports the CORE run's outcome, which is settled before the greeter appears.
 start_now "$bin/gatherd-prompt-lastrun"  # needs: libnotify coreutils
 

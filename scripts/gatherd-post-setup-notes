@@ -390,6 +390,15 @@ section_sonames() {
     # first pave. Existence rather than freshness (which is what
     # gatherd-show-slow-progress needs): the question is what this machine can
     # load, not whether the repo has moved on since it converged.
+    #
+    # Stricter than "REST has run", and knowingly so: site-async.yml writes
+    # that sentinel only `when: gatherd_failed_tiers | length == 0`, so a
+    # machine where any REST tier failed never reaches this section -- and that
+    # is the machine most likely to hold a half-installed AUR package. It is
+    # also the machine with louder problems: gatherd-async.service is `failed`
+    # and /etc/gatherd/last-run says which tiers, both of which the login path
+    # already reports. A soname finding under a header saying the converge did
+    # not finish would be the small print on the big one.
     _sentinel="${GATHERD_ASYNC_SENTINEL:-/etc/gatherd/async-complete}"
     [ -f "$_sentinel" ] || { prune_derived 'Libraries' "$_mark"; return; }
 

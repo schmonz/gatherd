@@ -2,11 +2,11 @@
 # gatherd-await-and-run — wait for a gatherd play's preconditions, then run it once.
 #
 # Started once at boot by the init system, this blocks until the first-boot
-# gatherd run has finished and a vault password that decrypts the vault is
-# present, then runs the given playbook. The waiting happens inside this one
-# process, so there is no
-# file-watch / path unit to re-fire after the play finishes — which is what
-# used to loop a oneshot into systemd's start limit and leave it 'failed'.
+# gatherd run has finished -- and, only with --needs-vault, until a password that
+# decrypts the vault is also present -- then runs the given playbook. The waiting
+# happens inside this one process, so there is no file-watch / path unit to
+# re-fire after the play finishes — which is what used to loop a oneshot into
+# systemd's start limit and leave it 'failed'.
 #
 # Keeping the logic here (POSIX sh, no init-specific bits) is also what makes
 # the eventual Artix port cheap: a runit/s6/OpenRC run script only has to exec
@@ -43,6 +43,11 @@ complete="${GATHERD_CORE_COMPLETE:-/etc/gatherd/core-complete}"
 # and the sentinel keeps answering the second.
 stamp="${sentinel}-finished"
 
+# HEAD as it stands when the run ENDS, which is not necessarily the HEAD the run
+# used: a `git pull` landing mid-run stamps the new commit as finished by a run
+# of the old tree. site-async.yml's own sentinel post_task has the identical
+# shape, so the stamp and the sentinel at least agree with each other; the next
+# boot's needs-run check is what actually catches up.
 mark_finished() {
     _head=$(git -C "$gatherd_home" -c safe.directory="$gatherd_home" rev-parse HEAD 2>/dev/null) || return 0
     printf '%s\n' "$_head" > "$stamp" 2>/dev/null || true
@@ -88,7 +93,13 @@ fi
 
 # Skip if this play already converged at the deployed git HEAD -- but stamp
 # first, or a machine with nothing to do never releases the cohort.
-if ! "$gatherd_home/scripts/gatherd-needs-run" "$sentinel"; then
+#
+# Only exit 1 means converged, the same rule gatherd-await-async applies to the
+# same helper. A missing script exits 127 and a non-executable one 126, and `!`
+# read either as converged: the play would be skipped AND stamped finished, so
+# the barrier would release the cohort onto a machine that never ran REST at all.
+"$gatherd_home/scripts/gatherd-needs-run" "$sentinel" && needs_run_rc=0 || needs_run_rc=$?
+if [ "$needs_run_rc" -eq 1 ]; then
     mark_finished
     exit 0
 fi

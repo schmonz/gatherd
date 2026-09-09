@@ -7,6 +7,12 @@
 # So REST was hostage to a password it never used, and the in-session prompt that
 # would collect that password renders through nowayprompt, which REST installs.
 #
+# The second thing tested here is the short-circuit that decides a play has
+# already converged. It is load-bearing twice over now: it both skips the play
+# and writes the stamp that releases the session cohort, so reading a broken
+# gatherd-needs-run as "converged" would hand the cohort a machine that never ran
+# REST at all.
+#
 # ansible-playbook is stubbed: these test the gating, not Ansible.
 #
 # Usage: tests/await-and-run
@@ -126,6 +132,30 @@ run_runner "$WORK/etc/async-complete" "$WORK/gatherd/site-async.yml"
 assert "an ansible-galaxy failure writes the stamp" -f "$STAMP"
 assert "and propagates its exit code (rc=$RC)" "$RC" -eq 7
 printf '0\n' > "$WORK/galaxy_rc"
+
+# 7. A gatherd-needs-run that could not run is not a converged machine. It exits
+# 0 for "run needed" and 1 for "converged", so only 1 may short-circuit: a
+# non-executable script exits 126 and a missing one 127, and `! cmd` read both as
+# converged -- skipping the play AND stamping it finished. gatherd-await-async
+# has always applied the exit-1-only rule to the same helper; this is the other
+# caller catching up.
+NEEDS_RUN="$WORK/gatherd/scripts/gatherd-needs-run"
+printf '%s\n' "$HEAD" > "$WORK/etc/async-complete"
+
+chmod 644 "$NEEDS_RUN"
+run_runner "$WORK/etc/async-complete" "$WORK/gatherd/site-async.yml"
+chmod 755 "$NEEDS_RUN"
+assert "a non-executable gatherd-needs-run still runs the play" -f "$WORK/argv"
+
+mv "$NEEDS_RUN" "$WORK/needs-run.hidden"
+run_runner "$WORK/etc/async-complete" "$WORK/gatherd/site-async.yml"
+mv "$WORK/needs-run.hidden" "$NEEDS_RUN"
+assert "a missing gatherd-needs-run still runs the play" -f "$WORK/argv"
+
+# And the converged case itself must keep short-circuiting, or every login pays
+# for a full REST run.
+run_runner "$WORK/etc/async-complete" "$WORK/gatherd/site-async.yml"
+assert "a current sentinel still skips the play" ! -f "$WORK/argv"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

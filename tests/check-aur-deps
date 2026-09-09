@@ -230,13 +230,18 @@ STUB_URL="http://127.0.0.1:$(cat "$WORK/stub-port" 2>/dev/null || echo 1)"
 # `aur query` reads AUR_LOCATION itself and the gate derives its .SRCINFO URL
 # from the same variable, so this points both halves at the stub. A cold cache
 # per case, or a cached .SRCINFO answers instead of the mode under test.
+# `timeout` so a gate that will not give up is a FAILING case rather than a
+# suite that never finishes -- which is the very defect the hang modes below
+# pin. 60s is twice the gate's own default bound, so it can only fire when the
+# bound does not.
 stub() {
     _d=$1; _want=$2; _mode=$3; _absent=${4:-}
     printf '%s' "$_mode" > "$WORK/stub-mode"
     printf '%s' "$_absent" > "$WORK/stub-absent"
     rm -rf "$WORK/stubcache"
     if AUR_LOCATION="$STUB_URL" XDG_CACHE_HOME="$WORK/stubcache" \
-        "$GATE" "$WORK/repo" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+        GATHERD_AUR_TIMEOUT="${STUB_TIMEOUT:-30}" \
+        timeout 60 "$GATE" "$WORK/repo" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
     if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want rc=$_want got rc=$_got)"; sed 's/^/       /' "$WORK/out"; fi
 }
 
@@ -273,6 +278,29 @@ assert_says "the missing target is called a missing target" "no such target"
 
 stub "a cgit 404 exits 1, not 2" 1 cgit404
 assert_says "the 404 says the package is gone" "no such package"
+
+# 15. A server that completes the TCP handshake and then says nothing. That is
+#     a captive portal -- the thing this repo builds captive-browser-git for --
+#     and it is not the same as the refused connection case 11 covers: nothing
+#     ever comes back to react to, so an unbounded client waits for it forever.
+#
+#     Measured before this was bounded, against a socket that accepts and never
+#     answers: the cgit half exited 2 after 31s on urlopen(timeout=30), and the
+#     RPC half never returned at all -- still running when `timeout 90` killed
+#     it, because `aur query` shells out to `curl -A aurutils -fgLsSq` with no
+#     --max-time and the subprocess call had no timeout=. tests/gates runs this
+#     gate live, so tests/gates hung with it instead of exiting 2.
+#
+#     Two seconds rather than the default thirty for the same reason the stub
+#     exists at all: this suite has to reach the branch without waiting out a
+#     real bound.
+STUB_TIMEOUT=2
+stub "an RPC that never answers exits 2" 2 rpchang
+assert_says "the RPC timeout says what did not answer" "did not answer within"
+
+stub "a cgit that never answers exits 2" 2 cgithang
+assert_says "the cgit timeout is weather, not a missing package" "cannot read .SRCINFO"
+STUB_TIMEOUT=30
 
 kill "$STUB_PID" 2>/dev/null
 

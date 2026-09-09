@@ -18,6 +18,7 @@ import json
 import os
 import socketserver
 import sys
+import time
 import urllib.parse
 
 STATE = sys.argv[1]
@@ -29,6 +30,13 @@ STATE = sys.argv[1]
 # rpcjson    HTTP 200 from the RPC carrying aurweb's own JSON error body
 # cgit429    the RPC answers, cgit 429s
 # cgit404    the RPC answers, cgit says the package does not exist
+# rpchang    the RPC accepts the connection and never answers
+# cgithang   the RPC answers, cgit accepts the connection and never answers
+
+# A captive portal completes the TCP handshake and then says nothing, so a
+# client with no timeout waits for it forever. Long enough that a bounded gate
+# always gives up first; the suite kills this server when it is done.
+HANG = 600
 
 
 def state(name, default=''):
@@ -54,6 +62,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         mode = state('stub-mode', 'healthy')
+        if mode == 'rpchang':
+            return time.sleep(HANG)
         length = int(self.headers.get('Content-Length') or 0)
         raw = self.rfile.read(length).decode('utf-8', 'replace')
         if mode == 'rpc429':
@@ -77,6 +87,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         mode = state('stub-mode', 'healthy')
+        if mode == 'cgithang':
+            return time.sleep(HANG)
         if mode == 'cgit429':
             return self.reply(429, 'text/html', b'<html>429 Too Many Requests</html>')
         if mode == 'cgit404':
@@ -89,8 +101,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                    f'pkgbase = {pkgbase}\n\tpkgname = {pkgbase}\n'.encode())
 
 
-class Server(socketserver.TCPServer):
+# Threaded, because the hang modes above park a request handler for ten
+# minutes: on a single-threaded server that request would wedge every case
+# after it. Daemon threads so the parked ones never delay shutdown.
+class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
     def handle_error(self, request, client_address):
         # curl -f aborts the connection the moment it sees a 4xx status, so the

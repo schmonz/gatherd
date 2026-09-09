@@ -82,6 +82,23 @@ AUR_LOCATION = os.environ.get('AUR_LOCATION', 'https://aur.archlinux.org')
 SRCINFO = os.environ.get('AUR_SRCINFO', AUR_LOCATION + '/cgit/aur.git/plain/.SRCINFO?h=') + '{}'
 CANNOT_RUN = 2
 
+# Seconds before either half of the AUR is declared unreachable. One number for
+# both halves, because the header above promises the same verdict for both: a
+# timeout is exit 2, the check could not be run.
+#
+# The RPC half had no bound at all. `aur query` shells out to
+# `curl -A aurutils -fgLsSq` (AUR/Query.pm) with neither --max-time nor
+# --connect-timeout, and run() called subprocess.run without timeout=, so a
+# server that completes the TCP handshake and then says nothing -- a captive
+# portal, the thing this repo builds captive-browser-git for -- was waited on
+# forever. Measured against a socket that accepts and never answers: the cgit
+# half exited 2 in 31s, the RPC half was still running when `timeout 90` killed
+# it. tests/gates runs this gate live, so tests/gates hung with it.
+#
+# Overridable for the same reason AUR_LOCATION is: tests/check-aur-deps has to
+# reach this branch without waiting out the real bound.
+TIMEOUT = float(os.environ.get('GATHERD_AUR_TIMEOUT', 30))
+
 # Repos every gatherd machine has. A developer's extra repos -- gatherd-aur
 # above all, which is full of packages this run is deciding whether to build --
 # must not answer questions about what a fresh machine provides.
@@ -134,7 +151,14 @@ def bare(dep):
 
 
 def run(argv):
-    out = subprocess.run(argv, capture_output=True, text=True)
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        # Prompt, because killing `aur` closes the pipe read here. The curl it
+        # spawned is a grandchild and survives that kill -- measured, one was
+        # still holding the dead connection after this returned -- so a run cut
+        # short this way leaves one behind.
+        raise CannotRun(f'{argv[0]} did not answer within {TIMEOUT:g}s')
     if out.returncode:
         raise CannotRun(f'{argv[0]} failed: {(out.stderr or out.stdout).strip()}')
     return out.stdout
@@ -215,7 +239,7 @@ def fetch_srcinfo(pkgbase, mtime):
         return cached.read_text()
     url = SRCINFO.format(urllib.parse.quote(pkgbase, safe=''))
     try:
-        with urllib.request.urlopen(url, timeout=30) as body:
+        with urllib.request.urlopen(url, timeout=TIMEOUT) as body:
             text = body.read().decode('utf-8', 'replace')
     except urllib.error.HTTPError as failure:
         # 404/410 is cgit saying it has no such repository -- an answer, and the

@@ -1,0 +1,171 @@
+#!/bin/sh
+# Fail when something gatherd built cannot find a library it links against.
+#
+# The bug this exists for, on a freshly paved machine:
+#
+#     $ localsend --hidden
+#     error while loading shared libraries: libayatana-indicator3.so.7: cannot
+#     open shared object file: No such file or directory
+#
+# localsend-bin declares libayatana-appindicator, which IS installed -- but that
+# package does not depend on libayatana-indicator, where those two sonames live,
+# and nothing else pulled it in. The AUR package under-declares what upstream
+# links against, gatherd copied that declaration faithfully into rest_packages,
+# and gatherd-check-aur-deps passed because the declaration it reads IS
+# satisfied. That gate is DECLARED-not-PRESENT by design and reads only the
+# repo, so it cannot see this and never will. Hence a second check on the other
+# side of the boundary: this one reads only the machine, after the converge, and
+# asks the question the dynamic loader asks.
+#
+# WHICH PACKAGES. `pacman -Qmq` is the obvious answer and is the wrong one here.
+# gatherd registers its own build output as a pacman repo ([gatherd-aur],
+# file:///var/cache/gatherd-aur), so everything it builds stops being foreign the
+# moment that repo exists: measured on a converged machine, `pacman -Qmq` names
+# two packages -- aurutils and nowayprompt, the pair bootstrapped before the repo
+# does -- and localsend-bin, the package this check was written for, is not one
+# of them. So the set is the INSTALLED members of that repo plus whatever is
+# still foreign, which together are exactly the packages gatherd built instead of
+# taking from Arch. Official-repo packages are Arch's problem and are already
+# soname-checked by its tooling.
+#
+# WHICH FILES. Executables -- files with a PT_INTERP, the ones you can actually
+# run -- and not every ELF. Measured on this machine, the 28 packages own 512
+# ELFs between which ldd cannot resolve 87 (file, soname) pairs, nearly all of
+# them plugin .so files that are dlopen'd only after whatever they need is
+# already in the process (every JetBrains JRE .so wants libjvm.so; every
+# LocalSend plugin wants libflutter_linux_gtk.so). The 77 files with a
+# PT_INTERP yield 9, which are 7 once the /usr/bin symlinks collapse onto
+# their targets: 5 of zoom's bundled libraries, and the 2 that broke
+# LocalSend. Nothing is lost by narrowing, because ldd walks the transitive
+# graph anyway: /opt/localsend/localsend has libtray_manager_plugin.so as a
+# direct DT_NEEDED, which is how the ayatana pair above is reached -- measured,
+# it is that plugin and not the executable that names both sonames. The symptom
+# being checked is "the program refuses to start", and this is exactly the set
+# of files that can have it.
+#
+# WITH WHAT. ldd, because ldd is the loader. readelf and objdump hand over
+# DT_NEEDED far more cheaply, but acting on it means reimplementing RPATH,
+# RUNPATH with $ORIGIN, LD_LIBRARY_PATH, the ld.so cache and the default search
+# path -- and measured, 32 of the 77 executables here carry an RPATH or RUNPATH,
+# 22 of them $ORIGIN-relative, so a scan that got any of that wrong would be
+# nothing but false positives. readelf still does the cheap half: one bulk
+# invocation per package finds the executables, which on this machine is 0.1s
+# for all 7561 owned files against 8s for the same list through file(1), and
+# ldd then runs 77 times instead of 7561 -- 0.5s against 25s. (Warm page cache
+# both times, so read the ratios rather than the seconds.) The whole check is
+# about a second.
+#
+# A soname the package itself ships under that name is NOT reported. Measured:
+# /opt/zoom/ZoomWebviewHost cannot resolve libcef.so on its own and
+# /opt/zoom/cef/libcef.so is right there; /opt/zoom/zoom cannot resolve
+# libQt6Svg.so.6 and /opt/zoom/Qt/lib/libQt6Svg.so.6 is right there. Both are
+# found at runtime because zoom's launcher builds LD_LIBRARY_PATH before exec'ing
+# them. Telling the operator to install a library the package already carries is
+# how a check like this gets switched off.
+#
+# Usage: gatherd-assert-sonames
+#        exit 0 clean, 1 with the list, 2 if the check could not be run
+
+set -u
+
+cannot() {
+    echo "gatherd-assert-sonames: $1" >&2
+    exit 2
+}
+
+repo=${GATHERD_AUR_REPO:-gatherd-aur}
+
+for tool in pacman readelf ldd readlink; do
+    command -v "$tool" >/dev/null 2>&1 || cannot "$tool is not installed"
+done
+
+WORK=$(mktemp -d) || cannot 'cannot create a temporary directory'
+trap 'rm -rf "$WORK"' EXIT
+
+# Every query lands in a file before anything sorts it. `pacman ... | sort -u`
+# reports sort's status, not pacman's, so a query that failed and printed
+# nothing is indistinguishable from one that matched nothing -- and both of
+# these fail that way: measured, `pacman -Sql no-such-repo` and
+# `pacman -Qlq no-such-pkg` each print to stderr and exit 1.
+pacman -Qq > "$WORK/installed.raw" 2>/dev/null ||
+    cannot 'pacman -Qq failed; is the local database readable?'
+sort -u "$WORK/installed.raw" > "$WORK/installed"
+# Foreign is a legitimate empty set on a machine that has built nothing outside
+# the repo, so an empty answer here is data, not a failure.
+pacman -Qmq 2>/dev/null | sort -u > "$WORK/foreign" || :
+pacman -Sql "$repo" > "$WORK/members.raw" 2>/dev/null ||
+    cannot "no sync database for [$repo]; run pacman -Sy"
+sort -u "$WORK/members.raw" > "$WORK/members"
+
+comm -12 "$WORK/installed" "$WORK/members" > "$WORK/built"
+sort -u "$WORK/built" "$WORK/foreign" > "$WORK/packages"
+
+# Never a silent skip: an empty set on a converged machine means the definition
+# above stopped matching reality (the repo renamed, the db missing, aurutils
+# swapped out), and answering "clean" to that is the failure mode this whole
+# file is a reaction to.
+[ -s "$WORK/packages" ] || cannot \
+    "found no packages to check: nothing installed is in [$repo] and nothing is foreign"
+
+: > "$WORK/findings"
+executables=0
+
+while IFS= read -r pkg; do
+    [ -n "$pkg" ] || continue
+    pacman -Qlq "$pkg" > "$WORK/owned" 2>/dev/null ||
+        cannot "pacman -Qlq $pkg failed"
+    grep -v '/$' "$WORK/owned" > "$WORK/paths" || :
+    [ -s "$WORK/paths" ] || continue
+
+    # /dev/null is a sentinel, not a mistake: readelf only prints its "File:"
+    # headers when it is given more than one argument, so a package that owns
+    # exactly one file would otherwise produce output with nothing to attribute
+    # it to. /dev/null is not an ELF, so it costs one line on stderr and nothing
+    # else.
+    xargs -d '\n' readelf -W -l /dev/null < "$WORK/paths" 2>/dev/null |
+        awk '/^File: /       { file = substr($0, 7) }
+             /Requesting program interpreter/ { print file }' |
+        sort -u > "$WORK/execs"
+    [ -s "$WORK/execs" ] || continue
+
+    # Deduplicated by target, because a package that ships /usr/bin/localsend as
+    # a symlink to /opt/localsend/localsend would otherwise report the same
+    # unresolved sonames twice.
+    while IFS= read -r exe; do
+        readlink -f "$exe" 2>/dev/null
+    done < "$WORK/execs" | sort -u > "$WORK/real"
+
+    sed 's|.*/||' "$WORK/paths" | sort -u > "$WORK/shipped"
+
+    while IFS= read -r exe; do
+        [ -n "$exe" ] || continue
+        executables=$((executables + 1))
+        ldd "$exe" 2>/dev/null |
+            sed -n 's/^[[:space:]]*\(.*\) => not found$/\1/p' |
+            while IFS= read -r soname; do
+                grep -qxF "$soname" "$WORK/shipped" && continue
+                printf '%s\t%s\t%s\n' "$pkg" "$exe" "$soname"
+            done
+    done < "$WORK/real" >> "$WORK/findings"
+done < "$WORK/packages"
+
+packages=$(wc -l < "$WORK/packages")
+
+if [ -s "$WORK/findings" ]; then
+    echo "Installed by gatherd, and unable to load a library it links against:" >&2
+    echo >&2
+    sort -u "$WORK/findings" |
+        awk -F'\t' '
+            $1 != pkg  { pkg = $1; exe = ""; printf "  %s\n", pkg }
+            $2 != exe  { exe = $2; printf "    %s\n", exe }
+                       { printf "      %s\n", $3 }
+        ' >&2
+    echo >&2
+    echo "Each of these is an AUR package under-declaring what upstream links" >&2
+    echo "against. Find the provider -- 'sudo pacman -Fy' once, then" >&2
+    echo "'pacman -F <soname>' -- and declare it in the *_packages var for a tier" >&2
+    echo "that converges BEFORE the build that needs it." >&2
+    exit 1
+fi
+
+echo "$packages package(s), $executables executable(s): every soname resolves."

@@ -12,7 +12,8 @@
 # Excludes the VM suites (tests/test, tests/create-base, tests/measure-migrations):
 # those boot a machine and take minutes. Everything here is seconds.
 #
-# Needs the network and a synced pacman db, because the AUR gates do.
+# Needs the network and a synced pacman db, because the AUR gates do, and a C
+# compiler, because tests/assert-sonames builds the ELFs it checks.
 #
 # Usage: tests/gates
 
@@ -54,9 +55,14 @@ run "$REPO/scripts/gatherd-check-vault-units" "$REPO"
 run "$REPO/scripts/gatherd-check-session-cohort" "$REPO"
 
 printf '\n== unit tests ==\n'
+# assert-sonames is here and not in the block above for the same reason
+# assert-aur-deps is: this file is the static suite, and both of those scripts
+# read the machine rather than the working tree. Their fixtures belong here;
+# their live answers belong where they run -- assert-aur-deps in front of every
+# aur sync, assert-sonames after a converge, from the post-setup verify list.
 for suite in check-package-tiers check-migrations check-aur-deps assert-aur-deps \
-             census-removals migration-checks await-and-run check-vault-units \
-             needs-run await-async check-session-cohort; do
+             assert-sonames census-removals migration-checks await-and-run \
+             check-vault-units needs-run await-async check-session-cohort; do
     [ -x "$REPO/tests/$suite" ] && run "$REPO/tests/$suite"
 done
 

@@ -1,0 +1,232 @@
+#!/bin/sh
+# Unit tests for gatherd-assert-sonames.
+#
+# Everything here is built at test time: three tiny C files, a compiler, and a
+# pacman shim that answers from a fixture directory. Nothing is asked of the
+# machine's own package set, because the two cases that decide whether this
+# check is worth running are states no real machine can be put into on demand --
+# and a suite that only goes green on one converged laptop is a suite nobody
+# can run before committing.
+#
+# The cases that matter are the two ways it could be worse than nothing:
+#
+#   * missing the failure it exists for (an executable that cannot start), and
+#   * crying wolf, which is how a check like this gets switched off. A soname
+#     the package ships itself under a path its launcher puts on
+#     LD_LIBRARY_PATH resolves at runtime and must not be reported (zoom's
+#     libcef.so and libQt6Svg.so.6, on the machine this was written on), and a
+#     plugin .so that is dlopen'd into a process that already has what it needs
+#     must not be walked at all (every LocalSend plugin wants
+#     libflutter_linux_gtk.so).
+#
+# Needs a C compiler. No network. Usage: tests/assert-sonames
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+CHECK="$REPO/scripts/gatherd-assert-sonames"
+PASS=0
+FAIL=0
+
+command -v cc >/dev/null 2>&1 ||
+    { echo 'tests/assert-sonames: cc is not installed' >&2; exit 2; }
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+assert_rc() {
+    _d=$1; _want=$2; shift 2
+    if "$@" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want rc=$_want got rc=$_got)"; sed 's/^/       /' "$WORK/out"; fi
+}
+
+assert_says() {
+    _d=$1; _want=$2
+    if grep -q "$_want" "$WORK/out"; then ok "$_d"; else bad "$_d (no '$_want' in output)"; sed 's/^/       /' "$WORK/out"; fi
+}
+
+assert_silent() {
+    _d=$1; _want=$2
+    if grep -q "$_want" "$WORK/out"; then bad "$_d ('$_want' in output)"; sed 's/^/       /' "$WORK/out"; else ok "$_d"; fi
+}
+
+assert_count() {
+    _d=$1; _want=$2; _pat=$3
+    _got=$(grep -c "$_pat" "$WORK/out" || :)
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want $_want line(s) matching '$_pat', got $_got)"; sed 's/^/       /' "$WORK/out"; fi
+}
+
+# ---------------------------------------------------------------- fixtures
+
+FS=$WORK/fs
+mkdir -p "$FS/hidden" "$FS/clean" "$FS/broken/bin" "$FS/bundled/lib" "$FS/plugin"
+
+echo 'int gatherd_probe(void) { return 0; }'                      > "$WORK/lib.c"
+echo 'int gatherd_probe(void); int main(void) { return gatherd_probe(); }' > "$WORK/user.c"
+echo 'int main(void) { return 0; }'                               > "$WORK/plain.c"
+
+# One library per role, each with a soname nothing on any machine provides, so
+# the loader's answer depends only on where the fixture puts the file.
+#   hidden/  -- built, then never named again: this is the missing one.
+#   bundled/ -- shipped by its package, off the search path, like /opt/zoom/cef.
+build_lib() {  # build_lib <soname> <output directory>
+    cc -shared -fPIC -Wl,-soname,"$1" -o "$2/$1" "$WORK/lib.c"
+    ln -sf "$1" "$2/$(echo "$1" | sed 's/\.so\..*/.so/')"
+}
+build_lib libgatherdmissing.so.1 "$FS/hidden"
+build_lib libgatherdbundled.so.1 "$FS/bundled/lib"
+build_lib libgatherdplugin.so.1  "$FS/hidden"
+
+# No -Wl,-rpath anywhere below: the link finds the library, the loader must not.
+cc -o "$FS/clean/clean" "$WORK/plain.c"
+cc -o "$FS/broken/bin/broken" "$WORK/user.c" -L"$FS/hidden" -lgatherdmissing
+ln -sf "$FS/broken/bin/broken" "$FS/broken/broken-link"
+cc -o "$FS/bundled/bundled" "$WORK/user.c" -L"$FS/bundled/lib" -lgatherdbundled
+cc -o "$FS/plugin/plugin" "$WORK/plain.c"
+cc -shared -fPIC -o "$FS/plugin/libplug.so" "$WORK/lib.c" -L"$FS/hidden" -lgatherdplugin
+
+mkdir -p "$WORK/owned"
+# A trailing-slash line in every list, because pacman -Qlq emits directories and
+# readelf given one would be a stray error with a file name attached to it.
+printf '%s/\n%s\n' "$FS/clean" "$FS/clean/clean" > "$WORK/owned/clean-pkg"
+printf '%s/\n%s\n%s\n' "$FS/broken" "$FS/broken/bin/broken" "$FS/broken/broken-link" > "$WORK/owned/broken-pkg"
+printf '%s/\n%s\n%s\n' "$FS/bundled" "$FS/bundled/bundled" "$FS/bundled/lib/libgatherdbundled.so.1" > "$WORK/owned/bundled-pkg"
+printf '%s/\n%s\n%s\n' "$FS/plugin" "$FS/plugin/plugin" "$FS/plugin/libplug.so" > "$WORK/owned/plugin-pkg"
+
+mkdir -p "$WORK/shim"
+cat > "$WORK/shim/pacman" <<'SHIM'
+#!/bin/sh
+# Answers the four queries gatherd-assert-sonames asks, from $GATHERD_TEST_DB,
+# and exits 1 the way the real pacman does when asked for something it has not
+# got. Measured: `pacman -Sql no-such-repo` and `pacman -Qlq no-such-pkg` both
+# print to stderr and exit 1.
+db=${GATHERD_TEST_DB:?}
+case "$1" in
+    -Qq)  cat "$db/installed" ;;
+    -Qmq) cat "$db/foreign" ;;
+    -Sql) [ -f "$db/members.$2" ] ||
+              { echo "error: repository \"$2\" was not found." >&2; exit 1; }
+          cat "$db/members.$2" ;;
+    -Qlq) [ -f "$db/owned/$2" ] ||
+              { echo "error: package '$2' was not found" >&2; exit 1; }
+          cat "$db/owned/$2" ;;
+    *)    echo "shim pacman: unexpected invocation: $*" >&2; exit 1 ;;
+esac
+SHIM
+chmod +x "$WORK/shim/pacman"
+
+# db <name> [package...] -- every package both installed and a member of the
+# local repo, which is what a package gatherd built looks like once the repo
+# exists. GATHERD_TEST_FOREIGN moves one to the other half of the union.
+db() {
+    _name=$1; shift
+    _dir=$WORK/db-$_name
+    mkdir -p "$_dir/owned"
+    : > "$_dir/installed"; : > "$_dir/foreign"; : > "$_dir/members.gatherd-aur"
+    for _p in "$@"; do
+        echo "$_p" >> "$_dir/installed"
+        case " ${GATHERD_TEST_FOREIGN:-} " in
+            *" $_p "*) echo "$_p" >> "$_dir/foreign" ;;
+            *)         echo "$_p" >> "$_dir/members.gatherd-aur" ;;
+        esac
+        cp "$WORK/owned/$_p" "$_dir/owned/$_p"
+    done
+    printf '%s\n' "$_dir"
+}
+
+check() {  # check <db directory> [environment overrides...]
+    _dbdir=$1; shift
+    env PATH="$WORK/shim:$PATH" GATHERD_TEST_DB="$_dbdir" "$@" "$CHECK"
+}
+
+# The fixtures are only fixtures if they are in the state the cases assume. A
+# toolchain that quietly added a RUNPATH would resolve the two "missing"
+# libraries and leave case 2 asserting nothing at all, from a green run.
+assert_ldd() {  # assert_ldd <description> <missing|quiet> <soname> <file>
+    if ldd "$4" 2>/dev/null | grep -q "^[[:space:]]*$3 => not found$"; then _s=missing; else _s=quiet; fi
+    if [ "$_s" = "$2" ]; then ok "$1"; else bad "$1 (ldd on $4 reports $3 as $_s, wanted $2)"; fi
+}
+
+assert_ldd "the broken fixture cannot resolve its library" missing \
+    libgatherdmissing.so.1 "$FS/broken/bin/broken"
+assert_ldd "the bundled fixture cannot resolve its library either" missing \
+    libgatherdbundled.so.1 "$FS/bundled/bundled"
+assert_ldd "the plugin fixture cannot resolve its library either" missing \
+    libgatherdplugin.so.1 "$FS/plugin/libplug.so"
+assert_ldd "the clean fixture links nothing of the sort" quiet \
+    libgatherdmissing.so.1 "$FS/clean/clean"
+
+assert_interp() {  # assert_interp <description> <count> <file>
+    _got=$(readelf -W -l "$3" 2>/dev/null | grep -c 'Requesting program interpreter' || :)
+    if [ "$_got" = "$2" ]; then ok "$1"; else bad "$1 (got $_got PT_INTERP, wanted $2)"; fi
+}
+
+assert_interp "an executable fixture has a PT_INTERP" 1 "$FS/broken/bin/broken"
+assert_interp "the plugin fixture has none" 0 "$FS/plugin/libplug.so"
+
+# ---------------------------------------------------------------- the cases
+
+# 1. A machine where everything resolves. bundled-pkg and plugin-pkg are in
+#    here deliberately: both would be findings if the two rules below were
+#    dropped, so the clean run is only clean because they hold.
+CLEAN=$(db clean clean-pkg bundled-pkg plugin-pkg)
+assert_rc "a machine with nothing missing exits 0" 0 check "$CLEAN"
+assert_says "it says so, with what it looked at" '3 package(s), 3 executable(s)'
+
+# 2. A soname the package ships itself is resolved at runtime by the launcher's
+#    LD_LIBRARY_PATH. Reporting it would be telling the operator to install a
+#    library that is already on their disk.
+assert_silent "a soname the package ships is not reported" 'libgatherdbundled'
+
+# 3. The plugin .so has no PT_INTERP and is never walked. It links a soname
+#    nothing provides, so if it were walked this would be a finding.
+assert_silent "a plugin .so is not walked" 'libgatherdplugin'
+
+# 4. The failure this exists for: LocalSend's shape, in miniature.
+BROKEN=$(db broken clean-pkg broken-pkg)
+assert_rc "an executable that cannot start exits 1" 1 check "$BROKEN"
+assert_says "the package is named" 'broken-pkg'
+assert_says "the executable is named" "$FS/broken/bin/broken"
+assert_says "the soname is named" 'libgatherdmissing.so.1'
+assert_says "the remediation names the file to edit" '_packages var'
+
+# 5. broken-pkg ships the same executable twice, once through a symlink -- the
+#    /usr/bin/localsend -> /opt/localsend/localsend shape. One finding, not two.
+assert_count "a symlink to a reported executable is not a second finding" 1 'libgatherdmissing.so.1'
+assert_silent "the symlink is not named" 'broken-link'
+
+# 6. The union's other half: aurutils and nowayprompt are built before the local
+#    repo exists, so they are foreign rather than members, and are checked too.
+FOREIGN=$(GATHERD_TEST_FOREIGN=broken-pkg db foreign clean-pkg broken-pkg)
+assert_rc "a foreign package is checked as well" 1 check "$FOREIGN"
+assert_says "the foreign package is named" 'broken-pkg'
+
+# 7. Nothing to check is never "clean": it means the definition of what gatherd
+#    built stopped matching reality, which is the failure this file reacts to.
+EMPTY=$(db empty)
+assert_rc "an empty package set exits 2" 2 check "$EMPTY"
+assert_says "and says the set was empty" 'found no packages to check'
+
+# 8. A repository whose sync database is missing. pacman exits 1 and its answer
+#    is empty; without the check that would look exactly like case 7, which
+#    diagnoses the wrong thing.
+assert_rc "a missing sync database exits 2" 2 check "$CLEAN" GATHERD_AUR_REPO=no-such-repo
+assert_says "and names the repository" 'no sync database for \[no-such-repo\]'
+
+# 9. A package the local database has lost. Same shape, different query.
+LOST=$(db lost clean-pkg)
+rm -f "$LOST/owned/clean-pkg"
+assert_rc "an unlistable package exits 2" 2 check "$LOST"
+assert_says "and names the package" 'pacman -Qlq clean-pkg failed'
+
+# 10. Could not run, in the plainest sense.
+assert_rc "a missing tool exits 2" 2 \
+    env PATH="$WORK/shim" GATHERD_TEST_DB="$CLEAN" "$CHECK"
+assert_says "and names the tool" 'readelf is not installed'
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

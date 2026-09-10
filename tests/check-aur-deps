@@ -347,9 +347,21 @@ kill "$STUB_PID" 2>/dev/null || :
 #     Clamping instead of refusing would be worse than the traceback, for the
 #     reason `0` is here: `timeout inf true` exits 0 on this machine (GNU
 #     coreutils 9.11), and `timeout 1e+09 true` -- the `%g` rendering of 1e9 --
-#     exits 0 too, so either value spends thirty-one years not being a bound.
+#     exits 0 too -- `1e9` is thirty-one years, `inf` is never. 86401 is here
+#     for a different reason: the ceiling is policy, not a limit of the
+#     machinery (subprocess.run takes 86410 fine, and only overflows past
+#     2147483.647), so without a case pinning it, raising CEILING passes every
+#     gate. Measured: CEILING=86410.0 and CEILING=1e8 each left this suite at
+#     76/76 before this line existed.
 #     No stub needed: none of these reaches the network.
-for _bad in abc '' 0 -5 inf 1e9; do
+if GATHERD_AUR_TIMEOUT=86400 "$GATE" "$WORK/repo" >"$WORK/out" 2>&1; then
+    ok "GATHERD_AUR_TIMEOUT=86400 is accepted at the ceiling"
+else
+    bad "GATHERD_AUR_TIMEOUT=86400 exited $?, wanted 0"
+    sed 's/^/       /' "$WORK/out"
+fi
+
+for _bad in abc '' 0 -5 inf 1e9 86401; do
     if GATHERD_AUR_TIMEOUT="$_bad" "$GATE" "$WORK/repo" >"$WORK/out" 2>&1; then
         _got=0
     else

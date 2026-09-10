@@ -61,6 +61,7 @@ Usage: gatherd-check-aur-deps [repo-root]
        exit 0 clean, 1 on violations, 2 if the check could not be run
 """
 import json
+import math
 import os
 import platform
 import re
@@ -101,6 +102,10 @@ CANNOT_RUN = 2
 # outside main()'s handlers, and a bad value came out as a traceback and exit 1
 # -- a committer sent hunting a dependency violation that does not exist.
 TIMEOUT_RAW = os.environ.get('GATHERD_AUR_TIMEOUT', '30')
+
+# A day. Not a limit of the machinery -- see timeout_seconds() -- but the point
+# past which a gate meant to run before a commit has stopped being a gate.
+CEILING = 86400.0
 
 # Repos every gatherd machine has. A developer's extra repos -- gatherd-aur
 # above all, which is full of packages this run is deciding whether to build --
@@ -163,6 +168,27 @@ def timeout_seconds():
     right verdict; `timeout 0` means NO timeout at all, so the same value would
     now buy back the unbounded wait this bound exists to prevent. NaN fails the
     comparison and lands here too.
+
+    CEILING has the same job at the other end, and `timeout 0` is the reason it
+    refuses rather than clamps. Measured on this machine (GNU coreutils 9.11):
+
+        timeout inf true     -> rc=0
+        timeout 1e+09 true   -> rc=0      # the %g rendering of 1e9
+
+    So a value clamped up to infinity, or merely handed on to a wider outer
+    bound, is `timeout 0` again by another spelling. Both also crashed the run
+    before this check existed, because subprocess.run's poll takes integer
+    milliseconds:
+
+        GATHERD_AUR_TIMEOUT=inf -> OverflowError: cannot convert float
+                                   infinity to integer, exit 1
+        GATHERD_AUR_TIMEOUT=1e9 -> OverflowError: timeout is too large, exit 1
+
+    Exit 1 is a violation verdict, which is what this function exists to stop a
+    typo from producing. The day CEILING sits at is not tuned to that overflow
+    -- 86410.0 was measured passing through subprocess.run fine. It is the
+    point past which a pre-commit gate that has not answered is a hang, whether
+    or not the number arithmetic survives.
     """
     try:
         seconds = float(TIMEOUT_RAW)
@@ -173,6 +199,11 @@ def timeout_seconds():
     if not seconds > 0:
         raise CannotRun(
             f'GATHERD_AUR_TIMEOUT must be more than zero seconds: {TIMEOUT_RAW!r}'
+        )
+    if not math.isfinite(seconds) or seconds > CEILING:
+        raise CannotRun(
+            f'GATHERD_AUR_TIMEOUT must be at most {CEILING:g} seconds: '
+            f'{TIMEOUT_RAW!r}'
         )
     return seconds
 

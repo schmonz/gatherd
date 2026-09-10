@@ -335,9 +335,11 @@ ln -sf "$(command -v xargs)" "$WORK/tools/xargs"
 # 15. An ldd that answers for nothing at all. Not the same claim as "a non-zero
 #     ldd means ldd is broken", which was false and which case 18 pins the other
 #     way: this is ldd failing for EVERY executable it is handed. It has to be
-#     exit 2, because `ldd "$exe" > "$WORK/ldd"` truncates the answer file on
-#     redirect before ldd runs, so a failed ldd leaves an empty answer that the
-#     `=> not found` parse reads exactly as it reads a clean one.
+#     exit 2 rather than 1, because rc=1 sends the reader off to declare a
+#     missing provider and there is none to declare -- the tool that would have
+#     named it is the broken thing. Without the guard the run is rc=1 with one
+#     "(ldd would not answer...)" finding per executable, measured; it is the
+#     exit code that is wrong there, not silence.
 rm -f "$WORK/tools/ldd"
 cat > "$WORK/tools/ldd" <<'SHIM'
 #!/bin/sh

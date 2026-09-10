@@ -207,6 +207,7 @@ while IFS= read -r pkg; do
         # program stops at execve. Measured, `./prog` built against a
         # nonexistent --dynamic-linker dies with "cannot execute: required
         # file not found" while ldd on it exits 0 and resolves everything.
+
         if [ -n "$interp" ] && [ ! -e "$interp" ]; then
             printf '%s\t%s\t%s\n' "$pkg" "$exe" "$interp"
             continue
@@ -271,12 +272,23 @@ packages=$(wc -l < "$WORK/packages")
 
 # The narrow case the abort above was reaching for, kept and no wider than it
 # has to be: ldd failing for every executable it was handed is ldd not working,
-# and that must not read as clean. It would, silently: `ldd "$exe" >
-# "$WORK/ldd"` truncates the file on redirect before ldd runs, so a failed ldd
-# leaves an empty answer that the `=> not found` parse reads exactly as it
-# reads a resolved one, and the executables guard above is already satisfied.
-# Measured with an ldd shim that only ever `exit 1`s, this is the difference
-# between exit 2 and "3 package(s), 3 executable(s): every soname resolves."
+# not 66 broken packages, and the two want different exit codes.
+#
+# It is NOT what stands between here and a silent green -- the per-file finding
+# above `continue`s before the `=> not found` parse, so a failed ldd is already
+# a finding and the truncated answer file is never read. Measured on this
+# machine with an ldd shim that only ever `exit 1`s, against a clone with these
+# three lines replaced by `:`:
+#
+#     with the guard    -> rc=2, "ldd answered for none of the 66 executable(s)"
+#     without it        -> rc=1, 66 findings, all "(ldd would not answer...)"
+#
+# So the whole job is escalating 1 to 2, and that is worth having: rc=1 is this
+# script telling a consumer to go declare a missing provider, and there is
+# nothing to declare when the tool that named it is the thing that is broken.
+# An earlier comment here claimed the guard was all that stopped a silent
+# "every soname resolves", which was measured against the script before the
+# per-file finding existed. Believing it would make these lines untouchable.
 # Some-but-not-all is a different animal and is reported per file above.
 if [ "$ldd_asked" -gt 0 ] && [ "$ldd_failed" -eq "$ldd_asked" ]; then
     cannot "ldd answered for none of the $ldd_asked executable(s) it was asked about"

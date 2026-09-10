@@ -391,14 +391,25 @@ section_sonames() {
     # gatherd-show-slow-progress needs): the question is what this machine can
     # load, not whether the repo has moved on since it converged.
     #
-    # Stricter than "REST has run", and knowingly so: site-async.yml writes
-    # that sentinel only `when: gatherd_failed_tiers | length == 0`, so a
-    # machine where any REST tier failed never reaches this section -- and that
-    # is the machine most likely to hold a half-installed AUR package. It is
-    # also the machine with louder problems: gatherd-async.service is `failed`
-    # and /etc/gatherd/last-run says which tiers, both of which the login path
-    # already reports. A soname finding under a header saying the converge did
-    # not finish would be the small print on the big one.
+    # What this actually asks is "has REST ever converged here", and that is
+    # weaker than it looks. site-async.yml's "Mark slow setup complete" writes
+    # the sentinel `when: gatherd_failed_tiers | default([]) | length == 0`, so
+    # a FIRST pave whose tiers failed has no sentinel and skips this section --
+    # the case the guard is for, since gatherd-assert-sonames would exit 2 with
+    # no [gatherd-aur] database to read.
+    #
+    # It does not extend to a converged machine. Nothing anywhere removes the
+    # sentinel: `grep -rn async-complete` over this tree finds that one copy
+    # task and no remover, and the verify step below tells the human to
+    # `sudo rm -f` it by hand precisely because there is no other way to get a
+    # failed run reproduced. So after a later HEAD whose REST tiers failed, the
+    # stale sentinel is still there and this section renders as usual.
+    #
+    # That is the right outcome rather than a hole to plug. Those packages are
+    # installed and the question of whether they load is a real one, and the
+    # failed run is being reported far more loudly elsewhere:
+    # gatherd-async.service is `failed` and /etc/gatherd/last-run names the
+    # tiers, both of which the login path already surfaces.
     _sentinel="${GATHERD_ASYNC_SENTINEL:-/etc/gatherd/async-complete}"
     [ -f "$_sentinel" ] || { prune_derived 'Libraries' "$_mark"; return; }
 

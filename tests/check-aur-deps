@@ -369,5 +369,61 @@ for _bad in abc '' 0 -5 inf 1e9; do
     fi
 done
 
+# 18. The timeout(1) preflight, which nothing else exercises: removing it left
+#     every other case in this file passing. It is what turns a missing
+#     coreutils into this gate's own exit code instead of the repo's. Measured
+#     against a PATH holding only what the gate needs to reach the call:
+#
+#         with the preflight    -> rc=2, "timeout(1) is not installed"
+#         without it            -> rc=1, FileNotFoundError traceback
+#
+#     rc=1 is the violation verdict, so a missing package would read as a
+#     dependency this repo declares and does not install.
+mkdir -p "$WORK/nobin"
+for _b in python3 aur expac; do
+    ln -s "$(command -v "$_b")" "$WORK/nobin/$_b"
+done
+if PATH="$WORK/nobin" "$GATE" "$WORK/repo" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+if [ "$_got" = 2 ]; then
+    ok "a PATH without timeout(1) is could-not-run, not a violation"
+else
+    bad "a PATH without timeout(1) exited $_got, wanted 2"
+    sed 's/^/       /' "$WORK/out"
+fi
+assert_says "and names the missing program" 'timeout(1) is not installed'
+
+# 19. The timeout_seconds() call at the top of check(), which nothing else
+#     exercised either: every case above either has a malformed bound and a
+#     clean repo, or a violation and a good bound, and each of those passes
+#     with the call deleted. The pair is what pins it -- a malformed bound must
+#     win over a violation, because a run that cannot trust its own bound has
+#     not established that the violation is real. Measured against the
+#     unreachable-build fixture from case 5:
+#
+#         with the pre-call    -> rc=2, "GATHERD_AUR_TIMEOUT"
+#         without it           -> rc=1, naming roles/newthing/tasks/main.yml
+mkdir -p "$WORK/repo/roles/newthing/tasks"
+cat > "$WORK/repo/roles/newthing/tasks/main.yml" <<'FIXTURE'
+---
+- name: Build something nobody reaches
+  ansible.builtin.command: "{{ aur_sync_command }} mbpfan"
+  changed_when: false
+FIXTURE
+for _bad in abc inf; do
+    if GATHERD_AUR_TIMEOUT="$_bad" "$GATE" "$WORK/repo" >"$WORK/out" 2>&1; then
+        _got=0
+    else
+        _got=$?
+    fi
+    if [ "$_got" = 2 ]; then
+        ok "GATHERD_AUR_TIMEOUT='$_bad' outranks a violation in the same repo"
+    else
+        bad "GATHERD_AUR_TIMEOUT='$_bad' with a violation exited $_got, wanted 2"
+        sed 's/^/       /' "$WORK/out"
+    fi
+    assert_says "and reports the bound, not the orphan build" 'GATHERD_AUR_TIMEOUT'
+done
+rm -rf "$WORK/repo/roles/newthing"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

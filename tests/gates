@@ -67,12 +67,25 @@ for suite in check-package-tiers check-migrations check-aur-deps assert-aur-deps
     # An `if`, not `[ -x ] && run`. The comment here used to say that && list
     # aborts the run under `set -eu`; it does not, and what it does instead is
     # worse. `set -e` is ignored for any command of an AND-OR list but the last
-    # (POSIX, and bash, which is /bin/sh here), so a `[ -x ]` that fails is
-    # simply skipped. Measured against the previous revision of this file with
+    # (POSIX, and bash, which is /bin/sh here):
+    #
+    #     $ sh -c 'set -eu; [ -x /nonexistent ] && echo ran; echo after'
+    #     after
+    #     rc=0
+    #
+    # so a `[ -x ]` that fails is simply skipped. Measured by checking out
+    # bc487e7 -- the revision before this `if` landed -- and running it with
     # tests/needs-run made non-executable: rc=0, the summary printed, "23
     # passed, 0 failed", and the word needs-run nowhere in the output. A green
     # run that silently did not run a listed test is the one thing CLAUDE.md
     # will not have; a suite that cannot run is a named failure.
+    #
+    # Reproduce it at bc487e7 and nowhere else. That number is one per suite
+    # plus the static gates above, so patching a LATER revision back to the &&
+    # form counts whatever the list has grown to and gives 24 -- a6c75d3 added
+    # post-setup-notes in the same commit as the `if`. A reviewer read the
+    # sentence that way, got 24, and reported this number as wrong; it is not,
+    # but a measurement nobody can re-run is only luckier than a wrong one.
     if [ -x "$REPO/tests/$suite" ]; then
         run "$REPO/tests/$suite"
     else

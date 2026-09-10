@@ -207,7 +207,18 @@ while IFS= read -r pkg; do
         # program stops at execve. Measured, `./prog` built against a
         # nonexistent --dynamic-linker dies with "cannot execute: required
         # file not found" while ldd on it exits 0 and resolves everything.
-
+        #
+        # In practice this branch, not the ldd one below, is where a foreign
+        # binary lands, and the reported "missing" interpreter is the tell.
+        # A file built for another architecture names that architecture's
+        # loader, and this machine has no package that provides it. Measured
+        # on the riscv64 fixture cited below:
+        #
+        #     interpreter /lib/ld-linux-riscv64-lp64d.so.1 -> does not exist
+        #
+        # so the test above fires and ldd is never asked. Read a reported
+        # interpreter path as "wrong architecture" first and as "a provider
+        # to declare" second; `pacman -F` on one of these finds nothing.
         if [ -n "$interp" ] && [ ! -e "$interp" ]; then
             printf '%s\t%s\t%s\n' "$pkg" "$exe" "$interp"
             continue
@@ -236,6 +247,9 @@ while IFS= read -r pkg; do
         ldd_asked=$((ldd_asked + 1))
         if ! ldd "$exe" > "$WORK/ldd" 2>/dev/null; then
             ldd_failed=$((ldd_failed + 1))
+            # Rarer than it looks: reaching here needs a foreign e_machine AND
+            # an interpreter path this machine happens to have, since an absent
+            # one is caught above. The common foreign binary never gets here.
             printf '%s\t%s\t%s\n' "$pkg" "$exe" \
                 '(ldd would not answer: wrong architecture?)'
             continue
@@ -308,12 +322,15 @@ if [ -s "$WORK/findings" ]; then
                        { printf "      %s\n", $3 }
         ' >&2
     echo >&2
-    echo "A soname or interpreter path above is an AUR package under-declaring" >&2
-    echo "what upstream links against. Find the provider -- 'sudo pacman -Fy'" >&2
-    echo "once, then 'pacman -F <soname>' -- and declare it in the" >&2
-    echo "*_packages var for a tier that converges BEFORE the build that" >&2
-    echo "needs it. A parenthesised line is not that: it is a file this" >&2
-    echo "machine cannot load at all, shipped for another architecture." >&2
+    echo "A bare soname above is an AUR package under-declaring what upstream" >&2
+    echo "links against. Find the provider -- 'sudo pacman -Fy' once, then" >&2
+    echo "'pacman -F <soname>' -- and declare it in the *_packages var for a" >&2
+    echo "tier that converges BEFORE the build that needs it." >&2
+    echo >&2
+    echo "A line that is an absolute path ending in ld-*.so is usually not" >&2
+    echo "that: it is a binary built for another architecture, whose loader" >&2
+    echo "no Arch package provides. Check with 'readelf -hW <file>'. A" >&2
+    echo "parenthesised line means the same thing and is far rarer." >&2
     exit 1
 fi
 

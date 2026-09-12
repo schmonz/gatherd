@@ -544,6 +544,7 @@ section_verify() {
     verify_li 'Claude Code usage rides in waybar between the idle inhibitor and the CPU meter, showing Claude Desktop'"'"'s tray starburst and reading `n%·n%` with no spaces around the dot; hovering breaks out 5h and 7d with reset countdowns, and clicking opens the usage dashboard.'
     verify_li 'A soname gatherd cannot resolve reaches the login notes unasked: `gatherd-post-setup-notes && sed -n "/^# Libraries/,/^$/p" ~/.config/gatherd-post-setup.md` names it on a machine that has one and prints nothing on a machine that does not.'
     verify_li 'Everything gatherd built can find its libraries: `/usr/local/lib/gatherd/scripts/gatherd-assert-sonames` exits `0` and ends `every soname resolves`, and LocalSend opens its window.'
+    verify_li 'The progress window opens for a re-converge, not only a first boot: after the next `git pull` in `/usr/local/lib/gatherd` and reboot, the Package Installation window is up at login and ends `Installation complete.`'
 }
 
 # ---------------------------------------------------------------------------

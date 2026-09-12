@@ -26,6 +26,15 @@ sentinel="${GATHERD_ASYNC_SENTINEL:-/etc/gatherd/async-complete}"
 # the human several minutes of empty session with nothing on screen explaining
 # it -- the same harm, relocated.
 #
+# gatherd-run-core also retires a stale sentinel before greetd is unblocked, so
+# on the reboot path existence alone would now agree with freshness. It does not
+# on the paths that bypass that wrapper -- a hand-run `ansible-playbook
+# site-core.yml` after a pull -- and asking the barrier's question keeps the two
+# consumers from disagreeing there. The cost is the other direction: after a
+# pull with no reboot, the async unit will not run until next boot, so a relogin
+# opens a window that waits until then. The barrier waits the same way, and
+# needs-run's scoped safe.directory keeps git from failing open for this user.
+#
 # Only exit 1 means converged, matching the barrier: a missing script exits 127
 # and a non-executable one 126, and reading either as converged would silently
 # turn the gate into "never show anything".

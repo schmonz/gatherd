@@ -9,11 +9,13 @@
 # marker, surfaced at login, not in the unit's exit code.
 #
 # POSIX sh, no init-specific bits (model: gatherd-await-and-run) so the Artix/s6
-# port only has to `exec` this. Usage: gatherd-run-core <playbook>
+# port only has to `exec` this. Usage: gatherd-run-core <playbook> [async-sentinel]
 set -u
 
 playbook="${1:-}"
-gatherd_home=/usr/local/lib/gatherd
+# Overridable so tests/run-core can point the sentinel check at a scratch
+# checkout instead of the deployed one; nothing in the boot path sets it.
+gatherd_home="${GATHERD_HOME:-/usr/local/lib/gatherd}"
 vault_pass="$gatherd_home/.vault_pass"
 # Marker and log are env-overridable purely so the verify steps can exercise the
 # syntax-error and timeout paths on a converged machine without clobbering the
@@ -31,6 +33,26 @@ rc_file="${TMPDIR:-/tmp}/gatherd-core.rc.$$"
 timeout_secs="${GATHERD_CORE_TIMEOUT:-900}"
 
 [ -f "$playbook" ] || exit 0
+
+# A sentinel says "converged at HEAD X". CORE is running because HEAD moved (or
+# its own sentinel is gone), and by the same token an async sentinel recording
+# another HEAD is a lie. gatherd-needs-run sees through it, so the async unit
+# re-runs regardless, and gatherd-show-slow-progress asks that same question;
+# but anything else that trusts the file's mere existence would
+# read a lie left in place as "nothing to do". Retire it HERE, before greetd is
+# unblocked:
+# gatherd-await-and-run has no ordering edge against the login, only a head
+# start. On the 2026-09-07 14:47 re-converge it started the same second this
+# unit finished and a session helper was running four seconds later; that is
+# slack, not a guarantee.
+# The unit passes the path; a verify run that omits it retires nothing, so the
+# real sentinel is never touched unprivileged. Only gatherd.service runs CORE
+# this way -- a hand-run `ansible-playbook site-core.yml` after a pull leaves
+# the stale sentinel, which gatherd-needs-run still sees through.
+async_sentinel="${2:-}"
+if [ -n "$async_sentinel" ]; then
+    "$gatherd_home/scripts/gatherd-needs-run" "$async_sentinel" && rm -f "$async_sentinel"
+fi
 
 # The play itself creates /etc/gatherd later; on a fresh machine the marker
 # write must not silently vanish into a failed redirect.

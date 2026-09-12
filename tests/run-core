@@ -1,0 +1,50 @@
+#!/bin/sh
+# gatherd-run-core retires a stale async sentinel only when told which one, and
+# never a current or absent one. Drives the wrapper with an unparseable playbook
+# so it stops at the syntax gate: the retirement happens before that, and the
+# real marker, log and sentinel are never in play.
+#
+# GATHERD_HOME points both the wrapper and gatherd-needs-run at a scratch
+# checkout, so the test exercises the working tree's scripts (not whatever was
+# last deployed), needs no /usr/local/lib/gatherd, and never asks git about a
+# root-owned directory. The scratch home has no requirements.yml, so the
+# wrapper's best-effort galaxy install fails at once instead of going online.
+set -eu
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+command -v ansible-playbook >/dev/null || { echo "FAIL: ansible-playbook not installed; the syntax gate cannot be exercised"; exit 1; }
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+home="$tmp/home"
+mkdir -p "$home"
+ln -s "$REPO/scripts" "$home/scripts"
+git -C "$home" init -q
+git -C "$home" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+head=$(git -C "$home" rev-parse HEAD)
+printf 'not: [valid\n' > "$tmp/bad.yml"
+
+run() {
+    GATHERD_HOME="$home" GATHERD_CORE_MARKER="$tmp/marker" GATHERD_CORE_LOG="$tmp/log" \
+        "$REPO/scripts/gatherd-run-core" "$tmp/bad.yml" "$@"
+    [ "$(head -n1 "$tmp/marker")" = syntax-error ] || { echo "FAIL: expected the syntax gate, got $(head -n1 "$tmp/marker")"; exit 1; }
+}
+
+printf 'x%s\n' "$head" > "$tmp/sentinel"
+run "$tmp/sentinel"
+[ ! -f "$tmp/sentinel" ] || { echo "FAIL: stale sentinel kept"; exit 1; }
+
+printf '%s\n' "$head" > "$tmp/sentinel"
+run "$tmp/sentinel"
+[ -f "$tmp/sentinel" ] || { echo "FAIL: current sentinel deleted"; exit 1; }
+
+printf 'x%s\n' "$head" > "$tmp/sentinel"
+run
+[ -f "$tmp/sentinel" ] || { echo "FAIL: sentinel deleted without being named"; exit 1; }
+
+rm -f "$tmp/sentinel"
+run "$tmp/sentinel"
+[ ! -f "$tmp/sentinel" ] || { echo "FAIL: absent sentinel appeared"; exit 1; }
+
+echo ok

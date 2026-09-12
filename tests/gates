@@ -61,7 +61,7 @@ printf '\n== unit tests ==\n'
 # their live answers belong where they run -- assert-aur-deps in front of every
 # aur sync, assert-sonames after a converge, from the post-setup verify list.
 for suite in check-package-tiers check-migrations check-aur-deps assert-aur-deps \
-             assert-sonames census-removals migration-checks await-and-run \
+             assert-sonames census-removals migration-checks run-core await-and-run \
              check-vault-units needs-run await-async check-session-cohort \
              post-setup-notes; do
     # An `if`, not `[ -x ] && run`. The comment here used to say that && list

@@ -408,7 +408,8 @@ section_sonames() {
     #
     # It does not extend to a converged machine. Nothing anywhere removes the
     # sentinel: `grep -rn async-complete` over this tree finds that one copy
-    # task and no remover, and the verify step below tells the human to
+    # task and no remover outside test sandboxes and docs, and the verify step
+    # below tells the human to
     # `sudo rm -f` it by hand precisely because there is no other way to get a
     # failed run reproduced. So after a later HEAD whose REST tiers failed, the
     # stale sentinel is still there and this section renders as usual.
@@ -416,8 +417,8 @@ section_sonames() {
     # That is the right outcome rather than a hole to plug. Those packages are
     # installed and the question of whether they load is a real one, and the
     # failed run is being reported far more loudly elsewhere:
-    # gatherd-async.service is `failed` and /etc/gatherd/last-run names the
-    # tiers, both of which the login path already surfaces.
+    # gatherd-async.service is `failed`, which gatherd-show-slow-progress
+    # reports at login, and its journal names the tiers.
     _sentinel="${GATHERD_ASYNC_SENTINEL:-/etc/gatherd/async-complete}"
     [ -f "$_sentinel" ] || { prune_derived 'Libraries' "$_mark"; return; }
 
@@ -548,11 +549,10 @@ section_verify() {
     verify_li 'One failing tier no longer takes the rest down: `sudo mv /usr/bin/tailscale{,.bak}`, then `sudo rm -f /etc/gatherd/async-complete && sudo systemctl start gatherd-async.service`. Every other tier converges and the run ends `1 REST tier(s) did not converge: tailscale (Set tailscale operator)`, with no `async-complete` written. Restore the binary, start it again, and the sentinel is back.'
     verify_li 'xed opens on cobalt with line numbers, not the pale default: `gsettings get org.x.editor.preferences.editor scheme` prints `'"'"'cobalt'"'"'`.'
     verify_li 'The cohort waits for REST rather than racing it: `~/.local/bin/gatherd-await-async; echo done` returns immediately on this converged machine, and `env GATHERD_ASYNC_SENTINEL=/nonexistent GATHERD_AWAIT_ASYNC_TIMEOUT=5 ~/.local/bin/gatherd-await-async; echo done` takes about 5s and pops a notification saying it gave up. On a fresh pave the Tailscale and 1Password tabs open without logging out and back in.'
-    verify_li 'The slow-package window reads the sentinel the same way the barrier does: from a foot tab, `env GATHERD_ASYNC_SENTINEL=/nonexistent ~/.local/bin/gatherd-show-slow-progress` tails the async journal in place (no new window -- stdout is already a pty) and keeps waiting; Ctrl-C to stop it. With no override it prints nothing and exits 0.'
+    verify_li 'The Package Installation window follows REST, not just the sentinel: once a commit newer than this repave lands and this boot'"'"'s REST run has ended without failing, `sudo git -C /usr/local/lib/gatherd pull`, then log out and in with no reboot: no window opens (`~/.local/bin/gatherd-show-slow-progress --check; echo $?` prints `1`). Reboot and log in straight away: the window is up and ends `Installation complete.`'
     verify_li 'Claude Code usage rides in waybar between the idle inhibitor and the CPU meter, showing Claude Desktop'"'"'s tray starburst and reading `n%·n%` with no spaces around the dot; hovering breaks out 5h and 7d with reset countdowns, and clicking opens the usage dashboard.'
     verify_li 'A soname gatherd cannot resolve reaches the login notes unasked: `gatherd-post-setup-notes && sed -n "/^# Libraries/,/^$/p" ~/.config/gatherd-post-setup.md` names it on a machine that has one and prints nothing on a machine that does not.'
     verify_li 'Everything gatherd built can find its libraries: `/usr/local/lib/gatherd/scripts/gatherd-assert-sonames` exits `0` and ends `every soname resolves`, and LocalSend opens its window.'
-    verify_li 'The progress window opens for a re-converge, not only a first boot: after the next `git pull` in `/usr/local/lib/gatherd` and reboot, the Package Installation window is up at login and ends `Installation complete.`'
 }
 
 # ---------------------------------------------------------------------------

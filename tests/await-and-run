@@ -56,10 +56,13 @@ chmod 755 "$WORK/stub"/*
 printf '0\n' > "$WORK/rc"
 printf '0\n' > "$WORK/galaxy_rc"
 
+printf 'test-boot-id\n' > "$WORK/boot_id"
+
 run_runner() {
     rm -f "$WORK/argv"
     PATH="$WORK/stub:$PATH" GATHERD_HOME="$WORK/gatherd" \
         GATHERD_CORE_COMPLETE="$WORK/etc/core-complete" \
+        GATHERD_BOOT_ID_FILE="${RUNNER_BOOT_ID_FILE:-$WORK/boot_id}" \
         timeout 10 sh "$RUNNER" "$@" >/dev/null 2>&1 && RC=0 || RC=$?
 }
 
@@ -103,7 +106,16 @@ rm -f "$STAMP" "$WORK/etc/async-complete"
 printf '0\n' > "$WORK/rc"
 run_runner "$WORK/etc/async-complete" "$WORK/gatherd/site-async.yml"
 assert "a successful run writes the finished stamp" -f "$STAMP"
-assert "recording the deployed HEAD" "$(cat "$STAMP" 2>/dev/null)" = "$HEAD"
+assert "recording the deployed HEAD" "$(head -n1 "$STAMP" 2>/dev/null)" = "$HEAD"
+assert "and this boot's id on the second line" "$(sed -n 2p "$STAMP" 2>/dev/null)" = "$(cat "$WORK/boot_id")"
+
+# A directory, not a chmod 000 file: root reads the latter anyway.
+mkdir -p "$WORK/boot_id.unreadable"
+rm -f "$STAMP"
+RUNNER_BOOT_ID_FILE="$WORK/boot_id.unreadable" run_runner "$WORK/etc/async-complete" "$WORK/gatherd/site-async.yml"
+assert "an unreadable boot id still writes the stamp" "$(head -n1 "$STAMP" 2>/dev/null)" = "$HEAD"
+assert "with an empty second line" "$(sed -n 2p "$STAMP" 2>/dev/null)" = ""
+assert "that is really there" "$(wc -l < "$STAMP" 2>/dev/null)" -eq 2
 
 rm -f "$STAMP"
 printf '2\n' > "$WORK/rc"

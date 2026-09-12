@@ -1,7 +1,8 @@
 #!/bin/sh
 # Show the gatherd-async slow-package install progress in a terminal — but only
-# while an install is genuinely in progress. Decide *before* opening any window,
-# so nothing flashes on screen on later logins once async has finished.
+# while an install is in progress or about to start, or to report one that did
+# not finish this boot. Decide *before* opening any window, so nothing flashes on
+# screen on later logins once async has finished.
 #
 # Run from sway autostart WITHOUT a terminal wrapper:
 #     exec gatherd-show-slow-progress
@@ -10,30 +11,24 @@
 #
 # Pass --demo to bypass the gate so both display paths (in-place tail in a foot
 # tab, foot window otherwise) can be exercised on an already-converged machine;
-# the loop below then exits at once and reports completion.
+# the loop below then exits at once and reports completion (or, after a pull
+# with no reboot, that installation did not finish).
+
+# Pass --check to run only the gate: exit 0 when the window would open, 1 when
+# there is nothing to watch. It is how tests/show-slow-progress reaches the gate
+# without a compositor.
 
 # Overridable only so the gate can be pointed at a sandbox, the same reason
 # gatherd-await-async takes them.
 gatherd_home="${GATHERD_HOME:-/usr/local/lib/gatherd}"
 sentinel="${GATHERD_ASYNC_SENTINEL:-/etc/gatherd/async-complete}"
+stamp="${sentinel}-finished"
+boot_id_file="${GATHERD_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}"
 
 # Freshness of the sentinel, not its existence, and via the same helper
 # gatherd-await-async uses. site-async.yml overwrites the sentinel at the end of
-# a run and never removes it at the start, so after a `git pull` the file is
-# still on disk holding the OLD commit while REST re-runs every tier. The two
-# consumers have to agree about that file: the barrier holds the session cohort
-# for the whole re-run, so a window that reads the stale file as "done" leaves
-# the human several minutes of empty session with nothing on screen explaining
-# it -- the same harm, relocated.
-#
-# gatherd-run-core also retires a stale sentinel before greetd is unblocked, so
-# on the reboot path existence alone would now agree with freshness. It does not
-# on the paths that bypass that wrapper -- a hand-run `ansible-playbook
-# site-core.yml` after a pull -- and asking the barrier's question keeps the two
-# consumers from disagreeing there. The cost is the other direction: after a
-# pull with no reboot, the async unit will not run until next boot, so a relogin
-# opens a window that waits until then. The barrier waits the same way, and
-# needs-run's scoped safe.directory keeps git from failing open for this user.
+# a run and never removes it at the start, so after a `git pull` and reboot the
+# file is still on disk holding the OLD commit while REST re-runs every tier.
 #
 # Only exit 1 means converged, matching the barrier: a missing script exits 127
 # and a non-executable one 126, and reading either as converged would silently
@@ -43,13 +38,80 @@ converged() {
     [ "$?" -eq 1 ]
 }
 
+# Freshness alone waits for a run that is not coming after a `git pull` with no
+# reboot: REST already ran this boot at the old HEAD and gatherd-async.service
+# does not start again on its own until the next boot. gatherd-await-and-run
+# writes the boot id into its finished stamp when a run ends, succeeded or
+# failed, so a stamp from this boot says a run ended this boot. Whether another
+# is under way is the unit's to say, below. Some runs end with no stamp from this
+# boot -- killed, a failed `git rev-parse` in mark_finished, a `cd` that fails
+# under set -e -- and the unit state and idle bound in the loop cover those.
+finished_this_boot() {
+    _boot=$(cat "$boot_id_file" 2>/dev/null) || return 1
+    [ -n "$_boot" ] && [ "$(sed -n 2p "$stamp" 2>/dev/null)" = "$_boot" ]
+}
+
+# What gatherd-async.service is doing: queued, running, failed or idle. The job
+# queue is asked first. A start still queued behind its After= units reads
+# `inactive`, and a failed unit reads `failed`, until the job runs. Asked in the
+# other order, a start landing between the two questions reads as idle. Sampling
+# list-jobs then is-active in a tight loop across a queued start never showed an
+# empty queue with the unit still inactive: Type=simple went 116x queued|inactive
+# straight to 163x |active, Type=oneshot 120x queued|inactive to 182x
+# queued|activating. The state is
+# matched rather than the exit status because `is-active` exits 3 for
+# `activating` as for `inactive`. Measured on systemd 261 with transient units:
+#     systemd-run --user --no-block --unit=gatherd-probe-a -p Type=oneshot sleep 4
+#     systemctl --user is-active gatherd-probe-a  -> activating, rc=3
+#     systemd-run --user --no-block --unit=gatherd-probe-b \
+#         -p After=gatherd-probe-a.service sleep 2
+#     systemctl --user is-active gatherd-probe-b  -> inactive, rc=3
+#     systemctl --user list-jobs --no-legend gatherd-probe-b.service
+#         -> 647 gatherd-probe-b.service start waiting
+# and `systemctl list-jobs gatherd-async.service` with nothing queued prints
+# "No jobs running." unless --no-legend is given, which is why it is.
+unit_activity() {
+    if [ -n "$(systemctl list-jobs --no-legend gatherd-async.service 2>/dev/null)" ]; then
+        echo queued
+        return
+    fi
+    case "$(systemctl is-active gatherd-async.service 2>/dev/null)" in
+    active | activating | deactivating | reloading | refreshing) echo running ;;
+    failed) echo failed ;;
+    *) echo idle ;;
+    esac
+}
+
+# At the gate, unit state is asked only once the stamp says a run ended this
+# boot, never first: at autostart on a boot whose run has not started, the unit
+# may not be active yet, and gating on that raced the window away. What it
+# catches is a second run this boot, started by `systemctl start` of this unit or
+# of gatherd.service, whose CORE run reaches the system role's "Enable and start
+# gatherd vault-gated services", or by that task under a hand-run site-core.yml.
+# A `failed` unit is not nothing to watch: site-async.yml fails the unit when a
+# tier did not converge so that this window reports it.
+nothing_to_watch() {
+    converged && return 0
+    finished_this_boot || return 1
+    [ "$(unit_activity)" = idle ]
+}
+
+# Overridable only so tests/show-slow-progress can drive the loop in seconds.
+poll=${GATHERD_SLOW_PROGRESS_POLL:-2}
+idle_polls=${GATHERD_SLOW_PROGRESS_IDLE_POLLS:-15}
+case "$poll" in '' | *[!0-9]*) poll=2 ;; esac
+case "$idle_polls" in '' | *[!0-9]*) idle_polls=15 ;; esac
+
+# --check and the login path share this one gate, so testing the first tests the
+# second. --check answers even inside a terminal this script opened.
+if [ "${1:-}" = --check ]; then
+    nothing_to_watch && exit 1
+    exit 0
+fi
+
 if [ -z "${GATHERD_SLOW_PROGRESS_TERM:-}" ]; then
-    # We deliberately do NOT also probe gatherd-async.service state: at autostart
-    # time that service may not have reached 'active' yet, so gating on it raced
-    # the window away before async came up. Waiting on the sentinel in the loop
-    # below is race-free and keeps this decision init-agnostic.
-    if [ "${1:-}" != "--demo" ]; then
-        converged && exit 0
+    if [ "${1:-}" != --demo ]; then
+        nothing_to_watch && exit 0
     fi
 
     # Display in-place only when stdout is a pseudo-terminal — i.e. the user ran
@@ -72,9 +134,23 @@ echo ""
 journalctl -fn 50 -u gatherd-async.service &
 jctl_pid=$!
 
-while ! converged; do
-    systemctl is-failed --quiet gatherd-async.service && break
-    sleep 2
+# The loop ends when there is nothing left to watch, when the unit has failed
+# with no start queued, or when the unit has been idle for idle_polls polls in a
+# row: stopped by hand, killed without a stamp, or -- on a first boot, before
+# the unit is enabled -- never started because CORE failed first. A bound rather
+# than a single idle poll, for the autostart case the gate comment describes: on
+# a boot whose run has not started yet, the unit can read idle for a moment.
+idle=0
+until nothing_to_watch; do
+    case "$(unit_activity)" in
+    failed) break ;;
+    queued | running) idle=0 ;;
+    *)
+        idle=$((idle + 1))
+        [ "$idle" -ge "$idle_polls" ] && break
+        ;;
+    esac
+    sleep "$poll"
 done
 
 sleep 1
@@ -86,8 +162,10 @@ echo "----------------------------------------"
 if converged; then
     echo "Installation complete."
 else
-    echo "Installation failed."
-    echo "Details: journalctl -u gatherd-async.service"
+    # Not "failed": a run stopped by hand, and a CORE failure that never started
+    # REST, end here too.
+    echo "Installation did not finish."
+    echo "Details: journalctl -u gatherd-async.service, and /etc/gatherd/last-run for CORE"
 fi
 printf "Press Enter to close... "
 read -r _

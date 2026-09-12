@@ -1,0 +1,257 @@
+#!/bin/sh
+# Unit tests for gatherd-show-slow-progress's gate, via --check (exit 0: the
+# window would open; exit 1: nothing to watch).
+#
+# The gate has to tell three states apart that the sentinel alone cannot: REST
+# converged at this commit; REST has yet to run, or is running, this boot; and
+# REST already ran this boot at an older commit -- a `git pull` with no reboot --
+# after which the unit does not start again on its own until the next boot.
+# Opening a window in that last state waits for a run that is not coming.
+#
+# systemctl is stubbed: these test the decision, not systemd.
+#
+# Usage: tests/show-slow-progress
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+WINDOW="$REPO/scripts/gatherd-show-slow-progress"
+PASS=0
+FAIL=0
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/gatherd/scripts" "$WORK/stub"
+
+cp "$REPO/scripts/gatherd-needs-run" "$WORK/gatherd/scripts/"
+git -C "$WORK/gatherd" init -q
+git -C "$WORK/gatherd" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+HEAD=$(git -C "$WORK/gatherd" rev-parse HEAD)
+OLD=0000000000000000000000000000000000000000
+
+SENTINEL="$WORK/async-complete"
+STAMP="$WORK/async-complete-finished"
+BOOT_ID="$WORK/boot_id"
+
+# The stub answers `is-active` from $WORK/state and `list-jobs` from $WORK/jobs,
+# and only for the exact invocations the script is meant to make. Without
+# --no-legend real systemctl prints "No jobs running." for an empty queue, which
+# would read as a job queued forever; without the unit name it lists every job on
+# the system, so the stub pretends some other unit has one.
+cat > "$WORK/stub/systemctl" <<STUB
+#!/bin/sh
+case "\$*" in
+"is-active gatherd-async.service")
+    # With a \$WORK/seq, each call takes its next line, the last one repeating.
+    if [ -s "$WORK/seq" ]; then
+        head -n1 "$WORK/seq" > "$WORK/state"
+        [ "\$(wc -l < "$WORK/seq")" -gt 1 ] && sed -i 1d "$WORK/seq"
+    fi
+    cat "$WORK/state"; [ "\$(cat "$WORK/state")" = active ] ;;
+"list-jobs --no-legend gatherd-async.service")
+    cat "$WORK/jobs" 2>/dev/null ;;
+"list-jobs --no-legend")
+    echo "99 some-other.service start waiting" ;;
+list-jobs*)
+    echo "No jobs running." ;;
+*) exit 1 ;;
+esac
+STUB
+cat > "$WORK/stub/journalctl" <<STUB
+#!/bin/sh
+exec sleep 60
+STUB
+chmod 755 "$WORK/stub/systemctl" "$WORK/stub/journalctl"
+
+# Each case starts from the same machine: a stale sentinel, no stamp, this
+# boot's id readable, the unit inactive with nothing queued.
+reset() {
+    printf '%s\n' "$OLD" > "$SENTINEL"
+    rm -f "$STAMP" "$WORK/jobs" "$BOOT_ID" "$WORK/seq"
+    printf 'this-boot\n' > "$BOOT_ID"
+    printf 'inactive\n' > "$WORK/state"
+    chmod 755 "$WORK/gatherd/scripts/gatherd-needs-run"
+}
+
+# $1 is the expected --check exit: 0 opens the window, 1 stays silent.
+check() {
+    _want=$1 _desc=$2
+    GATHERD_HOME="$WORK/gatherd" GATHERD_ASYNC_SENTINEL="$SENTINEL" \
+        GATHERD_BOOT_ID_FILE="$BOOT_ID" PATH="$WORK/stub:$PATH" \
+        GATHERD_SLOW_PROGRESS_TERM="${CHECK_TERM:-}" \
+        timeout 10 sh "$WINDOW" --check </dev/null >/dev/null 2>&1 && _rc=0 || _rc=$?
+    if [ "$_rc" -eq "$_want" ]; then ok "$_desc"; else bad "$_desc (rc=$_rc, want $_want)"; fi
+}
+
+stamp() { printf '%s\n%s\n' "$1" "$2" > "$STAMP"; }
+
+reset
+printf '%s\n' "$HEAD" > "$SENTINEL"
+check 1 "a current sentinel is nothing to watch"
+
+reset
+check 0 "a stale sentinel with no stamp opens the window (REST has yet to run this boot)"
+
+reset
+stamp "$OLD" this-boot
+check 1 "a stale sentinel after this boot's run is nothing to watch (pull, no reboot)"
+
+reset
+stamp "$OLD" other-boot
+check 0 "a stamp from another boot opens the window"
+
+for state in active activating deactivating reloading refreshing; do
+    reset
+    stamp "$OLD" this-boot
+    printf '%s\n' "$state" > "$WORK/state"
+    check 0 "a second run this boot opens the window while the unit is $state"
+done
+
+reset
+stamp "$OLD" this-boot
+printf '42 gatherd-async.service start waiting\n' > "$WORK/jobs"
+check 0 "a start queued behind After= opens the window, though the unit reads inactive"
+
+reset
+stamp "$OLD" this-boot
+printf 'failed\n' > "$WORK/state"
+check 0 "a failed unit after this boot's run opens the window, to report it"
+
+reset
+stamp "$OLD" this-boot
+printf 'active\n' > "$WORK/state"
+CHECK_TERM=1
+check 0 "--check answers inside a terminal this script opened"
+CHECK_TERM=
+
+reset
+printf 'failed\n' > "$WORK/state"
+check 0 "no stamp from this boot opens the window, whatever the unit state"
+
+# A boot id equal to the commit, so reading line 1 where line 2 belongs matches.
+reset
+printf '%s\n' "$OLD" > "$BOOT_ID"
+printf '%s\n' "$OLD" > "$STAMP"
+check 0 "a one-line stamp from before the boot id existed is not from this boot"
+
+reset
+rm -f "$BOOT_ID"
+mkdir "$BOOT_ID"
+stamp "$OLD" this-boot
+check 0 "an unreadable boot id is not proof this boot's run is over"
+rmdir "$BOOT_ID"
+
+reset
+printf '\n' > "$BOOT_ID"
+stamp "$OLD" ""
+check 0 "an empty boot id matches no stamp, even one with an empty second line"
+
+reset
+printf '%s\n' "$HEAD" > "$SENTINEL"
+chmod 644 "$WORK/gatherd/scripts/gatherd-needs-run"
+check 0 "a non-executable gatherd-needs-run is not a converged machine"
+
+# The display loop, with the gate skipped the way the foot re-exec skips it.
+# Every run must reach its closing line; $1 is the line expected, $2 the case.
+watch() {
+    _want=$1 _desc=$2 _idle=${3:-2}
+    _start=$(date +%s)
+    _out=$(GATHERD_HOME="$WORK/gatherd" GATHERD_ASYNC_SENTINEL="$SENTINEL" \
+        GATHERD_BOOT_ID_FILE="$BOOT_ID" PATH="$WORK/stub:$PATH" \
+        GATHERD_SLOW_PROGRESS_TERM=1 GATHERD_SLOW_PROGRESS_POLL=1 \
+        GATHERD_SLOW_PROGRESS_IDLE_POLLS="$_idle" \
+        timeout 10 sh "$WINDOW" </dev/null 2>&1) && _rc=0 || _rc=$?
+    ELAPSED=$(( $(date +%s) - _start ))
+    case "$_rc:$_out" in
+    124:*) bad "$_desc (still waiting after 10s)" ;;
+    *"$_want"*) ok "$_desc" ;;
+    *) bad "$_desc (no \"$_want\")" ;;
+    esac
+}
+
+reset
+printf 'failed\n' > "$WORK/state"
+# An idle bound the 10s timeout would outlast, so only the failed check can end it.
+watch "Installation did not finish." "a failed unit with no stamp ends the wait at once" 100
+
+reset
+printf 'active\n' > "$WORK/state"
+( sleep 2
+  printf '%s\n' "$HEAD" > "$SENTINEL"
+  stamp "$HEAD" this-boot
+  printf 'inactive\n' > "$WORK/state" ) &
+watch "Installation complete." "a run that converges ends the wait as complete"
+wait
+
+reset
+watch "Installation did not finish." "a unit neither running nor queued ends the wait after the idle bound"
+
+reset
+printf 'active\n' > "$WORK/state"
+( sleep 2
+  stamp "$OLD" this-boot
+  printf 'inactive\n' > "$WORK/state" ) &
+watch "Installation did not finish." "a stamp from this boot ends the wait, with the unit idle and no idle bound in reach" 100
+wait
+
+reset
+# Idle for one poll, running for the next, over and over. The bound counts polls
+# in a row, so this must never reach it. The loop asks is-active once per poll.
+printf 'inactive\nactive\ninactive\nactive\ninactive\nactive\n' > "$WORK/seq"
+GATHERD_HOME="$WORK/gatherd" GATHERD_ASYNC_SENTINEL="$SENTINEL" \
+    GATHERD_BOOT_ID_FILE="$BOOT_ID" PATH="$WORK/stub:$PATH" \
+    GATHERD_SLOW_PROGRESS_TERM=1 GATHERD_SLOW_PROGRESS_POLL=1 \
+    GATHERD_SLOW_PROGRESS_IDLE_POLLS=2 \
+    timeout 6 sh "$WINDOW" </dev/null >/dev/null 2>&1 && _rc=0 || _rc=$?
+if [ "$_rc" -eq 124 ]; then ok "the idle bound counts polls in a row"; else bad "the idle bound counts polls in a row (rc=$_rc)"; fi
+
+# Cases that must still be waiting when timeout 4 stops them.
+keeps_waiting() {
+    GATHERD_HOME="$WORK/gatherd" GATHERD_ASYNC_SENTINEL="$SENTINEL" \
+        GATHERD_BOOT_ID_FILE="$BOOT_ID" PATH="$WORK/stub:$PATH" \
+        GATHERD_SLOW_PROGRESS_TERM=1 GATHERD_SLOW_PROGRESS_POLL=1 \
+        GATHERD_SLOW_PROGRESS_IDLE_POLLS=2 \
+        timeout 4 sh "$WINDOW" </dev/null >/dev/null 2>&1 && _rc=0 || _rc=$?
+    if [ "$_rc" -eq 124 ]; then ok "$1"; else bad "$1 (rc=$_rc)"; fi
+}
+
+reset
+printf 'active\n' > "$WORK/state"
+keeps_waiting "a running unit keeps the wait going"
+
+# A failed unit reads `failed` until a queued start runs, so the queue wins.
+reset
+stamp "$OLD" this-boot
+printf 'failed\n' > "$WORK/state"
+printf '42 gatherd-async.service start waiting\n' > "$WORK/jobs"
+keeps_waiting "a failed unit with a start queued keeps the wait going"
+
+# The login path: no --check, no terminal flag, stdout not a pty, so an open
+# window is an exec of foot. The same gate as --check, reached the way sway does.
+cat > "$WORK/stub/foot" <<STUB
+#!/bin/sh
+: > "$WORK/foot-ran"
+STUB
+chmod 755 "$WORK/stub/foot"
+login() {
+    rm -f "$WORK/foot-ran"
+    GATHERD_HOME="$WORK/gatherd" GATHERD_ASYNC_SENTINEL="$SENTINEL" \
+        GATHERD_BOOT_ID_FILE="$BOOT_ID" PATH="$WORK/stub:$PATH" \
+        timeout 10 sh "$WINDOW" </dev/null >"$WORK/login.out" 2>&1 && _rc=0 || _rc=$?
+}
+
+reset
+stamp "$OLD" this-boot
+login
+if [ "$_rc" -eq 0 ] && [ ! -f "$WORK/foot-ran" ]; then ok "at login, a pull with no reboot opens no window"; else bad "at login, a pull with no reboot opens no window (rc=$_rc)"; fi
+
+reset
+login
+if [ -f "$WORK/foot-ran" ]; then ok "at login, REST yet to run opens foot"; else bad "at login, REST yet to run opens foot (rc=$_rc)"; fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

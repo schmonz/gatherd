@@ -586,6 +586,22 @@
 
 ## Desktop / UX
 
+- **Progress window waits while REST waits on a failed CORE**: with
+  core-complete absent, gatherd-async.service stays active in
+  `gatherd-await-and-run`'s `while [ ! -f core-complete ]`, so the window says
+  "Installing remaining packages..." until the session ends. A CORE failure
+  after CORE has started the unit gets there -- on a first boot, or in the
+  verify step that removes core-complete and restarts gatherd.service. gatherd-await-async
+  already releases on core-complete absent AND last-run not `ok`; the window
+  should end on the same condition, ideally by sharing that predicate. The
+  window also has no upper bound on a hung REST run, where the barrier stops at
+  two hours.
+- **Barrier waits its full two hours after a pull with no reboot**: REST already
+  ran this boot, so gatherd-await-async can only time out. The stamp now
+  carries the boot id; a stamp from this boot could release it the way it ends
+  gatherd-show-slow-progress's wait, but the barrier deliberately makes no
+  systemctl call, so it cannot see a second run started by hand and would
+  release the cohort into it.
 - **"Reboot to UEFI" power-menu entry shows on BIOS-only machines**: the T60 is
   BIOS-only, so it can't reboot to UEFI firmware setup — yet the power menu still
   offers the entry. Gate it on the machine actually being UEFI (`/sys/firmware/efi`
@@ -652,15 +668,14 @@
 
 - **arch-update timer**: currently a systemd user timer; will need a different
   mechanism on Artix/s6.
-- **gatherd-show-slow-progress display loop is systemd-coupled**: the gating is
-  now init-agnostic (sentinel file only), but the *display* half still calls
-  `journalctl -fn 50 -u gatherd-async.service` to tail and `systemctl is-failed`
-  to break on failure. When the async runner moves off systemd (s6, or Sway
-  launching it directly), replace these: have `gatherd-await-and-run` tee its
-  output to a logfile (e.g. `/var/log/gatherd-async.log`) for the progress
-  script to `tail -f`, and write an `async-failed` sentinel on non-zero exit so
-  the loop can break without `systemctl`. The runner currently `exec`s
-  ansible-playbook, so a failure sentinel needs a trap (drop the final `exec`).
+- **gatherd-show-slow-progress is systemd-coupled**: it tails with
+  `journalctl -fn 50 -u gatherd-async.service`, and asks `systemctl is-active`
+  and `list-jobs` whether a run is in progress or queued -- at the gate only
+  once the boot-id stamp says a run ended this boot, in the wait loop always.
+  When the async runner moves off systemd, have `gatherd-await-and-run` tee its
+  output to a logfile for `tail -f`, and find an init-agnostic answer to "is a
+  run in progress" (a started stamp carrying the boot id, cleared by the
+  finished one, is the obvious shape).
 
 ## Configurability
 

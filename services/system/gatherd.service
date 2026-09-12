@@ -7,17 +7,6 @@ Description=gatherd first-boot setup (CORE tier)
 # gatherd-async.service.
 After=systemd-user-sessions.service
 Before=greetd.service
-# The wrapper below retires a stale async sentinel before it even parses the
-# play, and from then on the login-time progress window waits for the async
-# unit to write a fresh one. The system role starts that unit itself
-# (roles/system/tasks/core.yml, "Enable and start gatherd vault-gated
-# services"), but only if CORE gets that far: a syntax error, a timeout or an
-# early failure after a hand `systemctl start gatherd.service` would otherwise
-# leave the sentinel gone, the unit unstarted, and the window waiting forever.
-# Wants= starts it regardless; gatherd-needs-run still decides whether that
-# start does anything. On a repave's first boot the unit is not linked yet, so
-# systemd logs a not-found warning for this line and CORE links it later.
-Wants=gatherd-async.service
 ConditionPathExists=/usr/local/lib/gatherd/site-core.yml
 
 [Service]
@@ -27,7 +16,7 @@ ExecCondition=/usr/local/lib/gatherd/scripts/gatherd-needs-run /etc/gatherd/core
 # The wrapper owns galaxy install, sleep-inhibit, syntax gate, timeout, and
 # status recording — and always exits 0, so a playbook error or hang can never
 # fail this unit and block greetd. Real status: /etc/gatherd/last-run.
-ExecStart=/usr/local/lib/gatherd/scripts/gatherd-run-core /usr/local/lib/gatherd/site-core.yml /etc/gatherd/async-complete
+ExecStart=/usr/local/lib/gatherd/scripts/gatherd-run-core /usr/local/lib/gatherd/site-core.yml
 RemainAfterExit=no
 StandardOutput=journal+console
 StandardError=journal+console

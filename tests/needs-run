@@ -58,5 +58,11 @@ printf '%s\n' "$HEAD" > "$SENTINEL"
 probe env GIT_TEST_ASSUME_DIFFERENT_OWNER=1
 assert "a foreign-owned checkout still reads as converged (rc=$RC)" "$RC" -eq 1
 
+# 5. gatherd-await-and-run's finished stamp carries the boot id on a second line.
+#    Only the first line is a commit, or the barrier never releases on a failed run.
+printf '%s\n%s\n' "$HEAD" some-boot-id > "$SENTINEL"
+probe env
+assert "a two-line stamp at the deployed HEAD means converged (rc=$RC)" "$RC" -eq 1
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -591,9 +591,10 @@
   `gatherd-await-and-run`'s `while [ ! -f core-complete ]`, so the window says
   "Installing remaining packages..." until the session ends. A CORE failure
   after CORE has started the unit gets there -- on a first boot, or in the
-  verify step that removes core-complete and restarts gatherd.service. gatherd-await-async
-  already releases on core-complete absent AND last-run not `ok`; the window
-  should end on the same condition, ideally by sharing that predicate. The
+  verify step that removes core-complete and restarts gatherd.service.
+  gatherd-await-async already releases on core-complete absent AND last-run not
+  `ok`; the window should end on the same condition, ideally by sharing that
+  predicate. The
   window also has no upper bound on a hung REST run, where the barrier stops at
   two hours.
 - **Barrier waits its full two hours after a pull with no reboot**: REST already
@@ -630,6 +631,11 @@
   personal or system default wins and manage accordingly.
 - **More systray or waybar indicators**: LLM token usage and
   notifications. What else?
+- **Waybar declutter** `→ blocked: work through the current verify steps first`:
+  - drop `%` from all waybar indicators; it eats too much space
+  - move the clock/calendar and battery indicators (maybe others) off waybar and
+    into conky
+  - move the idle inhibitor all the way over, next to the power menu
 - **1Password GUI quits when opening its first-run window (T60)**: the systray
   icon appears, but a left-click or the tray context-menu's "open" makes the
   1Password app exit instead of showing the unlock/first-run window. Reproduce on

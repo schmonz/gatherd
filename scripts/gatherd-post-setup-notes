@@ -277,7 +277,14 @@ section_other_logins() {
     # fleet config. Re-auth is periodic and unavoidable — the session token
     # expires whatever we do — so it appears whenever a sync hits an auth error
     # and disappears on the next success.
-    b_bootstrap='iCloud: run `gatherd-icloud-config bootstrap` (once per fleet; needs `rclone config` + 2FA first if this is the very first machine)'
+    # Lead with pull, not bootstrap. This bullet shows whenever icloud-fleet-ok
+    # is missing, and this script cannot tell "no fleet config exists" from "this
+    # machine has not fetched it yet" without calling op, which blocks on a locked
+    # 1Password. The second is by far the common case -- gatherd-prompt-icloud
+    # gives up quietly if 1Password stays locked past its deadline -- and the old
+    # wording sent a second machine through `rclone config` and a fresh 2FA.
+    # pull itself says when bootstrap is the right step.
+    b_bootstrap='iCloud: run `gatherd-icloud-config pull`, then `gatherd-icloud-config status` should read `encrypted, verified`. If pull says there is no fleet config yet with 1Password unlocked, this is the first machine: `rclone config` + 2FA, then `gatherd-icloud-config bootstrap`'
     b_reauth='iCloud needs re-authentication: run `rclone config reconnect icloud:` and complete 2FA — every other machine picks it up automatically'
     b_plaintext='iCloud config is plaintext (a live iCloud token sits unencrypted on disk): run `rclone config encryption set`'
 
@@ -289,6 +296,7 @@ section_other_logins() {
     # actively wrong. Prune it unconditionally, forever: it is cheap, and a
     # machine that legitimately needs setup gets b_bootstrap below instead.
     prune_section 'Other Logins' 'iCloud: run `rclone config` and follow prompts to add a remote named `icloud`; complete 2FA when prompted'
+    prune_section 'Other Logins' 'iCloud: run `gatherd-icloud-config bootstrap` (once per fleet; needs `rclone config` + 2FA first if this is the very first machine)'
 
     # Each branch prunes its own bullet before possibly re-adding it, not just
     # when it's due to disappear: `li` only appends, so guarding the add with

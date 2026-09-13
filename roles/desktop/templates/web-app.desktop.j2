@@ -15,8 +15,15 @@ Comment={{ item.comment | default('') }}
    converge time rather than named on the command line.
    MOZ_APP_REMOTINGNAME, not --class: --class is X11-only, and under Wayland it
    leaves every window reporting app_id="waterfox", so StartupWMClass below would
-   never match and the sway rules would not bind. #}
-Exec=env MOZ_APP_REMOTINGNAME=WebApp-{{ item.codename }} waterfox --profile {{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.codename }} --no-remote --new-instance {{ item.url }}
+   never match and the sway rules would not bind.
+   MOZ_LEGACY_HOME=1 because Waterfox 153 otherwise creates an empty, unused
+   ~/Waterfox (mode 0700) at every startup, whatever --profile says and whatever
+   the XDG_*_HOME variables say. Measured with an LD_PRELOAD mkdir shim: the call
+   comes from nsXREDirProvider's user-data-directory code, which builds the name
+   from application.ini's Profile=Waterfox; with MOZ_LEGACY_HOME=1 it makes only
+   ~/.waterfox and ~/.cache/waterfox, and the 1Password manifest is still read
+   from ~/.waterfox/native-messaging-hosts. #}
+Exec=env MOZ_APP_REMOTINGNAME=WebApp-{{ item.codename }} MOZ_LEGACY_HOME=1 waterfox --profile {{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.codename }} --no-remote --new-instance {{ item.url }}
 {% else %}
 Exec=helium-browser --app={{ item.url }} --class=WebApp-{{ item.codename }} --name=WebApp-{{ item.codename }} --user-data-dir={{ target_home }}/.local/share/ice/profiles/{{ item.codename }}{{ load_extension }}
 {% endif %}

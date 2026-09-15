@@ -4,7 +4,7 @@
 and delivers them by USB stick or network through one code path.
 
 **Date:** 2026-09-15
-**Status:** Draft. Two decisions open (§6). Not yet implemented.
+**Status:** Draft. One decision open (§6). Not yet implemented.
 **Related:** `specs/2026-06-29-travel-repave-design.md` (D1, D2, D9: the stick as a
 first-class repave source), `plans/2026-06-29-robust-convergence.md` Task 5
 (Phase 4, offline USB cache) and Task 6 (Phase 5, CI),
@@ -116,6 +116,8 @@ repo, and cheaper, but the fleet repo shrinks what is left to wait for.
 
 ## 6. Open decisions
 
-1. **Architectures.** `rest_slow_x86_packages` implies at least one aarch64
-   machine; each architecture is another build and another tree.
-2. **Builder.** CI, or a fleet machine.
+1. **Builder.** CI, or a fleet machine. Undecided as of 2026-09-15.
+
+Settled 2026-09-15: **x86_64 only.** aarch64 is out of scope for now, though
+`rest_slow_x86_packages` anticipates it; keep the tree's path per-architecture so
+adding it later is another build, not a redesign.

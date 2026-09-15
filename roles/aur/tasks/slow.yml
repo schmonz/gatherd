@@ -205,3 +205,14 @@
         XDG_RUNTIME_DIR=/run/user/$(id -u) SWAYSOCK="$sock" \
           swaymsg exec "$HOME/.local/bin/gatherd-systray /opt/piavpn/bin/pia-client --quiet"
       changed_when: false
+
+    - name: Draw Claude Desktop's icon on the Claude usage widget
+      # Here, not in the desktop tier with the rest of the widget: the icon is
+      # an asset of claude-desktop, which this block is what installs. In
+      # always: because its own stats gate it, so an unrelated slow build
+      # failing should neither withhold the icon nor be skipped because of it.
+      # include_role rather than include_tasks so the desktop role's Reload
+      # waybar handler comes with it.
+      ansible.builtin.include_role:
+        name: desktop
+        tasks_from: waybar_claude_icon

@@ -1,0 +1,46 @@
+---
+# The bar draws Claude Desktop's own tray asset behind the usage module rather
+# than a letter. Included from roles/aur/tasks/slow.yml right after the slow AUR
+# install, because that is where claude-desktop lands: checked from the desktop
+# tier alongside the rest of the module, the asset did not exist yet on a fresh
+# pave (stat at 13:25, claude-desktop installed at 13:32), so no pave ever drew
+# the icon until some later converge.
+
+# Two independent gates: claude-usage-waybar and claude-desktop are different
+# packages and either can be absent. Without the image GTK paints nothing and
+# the padding below would leave a blank gap where an icon should be.
+#
+# TrayIconLinux-Dark.png, not TrayIconLinux.png: the "-Dark" in Electron's
+# naming means "for a dark tray", i.e. a white glyph. Measured -- the other file
+# is black on transparent and is invisible on this bar's #19191e.
+- name: Check whether the Claude usage monitor is installed for its icon
+  ansible.builtin.stat:
+    path: /usr/bin/claude-usage-waybar
+  register: _claude_usage_waybar_for_icon
+
+- name: Check whether Claude Desktop's tray icon is installed
+  ansible.builtin.stat:
+    path: /usr/lib/claude-desktop/resources/TrayIconLinux-Dark.png
+  register: _claude_tray_icon
+
+- name: Draw Claude Desktop's starburst on the Claude usage widget
+  ansible.builtin.blockinfile:
+    path: "{{ target_home }}/.config/waybar/style.css"
+    insertbefore: '^#memory \{'
+    marker: "/* {mark} ANSIBLE MANAGED BLOCK: claude-usage-icon */"
+    block: |
+      #custom-claude-usage {
+          background-image: url("/usr/lib/claude-desktop/resources/TrayIconLinux-Dark.png");
+          background-repeat: no-repeat;
+          background-position: left center;
+          /* em, not px: gatherd sizes the whole bar from foot_font_size, and a
+             fixed pixel icon would be a different size on every panel. Measured
+             at 13px and 22px -- GTK resolves em here against the module's own
+             font-size, so the glyph tracks the digits beside it. Without an
+             explicit size, `contain` fits the icon to the module's HEIGHT, which
+             is taller than the text and crowds it. */
+          background-size: 1.15em 1.15em;
+          padding-left: 1.5em;
+      }
+    state: "{{ 'present' if (_claude_usage_waybar_for_icon.stat.exists and _claude_tray_icon.stat.exists) else 'absent' }}"
+  notify: Reload waybar

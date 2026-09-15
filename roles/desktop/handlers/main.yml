@@ -15,15 +15,37 @@
   changed_when: false
 
 - name: Reload waybar
-  # SIGUSR2 is waybar's reload action by default (on-sigusr2, man 5 waybar), so
-  # a config or CSS change lands in the running bar instead of waiting for the
-  # next login. Unlike the core.yml waybar patches, this role's REST tasks run
-  # with a session already up.
+  # So a config or CSS change lands in the running bar instead of waiting for
+  # the next login. Unlike the core.yml waybar patches, this role's REST tasks
+  # run with a session already up.
+  #
+  # Only once waybar is past 0.15.0, and until then nothing: the change waits
+  # for the next login. 0.15.0's mpris module leaves its playerctl signal
+  # handlers connected when a SIGUSR2 reload destroys it, so the next player
+  # event runs one on freed memory: a repave's bar segfaulted in
+  # Mpris::onPlayerStop twenty minutes after this handler fired, and sway does
+  # not respawn a bar that dies. Fixed upstream in a8162186, after 0.15.0.
+  #
+  # Not `swaymsg reload` in the meantime, although it does restart the bar: it
+  # re-fires every exec_always line (see gatherd-intercept-localsend-flash) and
+  # brings back the swaybg gatherd-set-wallpaper kills at login, measured.
+  #
+  # Compared on pkgver without epoch or pkgrel, so neither an Arch rebuild nor
+  # an epoch bump of 0.15.0 counts as fixed. A bar still running a binary pacman
+  # has since replaced is skipped too: it may be the old, crashing version.
   #
   # failed_when false because pkill exits 1 when it matches nothing, which is
   # the normal case for a headless converge or a run before the bar starts --
-  # not a failure worth taking the desktop tier down for.
-  ansible.builtin.command: pkill -SIGUSR2 waybar
+  # not a failure worth taking a tier down for.
+  ansible.builtin.shell: |
+    set -- $(pacman -Q waybar 2>/dev/null)
+    ver=${2#*:}
+    ver=${ver%-*}
+    [ "$(vercmp "$ver" 0.15.0)" -gt 0 ] || exit 0
+    for p in $(pgrep -u "$(id -u)" -x waybar); do
+      case $(readlink "/proc/$p/exe") in *' (deleted)') exit 0 ;; esac
+    done
+    pkill -SIGUSR2 -u "$(id -u)" -x waybar && echo reloaded
   register: _waybar_reload
-  changed_when: _waybar_reload.rc == 0
+  changed_when: "'reloaded' in _waybar_reload.stdout"
   failed_when: false

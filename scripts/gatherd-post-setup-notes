@@ -568,6 +568,7 @@ section_verify() {
     verify_li 'Claude Code usage rides in waybar between the idle inhibitor and the CPU meter, showing Claude Desktop'"'"'s tray starburst and reading `n%·n%` with no spaces around the dot; hovering breaks out 5h and 7d with reset countdowns, and clicking opens the usage dashboard.'
     verify_li 'Broadcom 802.11ac WiFi (BCM4360/4352 Macs): `nmcli -t -f TYPE,STATE dev | grep -x wifi:connected` prints a line on the first boot after the repave, and again after a reboot.'
     verify_li 'iCloud: next time the token expires, the notes show only `gatherd-icloud-config reconnect`, and after it `gatherd-icloud-config status` reads `encrypted, verified; fleet: in sync`.'
+    verify_li 'Waybar survives the converge: after media has played in the first session, `coredumpctl list waybar` prints `No coredumps found`.'
 }
 
 # ---------------------------------------------------------------------------

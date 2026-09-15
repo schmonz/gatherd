@@ -636,6 +636,11 @@
   - move the clock/calendar and battery indicators (maybe others) off waybar and
     into conky
   - move the idle inhibitor all the way over, next to the power menu
+- **Drop the version gate from the Reload waybar handler**
+  `→ blocked: every machine on waybar > 0.15.0`: the handler sends SIGUSR2 again
+  on its own once pacman has a newer waybar (0.15.0's mpris module segfaults
+  after a SIGUSR2 reload, fixed upstream in a8162186). What stays behind is the
+  dead version check; the stale-binary skip may be worth keeping.
 - **1Password GUI quits when opening its first-run window (T60)**: the systray
   icon appears, but a left-click or the tray context-menu's "open" makes the
   1Password app exit instead of showing the unlock/first-run window. Reproduce on

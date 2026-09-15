@@ -25,7 +25,7 @@ Comment={{ item.comment | default('') }}
    from ~/.waterfox/native-messaging-hosts. #}
 Exec=env MOZ_APP_REMOTINGNAME=WebApp-{{ item.codename }} MOZ_LEGACY_HOME=1 waterfox --profile {{ target_home }}/.local/share/ice/waterfox-profiles/{{ item.codename }} --no-remote --new-instance {{ item.url }}
 {% else %}
-Exec=helium-browser --app={{ item.url }} --class=WebApp-{{ item.codename }} --name=WebApp-{{ item.codename }} --user-data-dir={{ target_home }}/.local/share/ice/profiles/{{ item.codename }}{{ load_extension }}
+Exec=helium-browser --app={{ item.url }} --class=WebApp-{{ item.codename }} --name=WebApp-{{ item.codename }} --user-data-dir={{ target_home }}/.local/share/ice/profiles/{{ item.profile | default(item.codename) }}{{ load_extension }}
 {% endif %}
 Terminal=false
 X-MultipleArgs=false

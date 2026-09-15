@@ -257,6 +257,66 @@ icloud_needs_reauth() { [ -f "$_icloud_state/icloud-needs-reauth" ]; }
 icloud_plaintext_config() { [ -f "$_icloud_state/icloud-plaintext-config" ]; }
 icloud_config_on_disk() { [ -s "${RCLONE_CONFIG:-$HOME/.config/rclone/rclone.conf}" ]; }
 
+# A web app's login is a cookie in its own browser profile, so these ask the
+# cookie jar rather than keeping a sentinel: nothing gatherd runs is in the loop
+# when a human signs in, and the browser is the only thing that knows.
+#
+# Both read a COPY. The file belongs to a running browser, which holds a lock
+# sqlite will not read through, and ?immutable=1 reads the main file only --
+# missing exactly the fresh login, which is still in the journal beside it.
+#
+# Expiry, not just presence: a signed-out browser can leave the name behind.
+# The units differ and both are measured here -- Firefox stores milliseconds
+# (Duolingo's jwt_token read 1821046783824), Chromium microseconds since 1601
+# (iCloud's X-APPLE-WEBAUTH-TOKEN read 13436576766233114, about 30 days out).
+_cookie_live() {
+    command -v sqlite3 >/dev/null 2>&1 || return 1
+    _db=$1 _query=$2
+    [ -f "$_db" ] || return 1
+    _tmp=$(mktemp -d) || return 1
+    cp "$_db" "$_tmp/db" 2>/dev/null || { rm -rf "$_tmp"; return 1; }
+    for _sfx in -journal -wal -shm; do
+        if [ -f "$_db$_sfx" ]; then cp "$_db$_sfx" "$_tmp/db$_sfx"; fi
+    done
+    _n=$(sqlite3 "$_tmp/db" "$_query" 2>/dev/null)
+    rm -rf "$_tmp"
+    [ "${_n:-0}" -gt 0 ] 2>/dev/null
+}
+
+_web_app_profiles="$HOME/.local/share/ice"
+
+duolingo_logged_in() {
+    _cookie_live "$_web_app_profiles/waterfox-profiles/Duolingo/cookies.sqlite" \
+        "select count(*) from moz_cookies where host = '.duolingo.com'
+           and name = 'jwt_token' and expiry / 1000 > cast(strftime('%s', 'now') as integer);"
+}
+
+icloud_web_logged_in() {
+    _cookie_live "$_web_app_profiles/profiles/iCloud/Default/Cookies" \
+        "select count(*) from cookies where host_key = '.icloud.com'
+           and name = 'X-APPLE-WEBAUTH-TOKEN'
+           and expires_utc / 1000000 - 11644473600 > cast(strftime('%s', 'now') as integer);"
+}
+
+# `claude auth status` prints JSON and does not prompt: measured at 0.3s on a
+# signed-in machine, which is cheap enough for a script that runs at every
+# login. The exit status is 0 either way, so the field is what answers.
+claude_code_logged_in() {
+    command -v claude >/dev/null 2>&1 || return 1
+    claude auth status 2>/dev/null | grep -q '"loggedIn"[[:space:]]*:[[:space:]]*true'
+}
+
+# The desktop app is Electron and keeps its session where Chromium would: a
+# sessionKey cookie for claude.ai in its own profile, measured at a month out.
+# Its config.json holds an oauth token cache too, but that file also carries
+# keys written before any sign-in, so the cookie is the narrower question.
+claude_desktop_logged_in() {
+    _cookie_live "$HOME/.config/Claude/Cookies" \
+        "select count(*) from cookies where host_key = '.claude.ai'
+           and name = 'sessionKey'
+           and expires_utc / 1000000 - 11644473600 > cast(strftime('%s', 'now') as integer);"
+}
+
 # ---------------------------------------------------------------------------
 # Section handlers
 # Pattern: if done → prune; else if absent → add; else → leave alone
@@ -289,10 +349,11 @@ section_tailscale() {
 }
 
 section_other_logins() {
-    # Only iCloud earns a standing reminder here. Claude Desktop/Code, Zoom, and
-    # JetBrains are deliberately not surfaced — logging into them is obvious on
-    # demand and didn't merit a recurring nag. PIA needs nothing here either: it
-    # logs in automatically from 1Password via gatherd-prompt-pia at every login.
+    # Every login a human still has to perform by hand, each pruned by asking
+    # whether it has happened -- a bullet nobody can tick off is a nag, which is
+    # why Zoom and JetBrains stay out: nothing here can tell whether they are
+    # signed in. PIA needs nothing either: it logs in automatically from
+    # 1Password via gatherd-prompt-pia at every login.
     #
     # Re-auth is periodic and unavoidable — the session token expires whatever
     # we do — so its bullet appears whenever a sync hits an auth error and goes
@@ -353,6 +414,32 @@ section_other_logins() {
     if [ "$_icloud_reauth" = yes ]; then
         add_bullet 'Other Logins' "$b_reauth"
     fi
+
+    # Ctrl+R is not a flourish: Waterfox starts extensions only after the window
+    # has opened, so the page the launcher passes on the command line loads
+    # before 1Password is running and never gets it. A reload is what attaches
+    # it, and Duolingo is a single-page app that never reloads itself.
+    b_duolingo='Duolingo: open it, press Ctrl+R (1Password only attaches to a page loaded after the browser has started), then sign in'
+    prune_section 'Other Logins' "$b_duolingo"
+    duolingo_logged_in || add_bullet 'Other Logins' "$b_duolingo"
+
+    # One sign-in for the four of them: they share a Helium profile (see
+    # web_apps in group_vars), so any one will do -- Notes because it is the
+    # quickest to confirm.
+    b_icloud_web='iCloud web apps: open Notes and sign in; Find My, Reminders and iCloud Drive share that sign-in'
+    prune_section 'Other Logins' "$b_icloud_web"
+    icloud_web_logged_in || add_bullet 'Other Logins' "$b_icloud_web"
+
+    # Two sign-ins, not one: Claude Code's authentication docs state that the
+    # desktop app authenticates separately, and nothing documents sharing a
+    # session between them.
+    b_claude_code='Claude Code: run `claude auth login`'
+    prune_section 'Other Logins' "$b_claude_code"
+    claude_code_logged_in || add_bullet 'Other Logins' "$b_claude_code"
+
+    b_claude_desktop='Claude Desktop: open it from the app menu and sign in (a separate sign-in from Claude Code)'
+    prune_section 'Other Logins' "$b_claude_desktop"
+    claude_desktop_logged_in || add_bullet 'Other Logins' "$b_claude_desktop"
 }
 
 section_unmanaged_wifi() {
@@ -566,6 +653,7 @@ section_verify() {
     verify_li 'The Package Installation window follows REST, not just the sentinel: once a commit newer than this repave lands and this boot'"'"'s REST run has ended without failing, `sudo git -C /usr/local/lib/gatherd pull`, then log out and in with no reboot: no window opens (`~/.local/bin/gatherd-show-slow-progress --check; echo $?` prints `1`). Reboot and log in straight away: the window is up and ends `Installation complete.`'
     verify_li 'Broadcom 802.11ac WiFi (BCM4360/4352 Macs): `nmcli -t -f TYPE,STATE dev | grep -x wifi:connected` prints a line on the first boot after the repave, and again after a reboot.'
     verify_li 'iCloud: next time the token expires, the notes show only `gatherd-icloud-config reconnect`, and after it `gatherd-icloud-config status` reads `encrypted, verified; fleet: in sync`.'
+    verify_li 'The login notes tick themselves off: sign in to Duolingo (Ctrl+R first), Notes, Claude Code and Claude Desktop, then `gatherd-post-setup-notes` leaves no `# Other Logins` section. Opening Reminders needs no second iCloud sign-in.'
     verify_li 'Waybar survives the converge: after media has played in the first session, `coredumpctl list waybar` prints `No coredumps found`.'
 }
 

@@ -675,6 +675,15 @@ replaces the current "iCloud syncs on unlock" verify step.
   the system one; (b) for Sway specifically, already using `config.d/` — personal
   dotfiles can add more fragments; (c) for files that don't compose, decide whether
   personal or system default wins and manage accordingly.
+- **1Password in the Duolingo web app needs a manual Ctrl+R**: Waterfox starts
+  extensions only after the window opens, so the page the launcher passes on the
+  command line loads before 1Password is running and never gets it
+  (`ext-backgroundPage.js:1155`; the converge's headless speech-model run means
+  the human's first launch is never the profile's first start). The setup notes
+  tell you to reload. Measured alternatives if that grates: a local stub page
+  that redirects after ~2s, or a two-file helper extension in the profile that
+  reloads 1s after extensions start -- the latter worked in a copy of the real
+  profile, and needs `xpinstall.signatures.required=false` there.
 - **More systray or waybar indicators**: LLM token usage and
   notifications. What else?
 - **Waybar declutter** `→ blocked: work through the current verify steps first`:

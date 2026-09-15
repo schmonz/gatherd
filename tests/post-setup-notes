@@ -332,5 +332,49 @@ generate
 _n=$(grep -c "gatherd-icloud-config pull" "$OUT" || :)
 assert "sweeps up copies stranded under a later section (found $_n)" test "$_n" -eq 1
 
+# 20. Login reminders clear themselves by asking the browser, not a sentinel.
+#     A cookie's presence is not enough -- a signed-out profile can keep the name
+#     with a past expiry -- and the two browsers store that expiry in different
+#     units, so each is written with a real one.
+seed_cookies() {  # seed_cookies <seconds-from-now>
+    _when=$(( $(date +%s) + $1 ))
+    mkdir -p "$WORK/home/.local/share/ice/waterfox-profiles/Duolingo" \
+             "$WORK/home/.local/share/ice/profiles/iCloud/Default" \
+             "$WORK/home/.config/Claude"
+    sqlite3 "$WORK/home/.local/share/ice/waterfox-profiles/Duolingo/cookies.sqlite" \
+        "create table if not exists moz_cookies (host text, name text, expiry integer);
+         delete from moz_cookies;
+         insert into moz_cookies values ('.duolingo.com', 'jwt_token', ${_when}000);"
+    for _db in "$WORK/home/.local/share/ice/profiles/iCloud/Default/Cookies" \
+               "$WORK/home/.config/Claude/Cookies"; do
+        sqlite3 "$_db" "create table if not exists cookies (host_key text, name text, expires_utc integer); delete from cookies;"
+    done
+    sqlite3 "$WORK/home/.local/share/ice/profiles/iCloud/Default/Cookies" \
+        "insert into cookies values ('.icloud.com', 'X-APPLE-WEBAUTH-TOKEN', $(( (_when + 11644473600) ))000000);"
+    sqlite3 "$WORK/home/.config/Claude/Cookies" \
+        "insert into cookies values ('.claude.ai', 'sessionKey', $(( (_when + 11644473600) ))000000);"
+}
+
+if command -v sqlite3 >/dev/null 2>&1; then
+    rm -f "$OUT"; generate
+    assert "asks for the Duolingo sign-in, with the reload that attaches 1Password" \
+        flows 'Duolingo: open it, press Ctrl+R'
+    assert "asks for one iCloud web sign-in on behalf of all four apps" \
+        flows 'iCloud web apps: open Notes and sign in'
+    assert "asks for the Claude Desktop sign-in"    flows 'Claude Desktop: open it from the app menu'
+
+    seed_cookies -60; generate
+    assert "an expired cookie still counts as signed out (Duolingo)" flows 'Duolingo: open it, press Ctrl+R'
+    assert "an expired cookie still counts as signed out (iCloud web)" flows 'iCloud web apps: open Notes and sign in'
+    assert "an expired cookie still counts as signed out (Claude Desktop)" flows 'Claude Desktop: open it from the app menu'
+
+    seed_cookies 86400; generate
+    refute "drops the Duolingo bullet once its cookie is live"    flows 'Duolingo: open it, press Ctrl+R'
+    refute "drops the iCloud web bullet once its cookie is live"  flows 'iCloud web apps: open Notes and sign in'
+    refute "drops the Claude Desktop bullet once its cookie is live" flows 'Claude Desktop: open it from the app menu'
+else
+    ok "sqlite3 absent: login-reminder cases skipped"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

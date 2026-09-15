@@ -785,14 +785,14 @@
 
 - name: Create web app Chromium profile directory
   ansible.builtin.file:
-    path: "{{ target_home }}/.local/share/ice/profiles/{{ item.codename }}/Default"
+    path: "{{ target_home }}/.local/share/ice/profiles/{{ item.profile | default(item.codename) }}/Default"
     state: directory
     mode: '0755'
   loop: "{{ web_apps }}"
 
 - name: Pre-seed web app Chromium profile
   ansible.builtin.copy:
-    dest: "{{ target_home }}/.local/share/ice/profiles/{{ item.codename }}/Default/Preferences"
+    dest: "{{ target_home }}/.local/share/ice/profiles/{{ item.profile | default(item.codename) }}/Default/Preferences"
     content: '{}'
     mode: '0600'
     force: false

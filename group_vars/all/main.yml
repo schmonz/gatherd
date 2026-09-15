@@ -468,6 +468,13 @@ web_apps:
   # (ids are permanent, so no brittle CDN URLs rot in the repo); an icon_url pins
   # a source for apps not on the App Store; otherwise DuckDuckGo's low-res favicon
   # is the fallback. Find an id at itunes.apple.com/search?term=NAME&entity=software.
+  #
+  # profile names a Helium profile shared by several apps, so one sign-in serves
+  # them all; it defaults to the codename. Helium apps sharing a profile run in
+  # one browser process -- a second launch opens its window in the first, so the
+  # profile is never written from two places -- and each window still reports
+  # its own app_id (chrome-www.icloud.com__notes-Default and so on), exactly as
+  # with separate profiles. Both measured.
   - name: ChatGPT
     url: https://chatgpt.com
     comment: LLM
@@ -528,22 +535,26 @@ web_apps:
     url: https://www.icloud.com/iclouddrive
     comment: iCloud
     codename: iCloudDrive
+    profile: iCloud
     # No standalone iCloud Drive app; Files is Apple's browser that fronts it.
     app_store_id: "1232058109"
   - name: Find My
     url: https://www.icloud.com/find
     comment: iCloud
     codename: FindMy
+    profile: iCloud
     app_store_id: "1514844621"
   - name: Notes
     url: https://www.icloud.com/notes
     comment: iCloud
     codename: Notes
+    profile: iCloud
     app_store_id: "1110145109"
   - name: Reminders
     url: https://www.icloud.com/reminders
     comment: iCloud
     codename: Reminders
+    profile: iCloud
     app_store_id: "1108187841"
   - name: Apple Maps
     url: https://beta.maps.apple.com

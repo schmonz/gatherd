@@ -15,6 +15,10 @@
   ansible.builtin.import_tasks: applesmc.yml
   when: has_applesmc
 
+- name: Import Broadcom wl WiFi tasks
+  ansible.builtin.import_tasks: broadcom_wl.yml
+  when: has_broadcom_wl
+
 - name: Import FaceTime HD tasks
   ansible.builtin.import_tasks: facetimehd.yml
   when: has_facetimehd

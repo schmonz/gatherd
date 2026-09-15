@@ -5,6 +5,7 @@ has_resume: true
 has_lid_events: true
 has_powerbutton_events: true
 has_avs_audio: false
+has_broadcom_wl: false
 has_ambient_light_sensor: false
 has_applesmc: false
 has_cros_fkeys: false

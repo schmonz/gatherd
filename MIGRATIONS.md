@@ -271,6 +271,11 @@ unexpected path) exits nonzero, which is the answer that licenses deletion.
   check: grep -q "^exec clight$" "$TARGET_HOME/.config/sway/config.d/autostart_applications"
   fresh-install expectation: absent (permanent: upstream ships it only where clight is installed)
   measured: 2026-09-01 absent
+- roles/hardware/tasks/broadcom_wl.yml:19 — Unload b43, which claims the card but cannot run it
+  shape: state: absent
+  thing: b43 loaded
+  check: lsmod | grep -qw b43
+  fresh-install expectation: absent (permanent: b43 loads only on a Broadcom card; on a BCM4360 it is present at first boot, having failed to probe the card, until this task runs)
 - roles/system/tasks/aurutils.yml:51 — Clear a stale repository lock left by a killed build
   shape: state: absent
   thing: stale repo lock

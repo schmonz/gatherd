@@ -151,6 +151,21 @@
     has_facetimehd: true
   when: "'14e4:1570' in _lspci.stdout"
 
+# Broadcom 802.11ac WiFi (BCM4360, BCM4352), which no in-kernel driver can run:
+# on squirrel-zapper's BCM4360, b43 fails to probe the wireless core with
+# "FOUND UNSUPPORTED PHY (Analog 12, Type 11 (AC))". Only these, because the wl
+# package blacklists every in-kernel Broadcom driver; for the older cards in
+# EndeavourOS's broadcom-wl_detect.sh list, which it only uses to ask, that can
+# swap out a driver that worked. IDs per pci.ids: 43a0 and 4360 are BCM4360,
+# 43b1 is BCM4352; only 43a0 has been measured.
+- name: Detect has_broadcom_wl
+  vars:
+    _broadcom_wl_ids: ["14e4:43a0", "14e4:4360", "14e4:43b1"]
+    _pci_ids: "{{ _lspci.stdout_lines | map('regex_replace', '^\\S+ \\S+ (\\S+).*$', '\\1') | list }}"
+  ansible.builtin.set_fact:
+    has_broadcom_wl: true
+  when: _pci_ids | intersect(_broadcom_wl_ids) | length > 0
+
 # MacBookPro5,2 exposes a phantom LVDS-2 output that confuses display layout.
 # Requires GPU driver to be loaded — may be false in a pre-driver environment.
 - name: Check for phantom LVDS-2 display
@@ -427,6 +442,7 @@
     has_lid_events: "{{ has_lid_events }}"
     has_powerbutton_events: "{{ has_powerbutton_events }}"
     has_avs_audio: "{{ has_avs_audio }}"
+    has_broadcom_wl: "{{ has_broadcom_wl }}"
     has_ambient_light_sensor: "{{ has_ambient_light_sensor }}"
     has_applesmc: "{{ has_applesmc }}"
     has_cros_fkeys: "{{ has_cros_fkeys }}"

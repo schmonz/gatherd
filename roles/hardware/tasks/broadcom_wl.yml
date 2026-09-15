@@ -1,0 +1,33 @@
+---
+# The dkms flavour because it is the only one left: `broadcom-wl` is gone from
+# the repos, which is why the EndeavourOS installer's own
+# `pacman -S --needed broadcom-wl` now fails and leaves a Mac with no WiFi.
+- name: Install the Broadcom wl WiFi driver
+  community.general.pacman:
+    name: broadcom-wl-dkms
+    state: present
+
+# A failed dkms build does not fail the pacman transaction (facetimehd's did not
+# here), so ask for the module itself before unloading anything.
+- name: Check that the wl module was built for this kernel
+  ansible.builtin.command: modinfo -F filename wl
+  changed_when: false
+
+# The package blacklists b43 from the next boot on; without unloading it now,
+# WiFi stays dead until a reboot. On squirrel-zapper unloading b43 released bcma
+# and ssb with it, which is what frees the card for wl.
+- name: Unload b43, which claims the card but cannot run it
+  community.general.modprobe:
+    name: b43
+    state: absent
+
+- name: Load the Broadcom wl WiFi driver
+  community.general.modprobe:
+    name: wl
+    state: present
+
+# wl loads fine without claiming anything when something still holds the card,
+# which would otherwise pass silently until someone looked for WiFi.
+- name: Confirm wl has claimed the card
+  ansible.builtin.shell: set -- /sys/bus/pci/drivers/wl/0000:*; test -e "$1"
+  changed_when: false

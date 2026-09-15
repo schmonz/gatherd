@@ -35,6 +35,7 @@ ALLOWED = {
     'keyd': 'hardware-gated (has_cros_fkeys)',
     'thinkfan': 'hardware-gated (has_thinkpad_hardware)',
     'mbpfan': 'hardware-gated (has_applesmc)',
+    'broadcom-wl-dkms': 'hardware-gated (has_broadcom_wl)',
     'facetimehd-dkms': 'hardware-gated (has_facetimehd)',
     'facetimehd-firmware': 'hardware-gated (has_facetimehd), AUR dep of facetimehd-dkms',
     'iio-sensor-proxy': 'hardware-gated (has_screen_backlight/has_kbd_backlight)',

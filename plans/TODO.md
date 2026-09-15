@@ -8,6 +8,52 @@
 > `scripts/gatherd-post-setup-notes`, then delete the item here. git log is the
 > record of what was done; this file is not.
 
+## iCloud sync never runs on its own
+
+**What happens.** gtklock's `unlock-command` is the only automatic trigger
+(`roles/desktop/templates/gtklock-config.ini.j2`; nothing else calls
+`gatherd-icloud-sync`). It fires, but at that moment 1Password cannot answer.
+Measured on the MacBookAir7,1 repave, 2026-09-15, via a tracing wrapper around
+the unlock command: at 17:00:56 `op read` failed with `connecting to desktop
+app: connection reset`, `not_ready()` matched, and the script exited 0 with no
+sync and no stamp. The same thing happened at the earlier unlock (stamp stayed
+at 14:06). A manual `op read` a few minutes later raised a 1Password
+authorization prompt. So "unlock means 1Password is reachable again" (the
+gtklock template's comment) is false, and `not_ready()`'s "the login path
+retries" describes a login trigger that does not exist.
+
+**Design.** Decouple *getting the rclone config password* from *syncing*, so a
+sync trigger no longer needs 1Password to be unlocked at that instant.
+
+1. `gatherd-icloud-password` caches the password in the kernel user keyring
+   after any successful `op read`: `keyctl padd user gatherd-icloud @u`, with
+   `keyctl timeout` (12h, say). It reads the cache first and falls back to
+   `op`. keyutils is already in `tests/base-manifest.txt`.
+   - Held in memory only: gone at reboot and after the timeout, never written to
+     disk. Any process running as this user can read it without asking. That
+     is weaker than `op`, which had 1Password authorize its caller (the prompt
+     above), and it is the real cost of this design.
+   - Not gnome-keyring: `keyring.yml` makes that keyring passwordless on purpose
+     (see `scripts/claude-desktop`), so it would put the password on disk next
+     to what it protects.
+2. Add a systemd user timer that runs `gatherd-icloud-sync --if-due` every 15–30
+   min, so a sync happens once 1Password has been unlocked for any reason, not
+   only right at a screen unlock. Keep the unlock trigger too.
+3. Seed the cache when a human is known to be present and 1Password unlocked:
+   `gatherd-icloud-config status` and `pull` already call `op`.
+
+**Measure before building:**
+- Does `op read` against a locked 1Password always raise a prompt, or sometimes
+  fail silently like the unlock-time `connection reset`? If a locked vault
+  always prompts, a timer with no cache would prompt every 15 minutes, which
+  rules out step 2 without step 1.
+- Does 1Password lock whenever gtklock does (its "lock on system lock"
+  setting), or only after its own idle timeout?
+
+**Done when** `rm -f ~/.local/state/gatherd/icloud-sync.stamp`, lock, unlock,
+and within a minute the stamp is back, **without** touching 1Password. That
+replaces the current "iCloud syncs on unlock" verify step.
+
 ## Status legend
 
 - `→ planned: <path>` — a written spec/plan exists; execute that, don't freelance.

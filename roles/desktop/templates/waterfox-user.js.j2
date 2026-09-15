@@ -35,6 +35,12 @@ user_pref("sidebar.verticalTabs", false);
 // homepage, which the command-line URL then supersedes: exactly one tab, always.
 user_pref("browser.startup.page", 1);
 user_pref("browser.sessionstore.resume_from_crash", false);
+// ...which still leaves the "Open previous tabs?" bar. SessionWindowUI.sys.mjs
+// in Waterfox's omni.ja shows it on the second start of a profile that has a
+// session to restore, and returns early for any negative count. The converge's
+// headless speech-model run is the first start, so the bar greeted the human's
+// very first launch.
+user_pref("browser.startup.couldRestoreSession.count", -1);
 
 // The speaking exercises need the microphone, and the permission doorhanger is
 // anchored inside #nav-bar -- which userChrome.css collapses to make this look

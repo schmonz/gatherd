@@ -33,7 +33,9 @@ command -v "$browser" >/dev/null 2>&1 || {
     exit 1
 }
 
-"$browser" --headless --profile "$profile" --no-remote about:blank >/dev/null 2>&1 &
+# MOZ_LEGACY_HOME=1 for the same reason web-app.desktop.j2 sets it: without it
+# Waterfox makes an empty ~/Waterfox, and this run was the one still doing so.
+MOZ_LEGACY_HOME=1 "$browser" --headless --profile "$profile" --no-remote about:blank >/dev/null 2>&1 &
 browser_pid=$!
 # Only ever kill the process this script started.
 trap 'kill "$browser_pid" 2>/dev/null || true' EXIT INT TERM

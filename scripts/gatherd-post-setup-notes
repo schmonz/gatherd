@@ -45,16 +45,6 @@ section_remove() {
     ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
 }
 
-# Remove only the boilerplate bullets this script generated for a section
-# (passed as arguments), leaving any lines you added by hand. If nothing of
-# yours remains under the header, drop the header too. This is how "done" steps
-# get pruned without ever eating your own notes.
-# Drop boilerplate bullets wherever they sit, ignoring section boundaries. Needed
-# because h() and li() both append at end of file: when a bullet is added while
-# its header already exists further up, h() is skipped and the bullet lands under
-# whatever section is currently last. prune_section is scoped to its own header
-# and so can never reach those orphans. Matching is on the whole rendered bullet,
-# so this only ever removes text this script itself wrote.
 # Append bullets at the END of an existing section, before the next "# " header
 # (or at EOF for the last section). h() and li() can only append at end of file,
 # which is right for a section being created and wrong for one that already
@@ -63,12 +53,32 @@ append_to_section() {
     _hdr="$1"; shift
     _new=$(for _b in "$@"; do wrap_bullet "$_b"; done)
     [ -n "$_new" ] || return 0
+    # Blank lines are held back while inside the section, so the new bullets
+    # land after its last line rather than after the gap before the next header.
     APPEND_NEW="$_new" awk -v hdr="# $_hdr" '
         $0 == hdr           { print; inside = 1; next }
+        inside && /^$/      { gap = gap "\n"; next }
         inside && /^# /     { print ENVIRON["APPEND_NEW"]; inside = 0 }
+        inside              { printf "%s", gap; gap = "" }
+        !inside && gap != "" { printf "%s", gap; gap = "" }
                             { print }
-        END                 { if (inside) print ENVIRON["APPEND_NEW"] }
+        END                 { if (inside) print ENVIRON["APPEND_NEW"]; printf "%s", gap }
     ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+}
+
+# Add one bullet to a section that is in the file, or start the section at the
+# end of the file. `h` and `li` alone only append at end of file, which put a
+# bullet for a section further up under whichever section came last, where
+# prune_section could not see it, so each run added another copy. A section
+# holding nothing hand-written loses its header when pruned, so it can still
+# move to the end; it just never duplicates.
+add_bullet() {
+    if section_present "$1"; then
+        append_to_section "$1" "$2"
+    else
+        h "$1"
+        li "$2"
+    fi
 }
 
 # Where Verify remembers what it has already offered you. Without this the whole
@@ -106,6 +116,10 @@ verify_li() {
     fi
 }
 
+# Drop boilerplate bullets wherever they sit, ignoring section boundaries: an
+# end-of-file append once stranded them under whichever section came last, out
+# of prune_section's reach. Matching is on the whole rendered bullet, so a line
+# is removed only if it is word for word one this script writes.
 prune_bullets_anywhere() {
     _own=$(for _b in "$@"; do wrap_bullet "$_b"; printf '@@PRUNE_SEP@@\n'; done)
     PRUNE_OWN="$_own" awk '
@@ -129,6 +143,10 @@ prune_bullets_anywhere() {
     ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
 }
 
+# Remove only the boilerplate bullets this script generated for a section
+# (passed as arguments), leaving any lines you added by hand. If nothing of
+# yours remains under the header, drop the header too. This is how "done" steps
+# get pruned without ever eating your own notes.
 prune_section() {
     _name=$1
     shift
@@ -173,6 +191,9 @@ prune_section() {
                        { print }
         END            { if (inseg) flush() }
     ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+    # Copies that an end-of-file append left under some later section, from
+    # before add_bullet existed. Without this they would outlive every fix.
+    prune_bullets_anywhere "$@"
 }
 
 # Remove a section's DERIVED bullets while keeping anything you wrote under the
@@ -234,6 +255,7 @@ _icloud_state="$HOME/.local/state/gatherd"
 icloud_fleet_ok()    { [ -f "$_icloud_state/icloud-fleet-ok" ]; }
 icloud_needs_reauth() { [ -f "$_icloud_state/icloud-needs-reauth" ]; }
 icloud_plaintext_config() { [ -f "$_icloud_state/icloud-plaintext-config" ]; }
+icloud_config_on_disk() { [ -s "${RCLONE_CONFIG:-$HOME/.config/rclone/rclone.conf}" ]; }
 
 # ---------------------------------------------------------------------------
 # Section handlers
@@ -272,11 +294,9 @@ section_other_logins() {
     # demand and didn't merit a recurring nag. PIA needs nothing here either: it
     # logs in automatically from 1Password via gatherd-prompt-pia at every login.
     #
-    # Two mutually exclusive iCloud lines, both self-pruning. Bootstrap is a
-    # once-per-fleet step, so it only appears on a machine that has never seen a
-    # fleet config. Re-auth is periodic and unavoidable — the session token
-    # expires whatever we do — so it appears whenever a sync hits an auth error
-    # and disappears on the next success.
+    # Re-auth is periodic and unavoidable — the session token expires whatever
+    # we do — so its bullet appears whenever a sync hits an auth error and goes
+    # once sync, or gatherd-icloud-config, next reaches iCloud.
     # Lead with pull, not bootstrap. This bullet shows whenever icloud-fleet-ok
     # is missing, and this script cannot tell "no fleet config exists" from "this
     # machine has not fetched it yet" without calling op, which blocks on a locked
@@ -285,7 +305,10 @@ section_other_logins() {
     # wording sent a second machine through `rclone config` and a fresh 2FA.
     # pull itself says when bootstrap is the right step.
     b_bootstrap='iCloud: run `gatherd-icloud-config pull`, then `gatherd-icloud-config status` should read `encrypted, verified`. If pull says there is no fleet config yet with 1Password unlocked, this is the first machine: `rclone config` + 2FA, then `gatherd-icloud-config bootstrap`'
-    b_reauth='iCloud needs re-authentication: run `rclone config reconnect icloud:` and complete 2FA — every other machine picks it up automatically'
+    # reconnect publishes as well as re-authenticating: the fleet copy is usually
+    # just as dead, and until this machine pushes the repair no other machine
+    # has one to pick up.
+    b_reauth='iCloud needs re-authentication: run `gatherd-icloud-config reconnect` and complete 2FA'
     b_plaintext='iCloud config is plaintext (a live iCloud token sits unencrypted on disk): run `rclone config encryption set`'
 
     # The bullet this feature replaced. prune_section matches on bullet text, so
@@ -297,35 +320,38 @@ section_other_logins() {
     # machine that legitimately needs setup gets b_bootstrap below instead.
     prune_section 'Other Logins' 'iCloud: run `rclone config` and follow prompts to add a remote named `icloud`; complete 2FA when prompted'
     prune_section 'Other Logins' 'iCloud: run `gatherd-icloud-config bootstrap` (once per fleet; needs `rclone config` + 2FA first if this is the very first machine)'
+    prune_section 'Other Logins' 'iCloud needs re-authentication: run `rclone config reconnect icloud:` and complete 2FA — every other machine picks it up automatically'
+    prune_section 'Other Logins' 'iCloud needs re-authentication: run `rclone config reconnect icloud:`, complete 2FA, then `gatherd-icloud-config push`'
 
-    # Each branch prunes its own bullet before possibly re-adding it, not just
-    # when it's due to disappear: `li` only appends, so guarding the add with
-    # `section_present || h` (skip the header, not the bullet) still let a
-    # bullet that survived from the previous run get a second copy appended
-    # underneath it. Prune-then-add makes each bullet idempotent regardless of
-    # what the file already looked like.
-    if icloud_fleet_ok; then
-        prune_section 'Other Logins' "$b_bootstrap"
-    else
-        prune_section 'Other Logins' "$b_bootstrap"
-        section_present 'Other Logins' || h 'Other Logins'
-        li "$b_bootstrap"
+    # Each bullet is pruned before it is possibly re-added, so a copy surviving
+    # from the previous run never gains a second one beneath it.
+    #
+    # At most one of pull and reconnect, never both. With a config on disk that
+    # sync could not reach, reconnect is the step that covers both cases: it
+    # installs the fleet copy when another machine already repaired it, and
+    # re-authenticates otherwise. Pull cannot produce the `verified` its bullet
+    # promises there if the fleet is dead too. With no config on disk, the reauth
+    # sentinel is only sync failing its probe for want of one, and there is no
+    # remote to reconnect. The sentinel cannot tell an expired token from being
+    # offline, so an offline machine is told to reconnect until sync next works.
+    _icloud_reauth=no
+    icloud_needs_reauth && icloud_config_on_disk && _icloud_reauth=yes
+
+    prune_section 'Other Logins' "$b_bootstrap"
+    if ! icloud_config_on_disk || { ! icloud_fleet_ok && [ "$_icloud_reauth" = no ]; }; then
+        add_bullet 'Other Logins' "$b_bootstrap"
     fi
 
-    if icloud_needs_reauth; then
-        prune_section 'Other Logins' "$b_reauth"
-        section_present 'Other Logins' || h 'Other Logins'
-        li "$b_reauth"
-    else
-        prune_section 'Other Logins' "$b_reauth"
-    fi
-
+    # Ahead of reconnect: push refuses a plaintext config, so encryption is the
+    # step that has to come first when both are due.
+    prune_section 'Other Logins' "$b_plaintext"
     if icloud_plaintext_config; then
-        prune_section 'Other Logins' "$b_plaintext"
-        section_present 'Other Logins' || h 'Other Logins'
-        li "$b_plaintext"
-    else
-        prune_section 'Other Logins' "$b_plaintext"
+        add_bullet 'Other Logins' "$b_plaintext"
+    fi
+
+    prune_section 'Other Logins' "$b_reauth"
+    if [ "$_icloud_reauth" = yes ]; then
+        add_bullet 'Other Logins' "$b_reauth"
     fi
 }
 
@@ -499,8 +525,7 @@ section_vault() {
     # (the same reason gatherd-vault-pass-needed itself takes GATHERD_HOME).
     if "${GATHERD_HOME:-/usr/local/lib/gatherd}/scripts/gatherd-vault-pass-needed"; then
         prune_section 'Vault' "$b_enter"
-        section_present 'Vault' || h 'Vault'
-        li "$b_enter"
+        add_bullet 'Vault' "$b_enter"
     else
         prune_section 'Vault' "$b_enter"
     fi
@@ -553,6 +578,7 @@ section_verify() {
     verify_li 'The Package Installation window follows REST, not just the sentinel: once a commit newer than this repave lands and this boot'"'"'s REST run has ended without failing, `sudo git -C /usr/local/lib/gatherd pull`, then log out and in with no reboot: no window opens (`~/.local/bin/gatherd-show-slow-progress --check; echo $?` prints `1`). Reboot and log in straight away: the window is up and ends `Installation complete.`'
     verify_li 'Claude Code usage rides in waybar between the idle inhibitor and the CPU meter, showing Claude Desktop'"'"'s tray starburst and reading `n%·n%` with no spaces around the dot; hovering breaks out 5h and 7d with reset countdowns, and clicking opens the usage dashboard.'
     verify_li 'A soname gatherd cannot resolve reaches the login notes unasked: `gatherd-post-setup-notes && sed -n "/^# Libraries/,/^$/p" ~/.config/gatherd-post-setup.md` names it on a machine that has one and prints nothing on a machine that does not.'
+    verify_li 'iCloud: next time the token expires, the notes show only `gatherd-icloud-config reconnect`, and after it `gatherd-icloud-config status` reads `encrypted, verified; fleet: in sync`.'
     verify_li 'Everything gatherd built can find its libraries: `/usr/local/lib/gatherd/scripts/gatherd-assert-sonames` exits `0` and ends `every soname resolves`, and LocalSend opens its window.'
 }
 

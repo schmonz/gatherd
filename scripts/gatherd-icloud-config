@@ -8,7 +8,7 @@
 # encryption when it rewrites the file after a token refresh, so refreshed
 # configs stay distributable.
 #
-# Usage: gatherd-icloud-config {bootstrap|pull|push|status}
+# Usage: gatherd-icloud-config {bootstrap|pull|push|reconnect|status}
 
 set -eu
 
@@ -47,8 +47,18 @@ export RCLONE_PASSWORD_COMMAND="${RCLONE_PASSWORD_COMMAND:-$HOME/.local/bin/gath
 
 FLEET_OK="$STATE/icloud-fleet-ok"
 PLAINTEXT="$STATE/icloud-plaintext-config"
+REAUTH="$STATE/icloud-needs-reauth"
 
 mkdir -p "$STATE"
+
+# Every caller has just watched $CONFIG reach iCloud, which is exactly the
+# success gatherd-icloud-sync waits for before it clears $REAUTH. Waiting for
+# sync instead left the notes asking for a reconnect the human had already
+# done, because the notes regenerate at login ahead of the first sync.
+mark_fleet_ok() {
+    : > "$FLEET_OK"
+    rm -f "$REAUTH"
+}
 
 # A decrypted config is a live iCloud token in plaintext, so scratch space must
 # be tmpfs (per-user, gone at logout) — never disk, and never /tmp, which is
@@ -59,7 +69,15 @@ mkdir -p "$STATE"
 umask 077
 TMP=$(mktemp -d "$XDG_RUNTIME_DIR/gatherd-icloud.XXXXXX")
 chmod 700 "$TMP"
-trap 'rm -rf "$TMP"' EXIT
+# After `reconnect` has taken a fresh 2FA, any later failure (op timing out
+# while the human was busy with Apple's prompt is the likely one) leaves a
+# working config that only needs publishing. Say so, or the notes' "reconnect"
+# bullet sends them through 2FA again.
+RECONNECTED=
+trap '_rc=$?; rm -rf "$TMP"
+      if [ "$_rc" -ne 0 ] && [ -n "$RECONNECTED" ]; then
+          printf "gatherd-icloud-config: reconnected, but not published; run: gatherd-icloud-config push\n" >&2
+      fi' EXIT
 # A trap for a caught (non-EXIT) signal returns control to the interrupted
 # point rather than ending the script, so without an explicit exit here the
 # script would resume after cleanup with $TMP gone and every later write
@@ -68,17 +86,33 @@ trap 'rm -rf "$TMP"' EXIT
 # the different conventional value per signal (130/143/129).
 trap 'rm -rf "$TMP"; exit 130' INT TERM HUP
 
-doc_get()    { op document get "$GATHERD_OP_DOCUMENT" --vault "$GATHERD_OP_VAULT"; }
-doc_exists() { doc_get >/dev/null 2>&1; }
+# A read op could not make is not a document that does not exist. Treating the
+# two alike told a machine waiting on 1Password CLI access that the fleet had
+# no config and to bootstrap one, and let push and bootstrap create a second
+# document or password item beside the real one. Only op's own "isn't an item"
+# counts as absent (measured with op 2.39.0); every other failure is quoted.
+op_says_absent() { grep -q "isn't an item in the" "$TMP/op.err"; }
+op_unreadable()  { die "cannot read op://$GATHERD_OP_VAULT/$1 from 1Password: $(sed -n '/./{p;q}' "$TMP/op.err")"; }
+
+# Fills $TMP/fleet. Returns 0 when fetched, 1 when 1Password says there is no
+# such document, 2 when it could not say; callers capture it with `|| _rc=$?`.
+doc_fetch() {
+    op document get "$GATHERD_OP_DOCUMENT" --vault "$GATHERD_OP_VAULT" \
+        > "$TMP/fleet" 2> "$TMP/op.err" && return 0
+    op_says_absent && return 1
+    return 2
+}
 # Hand op the path, not the contents. The documented stdin form ("-" plus a
 # redirect) reports "expected data on stdin but none found" when stdin is a
 # redirected regular file rather than a pipe — op's own example pipes into it.
 # --file-name pins the stored filename so it does not vary with $RCLONE_CONFIG.
+# $2 is doc_fetch's answer, so the choice between edit and create rests on the
+# read the caller already vetted rather than on a second one that could fail.
 doc_put() {
     # op prints the new item's JSON on success; the caller says what happened in
     # its own words, so discard it rather than mixing machine output into a
     # human-facing command.
-    if doc_exists; then
+    if [ "$2" -eq 0 ]; then
         op document edit "$GATHERD_OP_DOCUMENT" "$1" \
             --vault "$GATHERD_OP_VAULT" --file-name "$GATHERD_OP_DOCUMENT" >/dev/null
     else
@@ -88,7 +122,9 @@ doc_put() {
 }
 
 # Reachability is the only definition of "this config works" that matters here.
-config_works() { RCLONE_CONFIG="$1" rclone lsd "$REMOTE:" >/dev/null 2>&1; }
+# rclone's reason stays in $TMP/probe, overwritten by every call, for the one
+# caller that has to tell a human why.
+config_works() { RCLONE_CONFIG="$1" rclone lsd "$REMOTE:" >/dev/null 2>"$TMP/probe"; }
 
 # A config that fails this is a live iCloud token sitting in plaintext.
 # bootstrap and push both gate publishing on it so neither path can be the
@@ -121,7 +157,8 @@ install_config() {
 # hasn't earned it (existing case), and neither has one that authenticates
 # but is plaintext — pull installing that silently is how a machine ends up
 # with a config that a later `pull` (via its push delegation) then refuses
-# to touch, with no warning anywhere that this was coming.
+# to touch, with no warning anywhere that this was coming. Returns 1 only for
+# an encrypted copy that cannot reach iCloud, leaving rclone's reason in $TMP/probe.
 note_fleet_install() {
     if ! config_encrypted "$CONFIG"; then
         # This warning goes to stderr, and gatherd-prompt-icloud (the login
@@ -132,17 +169,26 @@ note_fleet_install() {
         : > "$PLAINTEXT"
         warn "installed config from the fleet is not encrypted; run: rclone config encryption set"
     elif config_works "$CONFIG"; then
-        : > "$FLEET_OK"
+        mark_fleet_ok
+    else
+        return 1
     fi
 }
 
 cmd_pull() {
     if [ ! -s "$CONFIG" ]; then
-        doc_get > "$TMP/fleet" 2>/dev/null || die "no fleet config yet; run: gatherd-icloud-config bootstrap"
+        _fleet=0; doc_fetch || _fleet=$?
+        [ "$_fleet" -ne 1 ] || die "no fleet config yet; run: gatherd-icloud-config bootstrap"
+        [ "$_fleet" -ne 2 ] || op_unreadable "$GATHERD_OP_DOCUMENT"
         install_config "$TMP/fleet"
         # Install even when it doesn't authenticate: a human needs an
         # rclone.conf on disk to run `rclone config reconnect` against.
-        note_fleet_install
+        # But say so, and fail: this is the same dead-on-both-sides state the
+        # die at the bottom reports, reached one pull earlier, and exiting 0 in
+        # silence here read as success until `status` said otherwise.
+        note_fleet_install \
+            || die "installed the fleet config, but it cannot reach iCloud: $(tail -n1 "$TMP/probe")
+if that is an expired token, run: gatherd-icloud-config reconnect"
         return 0
     fi
 
@@ -157,38 +203,72 @@ cmd_pull() {
         return $?
     fi
 
-    doc_get > "$TMP/fleet" 2>/dev/null || die "local config does not work and no fleet config exists"
+    _fleet=0; doc_fetch || _fleet=$?
+    [ "$_fleet" -ne 1 ] || die "local config does not work and no fleet config exists"
+    [ "$_fleet" -ne 2 ] || op_unreadable "$GATHERD_OP_DOCUMENT"
     if config_works "$TMP/fleet"; then
         install_config "$TMP/fleet"
-        note_fleet_install
+        # `|| :` keeps set -e from turning a failed second probe into a silent
+        # exit; this branch has always reported success once the copy is in.
+        note_fleet_install || :
         return 0
     fi
 
     # Both copies are dead. Overwriting one with the other would look like
     # progress and be none, and would destroy the only config a human could
     # still repair with `rclone config reconnect`.
-    die "neither the local nor the fleet config authenticates; iCloud needs re-authentication"
+    die "neither the local nor the fleet config authenticates; iCloud needs re-authentication: gatherd-icloud-config reconnect"
 }
 
 cmd_push() {
     [ -s "$CONFIG" ] || die "no local config to publish"
     config_encrypted "$CONFIG" || die "local config is not encrypted; run: rclone config encryption set"
-    config_works "$CONFIG" || die "refusing to publish a config that cannot reach iCloud"
+    config_works "$CONFIG" || die "refusing to publish a config that cannot reach iCloud: $(tail -n1 "$TMP/probe")"
 
-    if doc_get > "$TMP/fleet" 2>/dev/null; then
+    _fleet=0; doc_fetch || _fleet=$?
+    [ "$_fleet" -ne 2 ] || op_unreadable "$GATHERD_OP_DOCUMENT"
+    if [ "$_fleet" -eq 0 ]; then
         # Compare decrypted contents: rclone's config encryption is
         # nonce-randomised, so two encryptions of identical content differ
         # byte-for-byte and a ciphertext comparison would re-upload every run.
         RCLONE_CONFIG="$CONFIG"    rclone config show > "$TMP/local.plain" 2>/dev/null || true
         RCLONE_CONFIG="$TMP/fleet" rclone config show > "$TMP/fleet.plain" 2>/dev/null || true
         if plain_configs_match "$TMP/local.plain" "$TMP/fleet.plain"; then
-            : > "$FLEET_OK"
+            mark_fleet_ok
             return 0
         fi
     fi
 
-    doc_put "$CONFIG"
-    : > "$FLEET_OK"
+    doc_put "$CONFIG" "$_fleet"
+    mark_fleet_ok
+}
+
+# Re-authenticating is only half the job: until the repaired config is pushed,
+# every other machine still pulls the dead one. push re-probes before it
+# publishes, so a reconnect that exits 0 without repairing anything still
+# cannot reach the fleet.
+#
+# An expired token expires everywhere, so every machine is told to reconnect.
+# The first one to do it fixes the fleet copy, and a second 2FA on any other
+# machine would only overwrite that fix with its own. Take the fleet's copy
+# when it already works. (Measured: `rclone config reconnect icloud:` repaired
+# squirrel-zapper's expired trust token on 2026-09-15.)
+cmd_reconnect() {
+    [ -s "$CONFIG" ] || die "no local config to reconnect; run: gatherd-icloud-config pull"
+    if ! config_works "$CONFIG"; then
+        _fleet=0; doc_fetch || _fleet=$?
+        [ "$_fleet" -ne 2 ] || op_unreadable "$GATHERD_OP_DOCUMENT"
+        if [ "$_fleet" -eq 0 ] && config_works "$TMP/fleet"; then
+            install_config "$TMP/fleet"
+            note_fleet_install || :
+            echo "Another machine already reconnected; installed the fleet config, no 2FA needed."
+            return 0
+        fi
+        RCLONE_CONFIG="$CONFIG" rclone config reconnect "$REMOTE:" \
+            || die "rclone could not reconnect $REMOTE:; nothing was published"
+        RECONNECTED=yes
+    fi
+    cmd_push
 }
 
 cmd_bootstrap() {
@@ -197,7 +277,8 @@ cmd_bootstrap() {
     # so here bootstrap does nothing but upload the document. A bootstrap that
     # assumed greenfield would re-encrypt an encrypted config or overwrite a
     # password item other machines will come to depend on.
-    if ! op item get "$GATHERD_OP_PASSWORD_ITEM" --vault "$GATHERD_OP_VAULT" >/dev/null 2>&1; then
+    if ! op item get "$GATHERD_OP_PASSWORD_ITEM" --vault "$GATHERD_OP_VAULT" >/dev/null 2>"$TMP/op.err"; then
+        op_says_absent || op_unreadable "$GATHERD_OP_PASSWORD_ITEM"
         op item create --category=password \
             --title "$GATHERD_OP_PASSWORD_ITEM" --vault "$GATHERD_OP_VAULT" --generate-password
         echo "Created the config password item. Now encrypt the config:"
@@ -208,10 +289,12 @@ cmd_bootstrap() {
 
     [ -s "$CONFIG" ] || die "no local rclone config; run 'rclone config' and add the '$REMOTE' remote first"
     config_encrypted "$CONFIG" || die "local config is not encrypted; run: rclone config encryption set"
-    config_works "$CONFIG" || die "local config does not authenticate; fix it before publishing it to the fleet"
+    config_works "$CONFIG" || die "local config does not authenticate; fix it before publishing it to the fleet: $(tail -n1 "$TMP/probe")"
 
-    doc_put "$CONFIG"
-    : > "$FLEET_OK"
+    _fleet=0; doc_fetch || _fleet=$?
+    [ "$_fleet" -ne 2 ] || op_unreadable "$GATHERD_OP_DOCUMENT"
+    doc_put "$CONFIG" "$_fleet"
+    mark_fleet_ok
     echo "Published the encrypted config to op://$GATHERD_OP_VAULT/$GATHERD_OP_DOCUMENT"
 }
 
@@ -232,8 +315,12 @@ cmd_status() {
         _reach=unreachable
     fi
 
-    if ! doc_get > "$TMP/fleet" 2>/dev/null; then
+    _rc=0; doc_fetch || _rc=$?
+    if [ "$_rc" -eq 1 ]; then
         _fleet=absent
+    elif [ "$_rc" -eq 2 ]; then
+        _fleet=unreadable
+        warn "cannot read op://$GATHERD_OP_VAULT/$GATHERD_OP_DOCUMENT from 1Password: $(sed -n '/./{p;q}' "$TMP/op.err")"
     elif [ "$_enc" = absent ]; then
         _fleet=unknown
     else
@@ -253,7 +340,7 @@ cmd_status() {
 
 # Self-pruning: any invocation (not just pull) that observes the config is
 # encrypted again clears the sentinel note_fleet_install set, the same way
-# gatherd-icloud-sync clears $REAUTH on its own next success — so fixing the
+# gatherd-icloud-sync (and mark_fleet_ok) clear $REAUTH on the next success — so fixing the
 # config by hand (`rclone config encryption set`) is enough, with no separate
 # "acknowledge this" step.
 config_encrypted "$CONFIG" && rm -f "$PLAINTEXT"
@@ -262,6 +349,7 @@ case "${1:-status}" in
     bootstrap) cmd_bootstrap ;;
     pull)      cmd_pull ;;
     push)      cmd_push ;;
+    reconnect) cmd_reconnect ;;
     status)    cmd_status ;;
-    *)         echo "usage: $0 {bootstrap|pull|push|status}" >&2; exit 2 ;;
+    *)         echo "usage: $0 {bootstrap|pull|push|reconnect|status}" >&2; exit 2 ;;
 esac

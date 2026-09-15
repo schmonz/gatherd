@@ -554,17 +554,27 @@ cfg_env() {
     # for the manifest specifically also keeps these tests hermetic against a
     # real ~/.config/gatherd/icloud.conf this machine might actually have.
     export GATHERD_ICLOUD_CONF="$C/no-such-manifest"
-    unset GATHERD_ICLOUD_REMOTE RCLONE_PASSWORD_COMMAND RCLONE_CALL_LOG RCLONE_CONFIG_SHOW_LOCKED
+    unset GATHERD_ICLOUD_REMOTE RCLONE_PASSWORD_COMMAND RCLONE_CALL_LOG RCLONE_CONFIG_SHOW_LOCKED \
+          FAKE_OP_GET_ERROR RCLONE_RECONNECT_FAILS
 }
 
 # op fake: documents are files under $FAKE_OP_DIR. Deliberately strict about how
 # the file is handed over — an earlier version accepted the contents on stdin,
 # which the real op does not, so every upload assertion passed against a call
 # that failed the moment it met a real vault.
+#
+# The not-found messages are op 2.39.0's, measured, because the script tells
+# "no such document" from every other failure by that text alone.
+# FAKE_OP_GET_ERROR makes every read fail with some other reason while writes
+# still succeed: the worst case, where a read that merely failed is taken for
+# "absent" and a write goes ahead and creates a second copy.
 fake_op_docs() {
-    fake_bin op 'case "$1 $2" in
+    fake_bin op 'if [ -n "${FAKE_OP_GET_ERROR:-}" ] && [ "$2" = get ]; then
+    echo "$FAKE_OP_GET_ERROR" >&2; exit 1
+fi
+case "$1 $2" in
     "document get")
-        [ -f "$FAKE_OP_DIR/doc" ] || { echo "not found" >&2; exit 1; }
+        [ -f "$FAKE_OP_DIR/doc" ] || { echo "[ERROR] 2026/09/15 09:53:30 \"$3\" isn'"'"'t an item in the \"Private\" vault. Specify the item with its UUID, name, or domain." >&2; exit 1; }
         cat "$FAKE_OP_DIR/doc" ;;
     "document create")
         if [ "$3" = "-" ]; then echo "expected data on stdin but none found" >&2; exit 1; fi
@@ -575,7 +585,7 @@ fake_op_docs() {
         [ -f "$4" ] || { echo "no such file: $4" >&2; exit 1; }
         cat "$4" > "$FAKE_OP_DIR/doc" ;;
     "item get")
-        [ -f "$FAKE_OP_DIR/pw" ] || { echo "not found" >&2; exit 1; } ;;
+        [ -f "$FAKE_OP_DIR/pw" ] || { echo "[ERROR] 2026/09/15 09:53:32 \"$3\" isn'"'"'t an item in the \"Private\" vault. Specify the item with its UUID, name, or domain." >&2; exit 1; } ;;
     "item create")
         printf secret123 > "$FAKE_OP_DIR/pw" ;;
     *) exit 0 ;;
@@ -625,6 +635,10 @@ fake_rclone_reachable() {
                 exit 1
             fi
             grep -v '^NONCE:' "$RCLONE_CONFIG" 2>/dev/null ;;
+        reconnect)
+            printf "reconnect %s\n" "$3" >> "${RCLONE_CALL_LOG:-/dev/null}"
+            [ -z "${RCLONE_RECONNECT_FAILS:-}" ] || exit 1
+            printf "\nRECONNECTED-WORKS\n" >> "$RCLONE_CONFIG" ;;
         *) exit 0 ;;
         esac ;;
     *) exit 0 ;;
@@ -664,11 +678,46 @@ assert_bytes 'broken local config byte-unchanged' LOCAL-BROKEN cat "$C/rclone.co
 # *some* rclone.conf on disk to run `rclone config reconnect` against — but
 # fleet-ok must not be set, since that flag is Task 7's signal that the fleet
 # round-trip actually worked, and here it provably didn't.
+#
+# It used to do all of that and exit 0 in silence, which on squirrel-zapper read
+# as success until `status` said `unreachable`. A second pull of the same
+# machine already died saying iCloud needs re-authentication; the first has to
+# say the same thing, and fail the same way.
 cfg_env 4; fake_op_docs; fake_rclone_reachable
-printf 'FLEET-DOES-NOT-AUTH' > "$C/op/doc"
-assert_ok 'pull with no local config installs an unverified fleet copy' gatherd-icloud-config pull
-assert_out 'the unverified copy still got installed' FLEET-DOES-NOT-AUTH cat "$C/rclone.conf"
+printf '# Encrypted rclone configuration File\nFLEET-DOES-NOT-AUTH' > "$C/op/doc"
+if gatherd-icloud-config pull >"$C/state/pull.out" 2>"$C/state/pull.err"; then
+    bad 'pull with no local config fails when the fleet copy cannot reach iCloud (expected failure)'
+else
+    ok 'pull with no local config fails when the fleet copy cannot reach iCloud'
+fi
+assert_ok 'the unverified copy still got installed' grep -q FLEET-DOES-NOT-AUTH "$C/rclone.conf"
 assert_fail 'an unverified pull did not record fleet-ok' test -f "$C/state/icloud-fleet-ok"
+assert_ok 'the unverified pull names the reconnect' \
+    grep -q 'gatherd-icloud-config reconnect' "$C/state/pull.err"
+assert_ok "and quotes rclone's own reason" grep -q '401 Unauthorized' "$C/state/pull.err"
+
+# The same dead copy, plaintext: its warning already names the step that has to
+# come first, and pull keeps reporting success for it as it always has.
+cfg_env 4p; fake_op_docs; fake_rclone_reachable
+printf 'FLEET-DOES-NOT-AUTH' > "$C/op/doc"
+assert_ok 'pull still succeeds installing a dead plaintext fleet copy' gatherd-icloud-config pull
+assert_ok 'and flags it as plaintext' test -f "$C/state/icloud-plaintext-config"
+
+# A round-trip that reached iCloud is what sync waits for before clearing the
+# reauth sentinel. The notes regenerate at login ahead of the first sync, so
+# leaving it to sync kept asking for a reconnect the human had just done.
+cfg_env 4r; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\nLOCAL-WORKS' > "$C/rclone.conf"
+: > "$C/state/icloud-needs-reauth"
+assert_ok 'push after a reconnect succeeds' gatherd-icloud-config push
+assert_fail 'and clears the reauth sentinel' test -f "$C/state/icloud-needs-reauth"
+
+cfg_env 4s; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\nLOCAL-BROKEN' > "$C/rclone.conf"
+printf '# Encrypted rclone configuration File\nALSO-BROKEN' > "$C/op/doc"
+: > "$C/state/icloud-needs-reauth"
+assert_fail 'a pull that reaches nothing fails' gatherd-icloud-config pull
+assert_ok 'and leaves the reauth sentinel alone' test -f "$C/state/icloud-needs-reauth"
 
 # CRITICAL: pull previously installed a plaintext-but-authenticating fleet
 # config, set fleet-ok, and printed nothing — a silent, successful-looking
@@ -903,6 +952,124 @@ assert_ok 'bootstrap publishes an already-encrypted, reachable config' gatherd-i
 assert_ok 'the published fleet doc matches the local config' cmp -s "$C/op/doc" "$C/rclone.conf"
 assert_bytes 'an already-present password item is not recreated' PRESET-SECRET cat "$C/op/pw"
 
+# ── 1Password that cannot answer ─────────────────────────────────────────────
+# A read op could not make is not a document that does not exist. squirrel-zapper
+# got "no fleet config yet; run: gatherd-icloud-config bootstrap" while the fleet
+# document sat in 1Password waiting for CLI access to be allowed -- advice that,
+# followed, publishes a new config over the fleet's.
+NOACCOUNT='No accounts configured for use with 1Password CLI.'
+
+cfg_env 30; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\nFLEET-WORKS' > "$C/op/doc"
+export FAKE_OP_GET_ERROR="$NOACCOUNT"
+gatherd-icloud-config pull >/dev/null 2>"$C/state/pull.err" && _rc=0 || _rc=$?
+assert_ok 'pull fails when 1Password cannot be read' test "$_rc" -ne 0
+assert_fail 'without calling the fleet config missing' grep -q 'no fleet config yet' "$C/state/pull.err"
+assert_ok "quoting op's reason instead" grep -qF "$NOACCOUNT" "$C/state/pull.err"
+assert_fail 'and installs nothing' test -e "$C/rclone.conf"
+
+cfg_env 31; fake_op_docs; fake_rclone_reachable
+gatherd-icloud-config pull >/dev/null 2>"$C/state/pull.err" && _rc=0 || _rc=$?
+assert_ok 'pull still says so when 1Password answers that there is no fleet config' \
+    grep -q 'no fleet config yet' "$C/state/pull.err"
+
+cfg_env 32; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\nLOCAL-BROKEN' > "$C/rclone.conf"
+export FAKE_OP_GET_ERROR="$NOACCOUNT"
+gatherd-icloud-config pull >/dev/null 2>"$C/state/pull.err" && _rc=0 || _rc=$?
+assert_fail 'a dead local config with an unreadable 1Password is not "no fleet config"' \
+    grep -q 'no fleet config exists' "$C/state/pull.err"
+assert_ok "and names op's reason" grep -qF "$NOACCOUNT" "$C/state/pull.err"
+
+cfg_env 33; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\nLOCAL-WORKS' > "$C/rclone.conf"
+printf '# Encrypted rclone configuration File\nFLEET-OTHER-WORKS' > "$C/op/doc"
+cp "$C/op/doc" "$C/state/doc-before"
+export FAKE_OP_GET_ERROR="$NOACCOUNT"
+assert_fail 'push fails when it cannot read the fleet document' gatherd-icloud-config push
+assert_ok 'rather than taking it for absent and writing over it' cmp -s "$C/state/doc-before" "$C/op/doc"
+
+cfg_env 34; fake_op_docs; fake_rclone_reachable
+printf PRESET-SECRET > "$C/op/pw"
+export FAKE_OP_GET_ERROR="$NOACCOUNT"
+assert_fail 'bootstrap fails when it cannot read the password item' gatherd-icloud-config bootstrap
+assert_bytes 'rather than generating a second fleet password' PRESET-SECRET cat "$C/op/pw"
+
+cfg_env 35; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\nLOCAL-WORKS' > "$C/rclone.conf"
+export FAKE_OP_GET_ERROR="$NOACCOUNT"
+assert_out 'status says unreadable, not absent, when 1Password cannot answer' \
+    'config: encrypted, verified; fleet: unreadable' gatherd-icloud-config status
+
+# rclone's reason, not just the verdict: on squirrel-zapper a 1Password waiting
+# for authorization made push say the config "cannot reach iCloud", which reads
+# as an expired token and sends the human to 2FA for nothing.
+cfg_env 36; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\nLOCAL-BROKEN' > "$C/rclone.conf"
+gatherd-icloud-config push >/dev/null 2>"$C/state/push.err" || :
+assert_ok "a refused push quotes rclone's reason" grep -q '401 Unauthorized' "$C/state/push.err"
+
+# ── reconnect ────────────────────────────────────────────────────────────────
+# Re-authenticating is only half the job: until the repaired config is pushed,
+# every other machine still pulls the dead one.
+
+cfg_env 40; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\nLOCAL-BROKEN' > "$C/rclone.conf"
+printf '# Encrypted rclone configuration File\nFLEET-BROKEN' > "$C/op/doc"
+: > "$C/state/icloud-needs-reauth"
+export RCLONE_CALL_LOG="$C/state/rclone.calls"
+assert_ok 'reconnect succeeds' gatherd-icloud-config reconnect
+assert_ok 'having asked rclone to reconnect the configured remote' grep -qx 'reconnect icloud:' "$C/state/rclone.calls"
+assert_ok 'and published the repaired config' grep -q RECONNECTED-WORKS "$C/op/doc"
+assert_ok 'earning fleet-ok' test -f "$C/state/icloud-fleet-ok"
+assert_fail 'and clearing the reauth sentinel' test -f "$C/state/icloud-needs-reauth"
+
+# Another machine already reconnected: take its copy instead of a second 2FA
+# that would overwrite it.
+cfg_env 40b; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\nLOCAL-BROKEN' > "$C/rclone.conf"
+printf '# Encrypted rclone configuration File\nFLEET-REPAIRED-WORKS' > "$C/op/doc"
+cp "$C/op/doc" "$C/state/doc-before"
+: > "$C/state/icloud-needs-reauth"
+export RCLONE_CALL_LOG="$C/state/rclone.calls"
+assert_ok 'reconnect succeeds when the fleet copy already works' gatherd-icloud-config reconnect
+assert_fail 'without asking rclone to reconnect' grep -q '^reconnect' "$C/state/rclone.calls"
+assert_ok 'installing the fleet copy' grep -q FLEET-REPAIRED-WORKS "$C/rclone.conf"
+assert_ok 'leaving the fleet document alone' cmp -s "$C/state/doc-before" "$C/op/doc"
+assert_fail 'and clearing the reauth sentinel' test -f "$C/state/icloud-needs-reauth"
+
+# 2FA done, publishing fails: the one thing left to run is push.
+cfg_env 40c; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\nLOCAL-BROKEN' > "$C/rclone.conf"
+printf '# Encrypted rclone configuration File\nFLEET-BROKEN' > "$C/op/doc"
+fake_bin op 'case "$1 $2" in
+    "document get") [ -f "$FAKE_OP_DIR/reconnected" ] && { echo "[ERROR] authorization timeout" >&2; exit 1; }
+                    : > "$FAKE_OP_DIR/reconnected"; cat "$FAKE_OP_DIR/doc" ;;
+    *) exit 0 ;;
+esac'
+gatherd-icloud-config reconnect >/dev/null 2>"$C/state/rc.err" && _rc=0 || _rc=$?
+assert_ok 'a reconnect whose publish fails exits non-zero' test "$_rc" -ne 0
+assert_ok 'saying push is what is left' grep -q 'run: gatherd-icloud-config push' "$C/state/rc.err"
+
+cfg_env 41; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\nLOCAL-BROKEN' > "$C/rclone.conf"
+printf '# Encrypted rclone configuration File\nFLEET-BROKEN' > "$C/op/doc"
+cp "$C/op/doc" "$C/state/doc-before"
+export RCLONE_RECONNECT_FAILS=1
+assert_fail 'reconnect fails when rclone does' gatherd-icloud-config reconnect
+assert_ok 'publishing nothing' cmp -s "$C/state/doc-before" "$C/op/doc"
+
+cfg_env 42; fake_op_docs; fake_rclone_reachable
+gatherd-icloud-config reconnect >/dev/null 2>"$C/state/rc.err" && _rc=0 || _rc=$?
+assert_ok 'reconnect with no local config fails' test "$_rc" -ne 0
+assert_ok 'pointing at pull' grep -q 'gatherd-icloud-config pull' "$C/state/rc.err"
+
+cfg_env 43; fake_op_docs; fake_rclone_reachable
+printf '# Encrypted rclone configuration File\nFLEET-BROKEN' > "$C/op/doc"
+gatherd-icloud-config pull >/dev/null 2>"$C/state/pull.err" || :
+assert_ok 'a dead pull now points at the reconnect subcommand' \
+    grep -q 'gatherd-icloud-config reconnect' "$C/state/pull.err"
+
 # ── RCLONE_PASSWORD_COMMAND ──────────────────────────────────────────────────
 # Ambient pam_env delivery is invisible outside a login session (a systemd
 # unit, `su -c`), so every probe this script makes must pin the password
@@ -977,7 +1144,7 @@ export SIGDIR="$C/sigtest"
 mkdir -p "$SIGDIR"
 # This op fake only handles "document get": it records the pid it was called
 # with (its parent is the gatherd-icloud-config process itself, since
-# doc_get() runs `op` directly with no intervening subshell) and then blocks,
+# doc_fetch() runs `op` directly with no intervening subshell) and then blocks,
 # bounded the same way and for the same reason as the lock tests above — an
 # unbounded wait would hang forever instead of failing if the signal handling
 # regresses and nothing ever unblocks it.

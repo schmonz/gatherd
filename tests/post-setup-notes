@@ -94,7 +94,7 @@ above() {  # above <header> <header> -- true when the first comes first
 
 generate() {
     HOME="$WORK/home" GATHERD_HOME="$WORK/gatherd" \
-        XDG_STATE_HOME="$WORK/state" \
+        XDG_STATE_HOME="$WORK/state" RCLONE_CONFIG='' \
         GATHERD_ASYNC_SENTINEL="${SENTINEL_OVERRIDE:-$SENTINEL}" \
         GATHERD_TEST_SONAMES="$SONAMES_MODE" sh "$NOTES" >/dev/null 2>&1
 }
@@ -133,7 +133,9 @@ assert "while keeping the bullet that is still due"                 has 'Enter p
 
 # 5. Notes written by hand under the header survive both branches. Pruning must
 #    only ever remove text this script itself wrote.
-printf -- '- my own note about the vault\n' >> "$OUT"
+# Under the header, not at end of file: the end of the file belongs to whichever
+# section is last, and that is not Vault.
+sed -i '/^# Vault$/a - my own note about the vault' "$OUT"
 generate
 assert "keeps a hand-written note while the reminder stands" has 'my own note about the vault'
 password_stored; generate
@@ -219,6 +221,116 @@ sonames broken; generate
 assert "the finding is back once the sentinel is"    has 'libayatana-indicator3.so.7'
 SENTINEL_OVERRIDE=/nonexistent generate
 refute "and gone again when the sentinel is not"     has 'libayatana-indicator3.so.7'
+
+# ------------------------------------------------------------- Other Logins
+#
+# squirrel-zapper, first login after a repave: the fleet document's iCloud token
+# had expired. pull installed it (encrypted, unreachable), sync then left
+# icloud-needs-reauth, and the notes told the human to run pull -- expecting
+# `encrypted, verified` it could never produce -- AND to reconnect. Only the
+# second was the job.
+
+ICLOUD_STATE="$WORK/home/.local/state/gatherd"
+ICLOUD_CONF="$WORK/home/.config/rclone/rclone.conf"
+PULL='gatherd-icloud-config pull'
+RECONNECT='gatherd-icloud-config reconnect'
+icloud_reset() {
+    rm -rf "$ICLOUD_STATE" "$ICLOUD_CONF"
+    mkdir -p "$ICLOUD_STATE" "$(dirname "$ICLOUD_CONF")"
+}
+config_on_disk() { printf '# Encrypted rclone configuration File\n' > "$ICLOUD_CONF"; }
+
+# 14. Nothing fetched yet: pull is the step.
+rm -f "$OUT"; icloud_reset; generate
+assert "points a machine with no config at pull"         flows "$PULL"
+refute "and does not ask it to reconnect"                flows "$RECONNECT"
+
+# 15. The squirrel-zapper state: a config on disk that sync could not reach.
+rm -f "$OUT"; icloud_reset; config_on_disk; : > "$ICLOUD_STATE/icloud-needs-reauth"
+generate
+assert "asks for re-authentication when the config on disk cannot reach iCloud" \
+    flows "$RECONNECT"
+refute "without also sending the human back to pull"     flows "$PULL"
+
+# 16. Sync with nothing to sync fails the same probe and leaves the same
+#     sentinel. There is no remote to reconnect; pull is still the step.
+rm -f "$OUT"; icloud_reset; : > "$ICLOUD_STATE/icloud-needs-reauth"
+generate
+assert "treats a reauth sentinel with no config on disk as not yet pulled" flows "$PULL"
+refute "rather than asking to reconnect a remote that is not there"       flows "$RECONNECT"
+
+# 17. Fixed: both gone.
+icloud_reset; config_on_disk; : > "$ICLOUD_STATE/icloud-fleet-ok"; generate
+refute "drops the pull bullet once the fleet round-trip worked" flows "$PULL"
+refute "and the reconnect bullet once sync reached iCloud"      flows "$RECONNECT"
+
+# 17a. Plaintext and dead at once: push refuses plaintext, so encryption has to
+#      be read first.
+rm -f "$OUT"; icloud_reset; config_on_disk
+: > "$ICLOUD_STATE/icloud-needs-reauth"; : > "$ICLOUD_STATE/icloud-plaintext-config"
+generate
+_enc=$(grep -n 'rclone config encryption set' "$OUT" | cut -d: -f1)
+_rec=$(grep -n 'gatherd-icloud-config reconnect' "$OUT" | cut -d: -f1)
+assert "puts encryption ahead of reconnect when both are due" \
+    test -n "$_enc" -a -n "$_rec" -a "${_enc:-0}" -lt "${_rec:-0}"
+
+# 18. The reconnect bullet this change reworded, pruned from a file that has it,
+#     wrapped exactly as squirrel-zapper's notes file had it.
+rm -f "$OUT"; icloud_reset
+cat > "$OUT" <<'EOF'
+# Other Logins
+- iCloud needs re-authentication: run `rclone config reconnect icloud:` and
+  complete 2FA — every other machine picks it up automatically
+EOF
+: > "$ICLOUD_STATE/icloud-fleet-ok"; config_on_disk; generate
+refute "prunes the old reconnect wording from an existing file" has 'picks it up automatically'
+
+# 18a. And the wording in between, which only ever reached squirrel-zapper.
+rm -f "$OUT"; icloud_reset
+cat > "$OUT" <<'EOF'
+# Other Logins
+- iCloud needs re-authentication: run `rclone config reconnect icloud:`,
+  complete 2FA, then `gatherd-icloud-config push`
+EOF
+: > "$ICLOUD_STATE/icloud-fleet-ok"; config_on_disk; generate
+refute "prunes the rclone-reconnect-then-push wording too" has 'rclone config reconnect'
+
+# 19. A section already in the file, with another section after it. `h` and
+#     `li` only append at end of file, so a bullet added to the earlier section
+#     lands under the later one, where prune_section -- which looks only between
+#     its own header and the next -- cannot see it to replace it. Every run then
+#     adds one more copy. Other Logins is last only in a file written in one
+#     pass; anything written after it (a hand-made section, or 1Password coming
+#     back when its agent socket goes away) leaves it mid-file.
+rm -f "$OUT"; icloud_reset; sonames clean
+cat > "$OUT" <<'EOF'
+Manual steps remaining:
+
+# Other Logins
+- my own note about iCloud
+
+# Scratch
+- something else entirely
+EOF
+generate; generate; generate
+_n=$(grep -c "gatherd-icloud-config pull" "$OUT" || :)
+assert "adds a bullet to a mid-file section once, not once per run (found $_n)" test "$_n" -eq 1
+_ol=$(grep -n '^# Other Logins$' "$OUT" | cut -d: -f1)
+_sc=$(grep -n '^# Scratch$' "$OUT" | cut -d: -f1)
+_pl=$(grep -n 'gatherd-icloud-config pull' "$OUT" | head -1 | cut -d: -f1)
+assert "under its own header, not the section after it" \
+    test -n "$_pl" -a "${_ol:-0}" -lt "${_pl:-0}" -a "${_pl:-0}" -lt "${_sc:-0}"
+# shellcheck disable=SC2016
+assert "keeping the hand-written notes in both sections" \
+    sh -c 'grep -q "my own note about iCloud" "$1" && grep -q "something else entirely" "$1"' _ "$OUT"
+
+# 19a. A file the old appends already piled copies into is cleaned up.
+# shellcheck disable=SC2016
+_blt=$(sed -n '/^- iCloud: run `gatherd-icloud-config pull`/,/bootstrap`$/p' "$OUT")
+printf '%s\n%s\n' "$_blt" "$_blt" >> "$OUT"
+generate
+_n=$(grep -c "gatherd-icloud-config pull" "$OUT" || :)
+assert "sweeps up copies stranded under a later section (found $_n)" test "$_n" -eq 1
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

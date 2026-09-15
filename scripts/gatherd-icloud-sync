@@ -235,7 +235,7 @@ if ! probe=$(rclone lsd "$ICLOUD_REMOTE:" 2>&1 >/dev/null); then
         exit 0
     fi
     : > "$REAUTH"
-    say "cannot reach iCloud; it may need re-authentication (rclone config reconnect $ICLOUD_REMOTE:), or the rclone config may be corrupt or missing"
+    say "cannot reach iCloud; it may need re-authentication (gatherd-icloud-config reconnect), or the rclone config may be corrupt or missing"
     exit 1
 fi
 rm -f "$REAUTH"

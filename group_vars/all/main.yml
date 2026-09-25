@@ -397,6 +397,32 @@ aur_sync_command: >-
 aur_build_environment:
   PACMAN_AUTH: /bin/false
   AUR_PACMAN_AUTH: /bin/false
+  # Empty, so a build never inherits the invoking session's runtime directory.
+  #
+  # Driving the playbook over SSH as root -- what tests/test does -- gets
+  # XDG_RUNTIME_DIR=/run/user/0 from pam_systemd (/etc/pam.d/system-login:20),
+  # and `su`-ing to target_user carries it into makepkg unchanged: /etc/pam.d/su
+  # has no pam_systemd of its own to replace it. A build that consults it then
+  # addresses root's directory as the wrong user. arch-update 4.4.2 dies there --
+  # `mkdir: cannot create directory '/run/user/0': Permission denied`, exit 16 --
+  # which aborted the whole fast AUR tier.
+  #
+  # Empty rather than a directory of our own, because upstream already handles
+  # "no runtime dir": arch-update's suite wraps each case in
+  # `XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"`. That guard fires on empty as
+  # readily as on unset -- `:-`, not `-` -- so the build lands in /tmp and
+  # passes. Measured through Ansible's own environment:, which sets the variable
+  # to an empty string rather than removing it: the child sees SET=[] and
+  # `${XDG_RUNTIME_DIR:-/tmp}` evaluates to /tmp.
+  #
+  # This is a harness fix with a deliberately small production footprint. The
+  # real service never had the problem: gatherd-async.service is a system unit
+  # with neither Environment= nor PAMName=, so it has no XDG_RUNTIME_DIR to leak,
+  # and arch-update 4.4.0 duly built under it on 2026-09-15. Clearing one
+  # inherited name is not the capability boundary PACMAN_AUTH draws above --
+  # XDG_STATE_HOME, XDG_CACHE_HOME and TMPDIR are inherited the same way and are
+  # still live. It fixes the one variable measured to break a build.
+  XDG_RUNTIME_DIR: ""
 
 # Chromium extensions loaded into the web app profiles: every app, or only the
 # ones named in `apps`. Helium cannot install from the Web Store (the update URL

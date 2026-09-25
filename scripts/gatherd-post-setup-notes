@@ -655,6 +655,7 @@ section_verify() {
     verify_li 'iCloud: next time the token expires, the notes show only `gatherd-icloud-config reconnect`, and after it `gatherd-icloud-config status` reads `encrypted, verified; fleet: in sync`.'
     verify_li 'The login notes tick themselves off: sign in to Duolingo (Ctrl+R first), Notes, Claude Code and Claude Desktop, then `gatherd-post-setup-notes` leaves no `# Other Logins` section. Opening Reminders needs no second iCloud sign-in.'
     verify_li 'Waybar survives the converge: after media has played in the first session, `coredumpctl list waybar` prints `No coredumps found`.'
+    verify_li 'The converge says where its time went: `journalctl -u gatherd-async.service | grep -A12 "TASKS RECAP"` lists the slowest tasks, longest first, with no `Skipping callback plugin` warning anywhere above it.'
 }
 
 # ---------------------------------------------------------------------------

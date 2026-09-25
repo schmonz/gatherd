@@ -123,7 +123,7 @@ rest_packages:
   # failure on a fresh machine. Grouped by what needs them.
   - archlinux-contrib      # arch-update
   - htmlq                  # arch-update
-  - scdoc                  # arch-update, xdg-terminal-exec
+  - scdoc                  # arch-update
   - rpcsvc-proto           # autofs
   - sssd                   # autofs
   - go                     # captive-browser-git, claude-cowork-service
@@ -167,11 +167,12 @@ rest_packages:
   - python-cryptography    # python-validity
   - python-pyusb           # python-validity
   - python-yaml            # python-validity
-  - electron42             # slack-electron, teams-for-linux-electron-bin
+  - electron44             # slack-electron
+  - asar                   # teams-for-linux-electron-bin
+  - electron43             # teams-for-linux-electron-bin
   - nodejs                 # teams-for-linux-electron-bin
   - yaml-cpp               # thinkfan
   - timeshift              # timeshift-autosnap
-  - electron43             # vesktop-bin
   # claude-desktop: Cowork runs its sandbox in a QEMU VM. Upstream ships the VM
   # stack as a Recommends:, which apt installs by default; the AUR package makes
   # it a hard dependency to match. x86_64 names only -- the PKGBUILD's
@@ -188,6 +189,10 @@ rest_packages:
   - xcb-util-cursor        # zoom
   - xcb-util-image         # zoom
   - xcb-util-wm            # zoom
+  # terminal launcher for Terminal=true desktop entries. Was in aur_packages;
+  # the AUR dropped it once it landed in [extra], and aur-depends resolves no
+  # target for the bare name, which failed the whole fast AUR tier closed.
+  - xdg-terminal-exec
   # cloud sync. Was in aur_slow_packages, but rclone has been in [extra] for a
   # while; yay installed it from there regardless of which list named it.
   - rclone
@@ -301,7 +306,6 @@ aur_packages:
   - timeshift-autosnap
   # update notifier
   - arch-update
-  - xdg-terminal-exec
   # sheet music at the piano: the music-stand viewer. Chosen over papers
   # because it can turn pages BACKWARDS by touch (configurable tap zones),
   # which papers structurally cannot - see music_stand_viewer below.

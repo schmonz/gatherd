@@ -528,6 +528,12 @@ def vendored_srcinfo(root, name):
     except (OSError, subprocess.TimeoutExpired) as failure:
         raise CannotRun(f'cannot run makepkg --printsrcinfo in '
                         f'packaging/{name}: {failure}') from failure
+    # 12 is makepkg's E_PKGBUILD_ERROR: the PKGBUILD itself is broken, which is
+    # this repo's defect. Any other failure (10 is running as root) says
+    # nothing about the PKGBUILD, so it stays "could not run".
+    if done.returncode == 12:
+        raise Violation(f'packaging/{name}/PKGBUILD is broken: '
+                        f'{done.stderr.strip()}')
     if done.returncode != 0:
         raise CannotRun(f'makepkg --printsrcinfo failed in packaging/{name}: '
                         f'{done.stderr.strip()}')

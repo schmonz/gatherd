@@ -476,6 +476,15 @@ assert_rc "a missing .SRCINFO exits 1" 1
 assert_says "and says so" "probe-vendored/.SRCINFO is missing"
 (cd "$PROBE" && makepkg --printsrcinfo > .SRCINFO)
 
+# 21b. A PKGBUILD makepkg rejects is this repo's defect, not a gate that could
+#      not run: --printsrcinfo exits 12 and that is a violation.
+cp "$PROBE/PKGBUILD" "$WORK/pristine-probe-pkgbuild"
+sed -i '/^pkgver=/d' "$PROBE/PKGBUILD"
+assert_rc "a PKGBUILD makepkg rejects exits 1" 1
+assert_says "and names the PKGBUILD" "probe-vendored/PKGBUILD is broken"
+cp "$WORK/pristine-probe-pkgbuild" "$PROBE/PKGBUILD"
+rm "$WORK/pristine-probe-pkgbuild"
+
 # 22. A loop this gate cannot resolve is a failure, never "builds nothing".
 sed -i 's/loop: "{{ probe_vendored_packages }}"/loop: "{{ probe_vendored_packages | list }}"/' \
     "$WORK/repo/roles/aur/tasks/slow.yml"

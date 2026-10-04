@@ -85,7 +85,7 @@ spelling of each is measured in the plan; aur-build(1) lists `-d`,
 `--no-sync`, `-n` and `--margs`, and man pages here have been wrong before. It runs with
 `aur_build_environment`, so makepkg still cannot reach for root.
 
-### 3.2 Two lists, one task file
+### 3.2 Two lists, two small build sites
 
 ```yaml
 vendored_packages:          # built in system REST, after aurutils.yml
@@ -99,8 +99,12 @@ vendored_slow_packages:     # built in the slow AUR tier
 Named to match `aur_packages` / `aur_slow_packages`, which is also what
 `gatherd-check-package-tiers`' `TIER_VAR` (`\w*_packages`) already classifies.
 
-`tasks/vendored_build.yml` (location chosen in the plan) takes a list and, for
-each package:
+Each list gets its own three tasks, in the one file that builds it
+(`roles/system/tasks/vendored.yml`, `roles/aur/tasks/slow.yml`), rather than
+one shared task file included twice. `gatherd-check-aur-deps`' `visit()` returns
+early for a file already in `seen`, so a file included from two places is
+checked at the first and invisible at the second -- the slow-tier builds would
+never be checked. For each package:
 
 1. copies `{{ setup_dir }}/packaging/<pkg>/` to
    `{{ target_home }}/.cache/gatherd/vendored/<pkg>/`, owned by `target_user`
@@ -116,10 +120,18 @@ Then one task installs the whole list by name:
 
 - `python-colorama` → `rest_packages`. makepkg checks `depends`, not only
   `makedepends`, before building, and cannot install either (measured, §4.1.4).
-- `libticonv libtifiles libticables libticalcs` → `aur_slow_packages`. The
-  existing guard, build and install cover them unchanged.
-- `vendored_slow_packages` → built in `roles/aur/tasks/slow.yml` after the slow
-  AUR install, so titools' `libticalcs` is installed when it builds.
+- `libticonv libtifiles libticables libticalcs` → three rounds in a new
+  `roles/aur/tasks/ti84.yml`, included from the slow AUR tier, each round a
+  guard, an `aur sync` and an install. Not `aur_slow_packages`: `aur sync`
+  installs nothing between the packages of one batch (`--no-sync`; the
+  `BATCHES` paragraph of `gatherd-check-aur-deps`), and the chain is three deep
+  (AUR `.SRCINFO`s, 2026-10-04): `libticonv` and `libticables` need only repo
+  packages; `libtifiles` needs `libticonv`; `libticalcs` needs `libticables`
+  and `libtifiles`. The fingerprint block in `roles/aur/tasks/slow.yml` builds
+  in rounds for the same reason. Each round's names live in its own
+  `aur_ti_*_packages` var, so `gatherd-check-package-tiers` classifies them.
+- `vendored_slow_packages` → built in `roles/aur/tasks/slow.yml` after
+  `ti84.yml`, so titools' `libticalcs` is installed when it builds.
 - `vendored_packages` (nowayprompt) → `roles/system/tasks/rest.yml`,
   immediately after `aurutils.yml`, which creates both `aur` and the
   `[gatherd-aur]` database. Today nowayprompt builds just before it
@@ -137,10 +149,11 @@ directory to an AUR git repo, move the name from `vendored_*_packages` to
 `aur_slow_packages`, delete the directory.
 
 - **titools** (upstream's project name; installs `tiget` and the other seven
-  `ti*` binaries): `depends=(libticalcs glib2)`, `makedepends=(autoconf
-  automake)`, `autoreconf -fi` in `prepare()`.
-- **ti-tools**: `makedepends=(cargo)`, `cargo build --frozen --release`, with
-  `cargo fetch --locked` in `prepare()` per the Arch Rust package guidelines.
+  `ti*` binaries and seven man pages, measured with `make install DESTDIR=`):
+  `depends=(libticalcs glib2)`, the shipped `./configure --prefix=/usr && make`,
+  which is what §2 measured working -- no `autoreconf`.
+- **ti-tools** (MIT): `makedepends=(cargo)`, `cargo build --release --locked`
+  -- nowayprompt's form, and what §2 measured.
 - **8xvtopy**: `depends=(python python-colorama)`, installs the script under
   `/usr/share/8xvtopy/` and a `/usr/bin/8xvtopy` wrapper.
   `license=('LicenseRef-unknown')`: upstream has no license file. Fine for

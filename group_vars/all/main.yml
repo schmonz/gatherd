@@ -90,11 +90,10 @@ core_packages: []
 
 # Official repo packages, installed in the main run.
 rest_packages:
-  # fakeroot + cc, needed by the vendored nowayprompt build
-  # (roles/system/tasks/nowayprompt.yml), which runs before the aur role
-  # would otherwise pull this in as an AUR build dependency.
+  # fakeroot + cc, for the vendored builds (vendored_packages), which run
+  # before the aur role would otherwise pull this in as an AUR build dependency.
   - base-devel
-  # cargo, for the same vendored build, and for arch-update's makedepends.
+  # cargo, for nowayprompt's vendored build, and for arch-update's makedepends.
   # Declared as "rust" because that is the package: cargo is only a provides,
   # so pacman cannot install it by that name.
   - rust
@@ -356,6 +355,13 @@ aur_slow_avx_packages:
   - claude-code
   - claude-cowork-service
 
+# Vendored PKGBUILDs (packaging/<pkg>/), built into the local repo with
+# aur_build_command and installed by name. In system REST, right after
+# roles/system/tasks/aurutils.yml creates aur and the repo.
+vendored_packages:
+  # Wayland askpass/pinentry; see packaging/nowayprompt/PKGBUILD for why vendored.
+  - nowayprompt
+
 # Local pacman repository that AUR builds land in. aurutils builds each package
 # as the unprivileged target_user and adds it here with repo-add; root then
 # installs it with an ordinary `pacman -S`. That is the whole reason this repo
@@ -390,6 +396,20 @@ aur_sync_command: >-
   aur sync --database {{ aur_repo_name }}
   --no-view --no-confirm --no-sync
   --makepkg-args --skippgpcheck
+
+# The one way this repo builds a vendored PKGBUILD (packaging/<pkg>/). Run in a
+# copy of that directory, as target_user, with aur_build_environment. Flags
+# measured against aurutils 20.5.8 on 2026-10-04 with a probe package built
+# into a scratch repo:
+#   --database    into our repo by name, as aur_sync_command does
+#   --no-sync     build and repo-add only; root installs by name afterwards
+#   --noconfirm   makepkg --noconfirm
+#   --margs --skippgpcheck   what aur_sync_command passes
+# A version already in the repo is skipped, rc 0, with "skipping existing
+# package" on stderr, which is what changed_when keys on.
+aur_build_command: >-
+  aur build --database {{ aur_repo_name }}
+  --no-sync --noconfirm --margs --skippgpcheck
 
 # aur-sync passes --syncdeps to aur-build unconditionally and offers no flag to
 # stop it, so makepkg still tries to resolve dependencies. With everything it

@@ -85,8 +85,8 @@ INSTALLER_HARDWARE = frozenset({
 
 BARE_VAR = re.compile(r'\{\{\s*(\w+)\s*\}\}')
 # A package built from a vendored PKGBUILD is installed by file path, out of the
-# result registered as _<package>_built (roles/system/tasks/aurutils.yml,
-# nowayprompt.yml), so that registered name is the declaration.
+# result registered as _<package>_built (roles/system/tasks/aurutils.yml), so
+# that registered name is the declaration.
 VENDORED = re.compile(r'\{\{\s*_([\w-]+?)_built\.files\[0\]\.path\s*\}\}')
 
 

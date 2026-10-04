@@ -1,16 +1,15 @@
 # Maintainer: gatherd (vendored, not submitted to the AUR)
 #
 # nowayprompt is not in the AUR, so this package is vendored here rather than
-# consumed via yay. See roles/system/tasks/nowayprompt.yml for why: wayprompt
-# (the tool this replaces) pins zig-wayland 0.2.0, whose generated bindings
-# reference a type this machine's libwayland 1.26.0 doesn't have, and upstream
-# has been dormant since 2024-08-25 -- nilp0inter/nowayprompt is an actively
-# maintained Rust port written for exactly this reason.
+# consumed via yay. Why: wayprompt (the tool this replaces) pins zig-wayland
+# 0.2.0, whose generated bindings reference a type this machine's libwayland
+# 1.26.0 doesn't have, and upstream has been dormant since 2024-08-25 --
+# nilp0inter/nowayprompt is an actively maintained Rust port written for
+# exactly this reason.
 pkgname=nowayprompt
 # pkgver encodes _commit below (0.1.0+<short sha>) rather than staying a bare
-# constant. roles/system/tasks/nowayprompt.yml compares the installed
-# pkgver-pkgrel against this file's, so bumping _commit without bumping pkgver
-# would otherwise never trigger a rebuild.
+# constant. aur build skips a version already in the local repo, so bumping
+# _commit without bumping pkgver would never trigger a rebuild.
 pkgver=0.1.0+b2f89da
 pkgrel=1
 pkgdesc="Wayland-native pinentry/askpass prompt (Rust port of wayprompt)"

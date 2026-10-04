@@ -402,12 +402,6 @@ unexpected path) exits nonzero, which is the answer that licenses deletion.
   check: test -e /etc/systemd/system/autofs.service.d/gatherd-ordering.conf
   fresh-install expectation: absent (pure migration: gatherd's own former drop-in)
   measured: 2026-09-01 absent
-- roles/system/tasks/nowayprompt.yml:74 — Remove nowayprompt artifacts from earlier builds
-  shape: state: absent
-  thing: stale build artifacts
-  check: test -d /var/cache/gatherd-nowayprompt
-  fresh-install expectation: absent (runtime hygiene: prunes earlier builds, never spent)
-  measured: 2026-09-01 absent
 - roles/system/tasks/rest.yml:2 — Remove firefox
   shape: state: absent
   thing: firefox package
@@ -451,3 +445,8 @@ unexpected path) exits nonzero, which is the answer that licenses deletion.
   check: test -e /etc/environment.d/10-gatherd-go.conf
   fresh-install expectation: absent (pure migration)
   measured: 2026-09-01 absent
+- roles/system/tasks/vendored.yml:40 — Remove the build directory nowayprompt.yml used
+  shape: state: absent
+  thing: the makepkg scratch directory of the retired roles/system/tasks/nowayprompt.yml
+  check: test -e "$TARGET_HOME/.cache/gatherd/nowayprompt"
+  fresh-install expectation: absent (pure migration)

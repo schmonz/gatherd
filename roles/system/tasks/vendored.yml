@@ -1,0 +1,43 @@
+---
+# Vendored PKGBUILDs, built like AUR packages: aur build adds each to the local
+# repo as target_user, and root installs it by name. That makes them visible to
+# arch-update, to gatherd-check-aur-deps (which reads packaging/<pkg>/.SRCINFO)
+# and to gatherd-assert-packages-declared, none of which can see a package
+# installed from a file path.
+#
+# Built in a copy because makepkg writes its sources, src/ and pkg/ next to the
+# PKGBUILD, and setup_dir is root's checkout.
+
+- name: Copy the vendored PKGBUILDs to their build directories
+  ansible.builtin.copy:
+    src: "{{ setup_dir }}/packaging/{{ item }}/"
+    dest: "{{ target_home }}/.cache/gatherd/vendored/{{ item }}/"
+    remote_src: true
+    owner: "{{ target_user }}"
+    mode: preserve
+  loop: "{{ vendored_packages }}"
+
+- name: Build vendored packages into the local repository
+  ansible.builtin.command: "{{ aur_build_command }}"
+  args:
+    chdir: "{{ target_home }}/.cache/gatherd/vendored/{{ item }}"
+  loop: "{{ vendored_packages }}"
+  become: true
+  become_user: "{{ target_user }}"
+  environment: "{{ aur_build_environment }}"
+  register: _vendored_build
+  changed_when: "'skipping existing package' not in _vendored_build.stderr"
+
+# update_cache only when something was built, for the reason the AUR install in
+# roles/aur/tasks/main.yml gives: an unconditional refresh makes a no-op install
+# depend on the network and the pacman lock.
+- name: Install vendored packages
+  community.general.pacman:
+    name: "{{ vendored_packages }}"
+    state: present
+    update_cache: "{{ _vendored_build.changed }}"
+
+- name: Remove the build directory nowayprompt.yml used
+  ansible.builtin.file:
+    path: "{{ target_home }}/.cache/gatherd/nowayprompt"
+    state: absent

@@ -1,0 +1,13 @@
+pkgbase = nowayprompt
+	pkgdesc = Wayland-native pinentry/askpass prompt (Rust port of wayprompt)
+	pkgver = 0.1.0+b2f89da
+	pkgrel = 1
+	url = https://github.com/nilp0inter/nowayprompt
+	arch = x86_64
+	license = GPL-3.0-only
+	makedepends = cargo
+	depends = libxkbcommon
+	source = nowayprompt-b2f89da513f28711ddf55ef9e88b65798a8b6d31.tar.gz::https://github.com/nilp0inter/nowayprompt/archive/b2f89da513f28711ddf55ef9e88b65798a8b6d31.tar.gz
+	sha256sums = eb859c2666ec2b52455f047defcfab979b9c6352b882e82500892cb4a1e6d979
+
+pkgname = nowayprompt

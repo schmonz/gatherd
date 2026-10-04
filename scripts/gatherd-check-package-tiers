@@ -24,7 +24,6 @@ TIER_VAR = re.compile(r'^\{\{\s*(\w*_packages)\s*\}\}$')
 # Deliberately inline, with the reason each is not a cache-stick concern.
 ALLOWED = {
     'base-devel': 'build prerequisite, not a package set',
-    'nowayprompt': 'vendored PKGBUILD, not from a repo or the AUR (packaging/nowayprompt)',
     'firefox': 'removal, not an install',
     'claude-desktop-bin': 'removal, not an install (superseded by claude-desktop)',
     'polkit-gnome': 'removal, not an install',
@@ -50,8 +49,7 @@ ALLOWED = {
     # Built from a vendored PKGBUILD and installed from the file makepkg
     # produced, so there is no package name for a cache stick to fetch. What
     # a stick would need is the pinned source tarball, which the PKGBUILD
-    # names and checksums; see packaging/nowayprompt/PKGBUILD.
-    '{{ _nowayprompt_built.files[0].path }}': 'vendored build, installed by path',
+    # names and checksums; see packaging/aurutils/PKGBUILD.
     '{{ _aurutils_built.files[0].path }}': 'vendored build, installed by path',
 }
 

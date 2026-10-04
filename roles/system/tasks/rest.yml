@@ -35,11 +35,12 @@
   register: _pkg_install
   until: _pkg_install is succeeded
 
-- name: Build and install the credential prompt
-  ansible.builtin.include_tasks: nowayprompt.yml
-
 - name: Set up the AUR builder and the local repository it builds into
   ansible.builtin.include_tasks: aurutils.yml
+
+# After aurutils.yml, which creates both aur and the repo this builds into.
+- name: Build and install the vendored packages, the credential prompt among them
+  ansible.builtin.include_tasks: vendored.yml
 
 - name: Initialize etckeeper
   ansible.builtin.command: etckeeper init

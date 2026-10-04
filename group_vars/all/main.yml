@@ -189,6 +189,10 @@ rest_packages:
   # postinstall installs it during bootstrap, so a Calamares pave has it, but
   # the hook should not rely on a bootstrap the Arch migration replaces.
   - rate-mirrors           # gatherd-rerank-mirrors.hook
+  # 8xvtopy's only import outside the standard library. Declared here, not
+  # left to its PKGBUILD, because makepkg checks depends before building and
+  # cannot install them (PACMAN_AUTH=/bin/false).
+  - python-colorama        # 8xvtopy
   - xcb-util-cursor        # zoom
   - xcb-util-image         # zoom
   - xcb-util-wm            # zoom
@@ -361,6 +365,18 @@ aur_slow_avx_packages:
 vendored_packages:
   # Wayland askpass/pinentry; see packaging/nowayprompt/PKGBUILD for why vendored.
   - nowayprompt
+
+# The TI calculator link libraries, for titools (packaging/titools). Three
+# lists because they are three rounds: aur sync installs nothing between the
+# packages of one batch, and libticalcs needs libtifiles, which needs
+# libticonv. roles/aur/tasks/ti84.yml builds and installs each before the next.
+aur_ti_base_packages:
+  - libticonv
+  - libticables
+aur_ti_files_packages:
+  - libtifiles
+aur_ti_calcs_packages:
+  - libticalcs
 
 # Local pacman repository that AUR builds land in. aurutils builds each package
 # as the unprivileged target_user and adds it here with repo-add; root then

@@ -193,6 +193,9 @@
       until: _pia_ready.rc == 0
       changed_when: false
 
+    - name: Build and install the TI calculator libraries
+      ansible.builtin.include_tasks: ti84.yml
+
   always:
     - name: Launch slow-installed systray apps  # noqa: risky-shell-pipe
       # swaymsg exec runs inside the live Sway session; SWAYSOCK must be set explicitly

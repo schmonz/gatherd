@@ -1,0 +1,66 @@
+---
+# The TI calculator link libraries, which titools links against. Built in
+# rounds, the way the fingerprint driver is in slow.yml: aur sync passes
+# --no-sync, so nothing is installed between the packages of one batch, and
+# makepkg cannot install a missing dependency itself.
+#
+# USB access needs nothing here: libticables ships 69-libticables.rules, which
+# marks TI's vendor 0451 ID_PDA, and systemd's 70-uaccess.rules grants uaccess
+# to ID_PDA devices.
+
+- name: Check the build dependencies of the base TI libraries
+  ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+  vars:
+    aur_assert_targets: "{{ aur_ti_base_packages }}"
+
+- name: Build the base TI libraries
+  ansible.builtin.command: "{{ aur_sync_command }} {{ aur_ti_base_packages | join(' ') }}"
+  environment: "{{ aur_build_environment }}"
+  register: _aur_sync_ti_base
+  changed_when: "'there is nothing to do' not in _aur_sync_ti_base.stderr"
+
+- name: Install the base TI libraries
+  community.general.pacman:
+    name: "{{ aur_ti_base_packages }}"
+    state: present
+    update_cache: "{{ _aur_sync_ti_base.changed }}"
+  become: true
+  become_user: root
+
+- name: Check the build dependencies of the TI file library
+  ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+  vars:
+    aur_assert_targets: "{{ aur_ti_files_packages }}"
+
+- name: Build the TI file library
+  ansible.builtin.command: "{{ aur_sync_command }} {{ aur_ti_files_packages | join(' ') }}"
+  environment: "{{ aur_build_environment }}"
+  register: _aur_sync_ti_files
+  changed_when: "'there is nothing to do' not in _aur_sync_ti_files.stderr"
+
+- name: Install the TI file library
+  community.general.pacman:
+    name: "{{ aur_ti_files_packages }}"
+    state: present
+    update_cache: "{{ _aur_sync_ti_files.changed }}"
+  become: true
+  become_user: root
+
+- name: Check the build dependencies of the TI calculator library
+  ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+  vars:
+    aur_assert_targets: "{{ aur_ti_calcs_packages }}"
+
+- name: Build the TI calculator library
+  ansible.builtin.command: "{{ aur_sync_command }} {{ aur_ti_calcs_packages | join(' ') }}"
+  environment: "{{ aur_build_environment }}"
+  register: _aur_sync_ti_calcs
+  changed_when: "'there is nothing to do' not in _aur_sync_ti_calcs.stderr"
+
+- name: Install the TI calculator library
+  community.general.pacman:
+    name: "{{ aur_ti_calcs_packages }}"
+    state: present
+    update_cache: "{{ _aur_sync_ti_calcs.changed }}"
+  become: true
+  become_user: root

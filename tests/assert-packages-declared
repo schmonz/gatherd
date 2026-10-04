@@ -95,8 +95,132 @@ fi
 # --- Case 2: everything declared -> exit 0 -----------------------------------
 printf 'declared-pkg\n' > "$WORK/db/explicit"
 rc=$(run_check "$WORK/repo" || true)
-[ "$rc" = 0 ] && ok 'all declared is exit 0' || {
-    bad "all declared should be exit 0 (got $rc)"; sed 's/^/       /' "$WORK/err"; }
+if [ "$rc" = 0 ]; then
+    ok 'all declared is exit 0'
+else
+    bad "all declared should be exit 0 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 3: in the base manifest, declared nowhere -> exit 0 ----------------
+# The base image is not this repo's to declare. Were this a violation, the gate
+# would open with ~900 findings and be switched off the same day.
+printf '# arch: %s\nbase-pkg\n' "$(uname -m)" > "$WORK/repo/tests/base-manifest.txt"
+printf 'declared-pkg\nbase-pkg\n' > "$WORK/db/explicit"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 0 ]; then
+    ok 'a base-image package is accounted for'
+else
+    bad "base-image package should be exit 0 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 4: the vendored-PKGBUILD pair -> exit 0 ---------------------------
+# aurutils and nowayprompt are installed by file path, which names_from cannot
+# resolve. They must be accounted for by the DECLARED_ELSEWHERE table, with a
+# reason -- not by luck.
+printf 'declared-pkg\naurutils\nnowayprompt\nansible\n' > "$WORK/db/explicit"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 0 ]; then
+    ok 'the vendored pair and the bootstrap are accounted for'
+else
+    bad "vendored pair should be exit 0 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 5: declared under a when: this machine fails -> exit 0 -------------
+# A has_* declaration still counts. It works because the imported resolve()
+# decides only the architecture -- measured, it returns None for every has_*
+# fact, so conditions_of records the condition by name instead of dropping the
+# task. Pinned here because the day resolve() learns to evaluate facts, every
+# has_* package starts reading as a stray on exactly the machines that have the
+# hardware, and this case is the only thing that would say so.
+cat > "$WORK/repo/roles/system/tasks/gated.yml" <<'T'
+---
+- name: Install the hardware-gated package
+  community.general.pacman:
+    name: gated-pkg
+    state: present
+  when: has_no_such_hardware
+T
+cat >> "$WORK/repo/site-async.yml" <<'P'
+    - name: Configure gated hardware
+      ansible.builtin.include_tasks: roles/system/tasks/gated.yml
+P
+printf 'declared-pkg\ngated-pkg\n' > "$WORK/db/explicit"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 0 ]; then
+    ok 'a hardware-gated declaration still counts'
+else
+    bad "gated declaration should be exit 0 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 6: base manifest from another architecture -> exit 2 --------------
+printf '# arch: nosucharch\nbase-pkg\n' > "$WORK/repo/tests/base-manifest.txt"
+printf 'declared-pkg\n' > "$WORK/db/explicit"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 2 ] && grep -q 'nosucharch' "$WORK/err"; then
+    ok 'a foreign-architecture manifest is exit 2'
+else
+    bad "foreign-arch manifest should be exit 2 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 7: no base manifest -> exit 2 ------------------------------------
+rm -f "$WORK/repo/tests/base-manifest.txt"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 2 ] && grep -q 'base-manifest' "$WORK/err"; then
+    ok 'a missing manifest is exit 2, not a clean run'
+else
+    bad "missing manifest should be exit 2 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 8: pacman fails -> exit 2 ---------------------------------------
+sandbox "$WORK/repo"
+rm -f "$WORK/db/explicit"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 2 ] && grep -qi 'pacman' "$WORK/err"; then
+    ok 'a failed pacman query is exit 2'
+else
+    bad "failed pacman should be exit 2 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 9: an unreadable aur sync line -> exit 2 -------------------------
+# Never "assume declared". A build whose targets cannot be read would otherwise
+# widen the declared set silently, which is how a gate goes blind.
+printf 'declared-pkg\n' > "$WORK/db/explicit"
+cat > "$WORK/repo/roles/system/tasks/opaque.yml" <<'T'
+---
+- name: Build something the parser cannot read
+  ansible.builtin.command: "{{ aur_sync_command }} {{ some_var | map('upper') | list }}"
+  changed_when: false
+T
+cat >> "$WORK/repo/site-async.yml" <<'P'
+    - name: Build opaquely
+      ansible.builtin.include_tasks: roles/system/tasks/opaque.yml
+P
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 2 ] && grep -q 'opaque.yml' "$WORK/err"; then
+    ok 'an unreadable build line is exit 2, naming the file'
+else
+    bad "unreadable build should be exit 2 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 10: the imported module still provides what this reads -----------
+# The reuse in gatherd-assert-packages-declared is only safe if this fails when
+# gatherd-check-aur-deps is refactored out from under it.
+if python3 - "$REPO" <<'PY'
+import importlib.util, sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+p = Path(sys.argv[1]) / 'scripts' / 'gatherd-check-aur-deps'
+s = importlib.util.spec_from_file_location('g', p, loader=SourceFileLoader('g', str(p)))
+m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
+missing = [n for n in ('load', 'visit', 'names_from', 'ENTRY_POINTS')
+           if not hasattr(m, n)]
+sys.exit(1 if missing else 0)
+PY
+then
+    ok 'gatherd-check-aur-deps still provides the walk this reads'
+else
+    bad 'gatherd-check-aur-deps no longer provides load/visit/names_from/ENTRY_POINTS'
+fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

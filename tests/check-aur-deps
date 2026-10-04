@@ -437,5 +437,65 @@ for _bad in abc inf; do
 done
 rm -rf "$WORK/repo/roles/newthing"
 
+# 20. Vendored builds: `aur build` over a loop, dependencies from the committed
+#     .SRCINFO. A probe package that needs cowsay, which nothing declares.
+PROBE="$WORK/repo/packaging/probe-vendored"
+mkdir -p "$PROBE"
+cat > "$PROBE/PKGBUILD" <<'FIXTURE'
+pkgname=probe-vendored
+pkgver=1
+pkgrel=1
+arch=(any)
+depends=(cowsay)
+package() { :; }
+FIXTURE
+(cd "$PROBE" && makepkg --printsrcinfo > .SRCINFO)
+printf '\nprobe_vendored_packages:\n  - probe-vendored\n' >> "$VARS"
+cat >> "$WORK/repo/roles/aur/tasks/slow.yml" <<'FIXTURE'
+
+- name: Build the vendored probe
+  ansible.builtin.command: "{{ aur_build_command }}"
+  args:
+    chdir: "/nonexistent/{{ item }}"
+  loop: "{{ probe_vendored_packages }}"
+  changed_when: false
+FIXTURE
+assert_rc "a vendored build's undeclared dependency exits 1" 1
+assert_says "and is named" "probe-vendored needs cowsay"
+
+sed -i 's/^rest_packages:/rest_packages:\n  - cowsay/' "$VARS"
+assert_rc "declared in an earlier tier, it exits 0 with no guard" 0
+
+# 21. A .SRCINFO that no longer matches its PKGBUILD is not trusted.
+sed -i 's/^depends=(cowsay)/depends=(cowsay sl)/' "$PROBE/PKGBUILD"
+assert_rc "a stale .SRCINFO exits 1" 1
+assert_says "and says so" "probe-vendored/.SRCINFO is stale"
+(cd "$PROBE" && makepkg --printsrcinfo > .SRCINFO)
+rm "$PROBE/.SRCINFO"
+assert_rc "a missing .SRCINFO exits 1" 1
+assert_says "and says so" "probe-vendored/.SRCINFO is missing"
+(cd "$PROBE" && makepkg --printsrcinfo > .SRCINFO)
+
+# 22. A loop this gate cannot resolve is a failure, never "builds nothing".
+sed -i 's/loop: "{{ probe_vendored_packages }}"/loop: "{{ probe_vendored_packages | list }}"/' \
+    "$WORK/repo/roles/aur/tasks/slow.yml"
+assert_rc "an unreadable vendored loop exits 1" 1
+assert_says "and names the build" "Build the vendored probe"
+cp "$WORK/pristine-slow" "$WORK/repo/roles/aur/tasks/slow.yml"
+
+# 23. A file that runs aur_build_command but no playbook reaches.
+mkdir -p "$WORK/repo/roles/newthing/tasks"
+cat > "$WORK/repo/roles/newthing/tasks/main.yml" <<'FIXTURE'
+---
+- name: Build something nobody reaches
+  ansible.builtin.command: "{{ aur_build_command }}"
+  loop: [probe-vendored]
+  changed_when: false
+FIXTURE
+assert_rc "an unreachable vendored build exits 1" 1
+assert_says "the unreachable file is named" "roles/newthing/tasks/main.yml"
+rm -rf "$WORK/repo/roles/newthing" "$PROBE"
+restore
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

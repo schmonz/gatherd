@@ -49,6 +49,12 @@ Anything it cannot read is a hard failure, never a silent skip: an aur sync
 whose targets will not parse, a build in a file the playbooks never reach, a
 task file that will not load.
 
+VENDORED BUILDS. A task running aur_build_command over a loop: builds the
+PKGBUILDs under packaging/, which the AUR has never heard of. Their
+dependencies come from the committed packaging/<pkg>/.SRCINFO, regenerated
+with makepkg --printsrcinfo and compared, so an edited PKGBUILD cannot leave
+this gate checking the old list. Otherwise they are held to the same rule.
+
 An AUR that will not answer is a different failure, and gets the different exit
 code. 429, 5xx, a timeout, a refused connection, a DNS failure, a proxy page
 served in aurweb's place: all of those are exit 2, because the check could not
@@ -485,6 +491,52 @@ def targets_from(command, gv):
     return targets or None
 
 
+def loop_targets(task, gv):
+    """The packages a vendored `aur build` loops over, or None if it will not parse."""
+    loop = task.get('loop')
+    if isinstance(loop, list):
+        names = [str(item) for item in loop]
+    else:
+        match = re.fullmatch(r'\{\{\s*(\w+)\s*\}\}', str(loop or '').strip())
+        listed = gv.get(match.group(1)) if match else None
+        names = [str(item) for item in listed] if isinstance(listed, list) else []
+    if not names or any('{{' in name or '/' in name for name in names):
+        return None
+    return names
+
+
+def vendored_srcinfo(root, name):
+    """packaging/<name>/.SRCINFO, refused if its PKGBUILD no longer produces it.
+
+    Read from the tree because a vendored package is not in the AUR, and
+    regenerated to compare because a .SRCINFO is a copy of what the PKGBUILD
+    says: a stale one would have this gate checking dependencies the build no
+    longer has.
+    """
+    where = root / 'packaging' / name
+    committed = where / '.SRCINFO'
+    if not (where / 'PKGBUILD').is_file():
+        raise Violation(f'packaging/{name}/PKGBUILD is missing, but a vendored '
+                        f'build names {name}')
+    if not committed.is_file():
+        raise Violation(f'packaging/{name}/.SRCINFO is missing; run '
+                        f'`makepkg --printsrcinfo > .SRCINFO` in packaging/{name}')
+    try:
+        done = subprocess.run(['makepkg', '--printsrcinfo'], cwd=where,
+                              capture_output=True, text=True,
+                              timeout=timeout_seconds())
+    except (OSError, subprocess.TimeoutExpired) as failure:
+        raise CannotRun(f'cannot run makepkg --printsrcinfo in '
+                        f'packaging/{name}: {failure}') from failure
+    if done.returncode != 0:
+        raise CannotRun(f'makepkg --printsrcinfo failed in packaging/{name}: '
+                        f'{done.stderr.strip()}')
+    if done.stdout != committed.read_text():
+        raise Violation(f'packaging/{name}/.SRCINFO is stale; run '
+                        f'`makepkg --printsrcinfo > .SRCINFO` in packaging/{name}')
+    return done.stdout
+
+
 def visit(root, path, gv, arch, conds, seen, events):
     """Emit the build and install events in one task file, in order."""
     if path in seen:
@@ -522,6 +574,17 @@ def visit(root, path, gv, arch, conds, seen, events):
                                f'cannot tell which packages `{command.strip()}` builds'))
             else:
                 events.append(('build', (where, task.get('name', '?'), targets, here)))
+        if command and 'aur_build_command' in command:
+            where = path.relative_to(root).as_posix()
+            targets = loop_targets(task, gv)
+            if targets is None:
+                events.append(('unreadable',
+                               f'{where}: {task.get("name", "?")}: cannot tell '
+                               'which vendored packages it builds; loop: must be '
+                               'a list of names or a bare {{ var }}'))
+            else:
+                events.append(('vendored',
+                               (where, task.get('name', '?'), targets, here)))
 
         pacman = task.get('community.general.pacman')
         if isinstance(pacman, dict) and str(pacman.get('state', 'present')) not in REMOVES:
@@ -555,7 +618,7 @@ def flatten(node):
 
 
 def unreachable(root, seen):
-    """Files that build an AUR package but no playbook ever reaches."""
+    """Files that build a package but no playbook ever reaches."""
     skip = ('.git', 'docs', '.ansible', 'plans')
     found = []
     for path in sorted(root.rglob('*.y*ml')):
@@ -567,7 +630,7 @@ def unreachable(root, seen):
             text = path.read_text()
         except OSError:
             continue
-        if 'aur_sync_command' in text:
+        if 'aur_sync_command' in text or 'aur_build_command' in text:
             found.append(path.relative_to(root).as_posix())
     return found
 
@@ -615,6 +678,10 @@ def check(root):
     asked = {pkg for kind, *rest in events if kind == 'build' for pkg in rest[0][2]}
     info = aur_info(asked)
     cache = {name: srcinfo(fetch_srcinfo(*info[name]), arch) for name in sorted(asked)}
+    vendored = {pkg for kind, *rest in events if kind == 'vendored'
+                for pkg in rest[0][2]}
+    cache.update({name: srcinfo(vendored_srcinfo(root, name), arch)
+                  for name in sorted(vendored)})
 
     provides = repo_provides()
     base = {row.strip() for row in rows if row.strip() and not row.startswith('#')}
@@ -635,6 +702,11 @@ def check(root):
         if event[0] == 'guard':
             last = (event[1], event[2])
             continue
+        # A vendored build needs no guard. The guard exists because `aur sync`
+        # builds a chain and a missing dependency once surfaced fourteen
+        # minutes in; `aur build` runs one makepkg per package, and makepkg
+        # exits 8 naming a missing dependency before it fetches a single
+        # source (measured 2026-10-04, spec §4.1.4).
         if event[0] != 'build':
             continue
         where, task, targets, conds = event[1]

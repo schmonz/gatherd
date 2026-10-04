@@ -1,0 +1,14 @@
+pkgbase = ti-tools
+	pkgdesc = Tools for TI calculator files: convert programs to and from text
+	pkgver = 0.2.0+654a8e2
+	pkgrel = 1
+	url = https://github.com/cqb13/ti-tools
+	arch = x86_64
+	license = MIT
+	makedepends = cargo
+	depends = libgcc
+	depends = glibc
+	source = ti-tools-654a8e28e79d7de62bb333c8f5656a93f90ba017.tar.gz::https://github.com/cqb13/ti-tools/archive/654a8e28e79d7de62bb333c8f5656a93f90ba017.tar.gz
+	sha256sums = d8f58931ea55fd2a0af1a3cd1a375b3e4a3e7d4d22179f58f7ddd73e52e36b66
+
+pkgname = ti-tools

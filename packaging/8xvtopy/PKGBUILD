@@ -1,0 +1,28 @@
+# Maintainer: gatherd (vendored, not submitted to the AUR)
+#
+# 8xvtopy: extracts the Python source from a TI-83 Premium CE / TI-84 Python
+# AppVar (.8xv). Not in the AUR. backup-taavi-ti84's ti84-convert-to-text
+# runs it.
+#
+# Upstream has no license file, which is why this is not in the AUR: settle
+# that with upstream before publishing it.
+pkgname=8xvtopy
+pkgver=r10.0b74547
+pkgrel=1
+pkgdesc="Convert TI calculator Python AppVars (.8xv) to .py files"
+arch=('any')
+url="https://github.com/Guillaume-favier/8xvtopy"
+license=('LicenseRef-unknown')
+depends=('python' 'python-colorama')
+_commit=0b745472e2eb293881fcf5d787a64f1e62dc8711
+source=("$pkgname-$_commit.tar.gz::https://github.com/Guillaume-favier/8xvtopy/archive/$_commit.tar.gz")
+sha256sums=('e5122c91d4f973324cb9c1e4c3df036468041b07ea461a67d9386be2e47ed720')
+
+package() {
+    cd "8xvtopy-$_commit"
+    install -Dm644 8xvtopy.py "$pkgdir/usr/share/8xvtopy/8xvtopy.py"
+    install -dm755 "$pkgdir/usr/bin"
+    printf '#!/bin/sh\nexec python3 /usr/share/8xvtopy/8xvtopy.py "$@"\n' \
+        > "$pkgdir/usr/bin/8xvtopy"
+    chmod 755 "$pkgdir/usr/bin/8xvtopy"
+}

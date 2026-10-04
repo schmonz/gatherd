@@ -366,6 +366,13 @@ vendored_packages:
   # Wayland askpass/pinentry; see packaging/nowayprompt/PKGBUILD for why vendored.
   - nowayprompt
 
+# Same, built in the slow AUR tier after the TI libraries they link against
+# (roles/aur/tasks/ti84.yml). For backup-taavi-ti84's scripts.
+vendored_slow_packages:
+  - titools
+  - ti-tools
+  - 8xvtopy
+
 # The TI calculator link libraries, for titools (packaging/titools). Three
 # lists because they are three rounds: aur sync installs nothing between the
 # packages of one batch, and libticalcs needs libtifiles, which needs

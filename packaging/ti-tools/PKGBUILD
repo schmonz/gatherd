@@ -1,0 +1,28 @@
+# Maintainer: gatherd (vendored, not yet submitted to the AUR)
+#
+# ti-tools: converts TI calculator files (8xp programs) to text. Not in the
+# AUR (an unrelated eti-tools-git is the only name match, 2026-10-04).
+# backup-taavi-ti84's ti84-convert-to-text runs `ti-tools convert`.
+pkgname=ti-tools
+pkgver=0.2.0+654a8e2
+pkgrel=1
+pkgdesc="Tools for TI calculator files: convert programs to and from text"
+arch=('x86_64')
+url="https://github.com/cqb13/ti-tools"
+license=('MIT')
+depends=('libgcc' 'glibc')
+makedepends=('cargo')
+_commit=654a8e28e79d7de62bb333c8f5656a93f90ba017
+source=("$pkgname-$_commit.tar.gz::https://github.com/cqb13/ti-tools/archive/$_commit.tar.gz")
+sha256sums=('d8f58931ea55fd2a0af1a3cd1a375b3e4a3e7d4d22179f58f7ddd73e52e36b66')
+
+build() {
+    cd "ti-tools-$_commit"
+    cargo build --release --locked
+}
+
+package() {
+    cd "ti-tools-$_commit"
+    install -Dm755 target/release/ti-tools "$pkgdir/usr/bin/ti-tools"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

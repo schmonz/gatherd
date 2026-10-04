@@ -196,6 +196,37 @@
     - name: Build and install the TI calculator libraries
       ansible.builtin.include_tasks: ti84.yml
 
+    # Same three steps as roles/system/tasks/vendored.yml, for the slow list.
+    # Not a shared task file: gatherd-check-aur-deps visits each file once, so
+    # one included from two places would be checked only at the first.
+    - name: Copy the slow vendored PKGBUILDs to their build directories
+      ansible.builtin.copy:
+        src: "{{ setup_dir }}/packaging/{{ item }}/"
+        dest: "{{ target_home }}/.cache/gatherd/vendored/{{ item }}/"
+        remote_src: true
+        owner: "{{ target_user }}"
+        mode: preserve
+      loop: "{{ vendored_slow_packages }}"
+      become: true
+      become_user: root
+
+    - name: Build slow vendored packages into the local repository
+      ansible.builtin.command: "{{ aur_build_command }}"
+      args:
+        chdir: "{{ target_home }}/.cache/gatherd/vendored/{{ item }}"
+      loop: "{{ vendored_slow_packages }}"
+      environment: "{{ aur_build_environment }}"
+      register: _vendored_slow_build
+      changed_when: "'skipping existing package' not in _vendored_slow_build.stderr"
+
+    - name: Install slow vendored packages
+      community.general.pacman:
+        name: "{{ vendored_slow_packages }}"
+        state: present
+        update_cache: "{{ _vendored_slow_build.changed }}"
+      become: true
+      become_user: root
+
   always:
     - name: Launch slow-installed systray apps  # noqa: risky-shell-pipe
       # swaymsg exec runs inside the live Sway session; SWAYSOCK must be set explicitly

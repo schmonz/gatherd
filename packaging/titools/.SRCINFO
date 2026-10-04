@@ -1,0 +1,16 @@
+pkgbase = titools
+	pkgdesc = Command-line tools for TI graphing calculators (tiget, tiput, tils, ...)
+	pkgver = 0.2+cc7dc08
+	pkgrel = 1
+	url = https://github.com/Jonimoose/TITools
+	arch = x86_64
+	license = GPL-3.0-or-later
+	depends = libticalcs
+	depends = libticables
+	depends = libtifiles
+	depends = libticonv
+	depends = glib2
+	source = titools-cc7dc08d831beaf6c4f865c3acd49a2be58df5a9.tar.gz::https://github.com/Jonimoose/TITools/archive/cc7dc08d831beaf6c4f865c3acd49a2be58df5a9.tar.gz
+	sha256sums = f51b27689b43e32a0181876a4904740b989b9e484c723ddd4219993407554d71
+
+pkgname = titools

@@ -1,0 +1,31 @@
+# Maintainer: gatherd (vendored, not yet submitted to the AUR)
+#
+# TITools: command-line link tools for TI calculators, on libticalcs. Not in
+# the AUR or any repo (AUR RPC search, 2026-10-04). backup-taavi-ti84's
+# ti84-fetch-all runs tiget.
+pkgname=titools
+pkgver=0.2+cc7dc08
+pkgrel=1
+pkgdesc="Command-line tools for TI graphing calculators (tiget, tiput, tils, ...)"
+arch=('x86_64')
+url="https://github.com/Jonimoose/TITools"
+license=('GPL-3.0-or-later')
+depends=('libticalcs' 'libticables' 'libtifiles' 'libticonv' 'glib2')
+# Upstream's last commit (2016); v0.2 is the tag before it. pkgver carries the
+# short sha so a bump rebuilds -- aur build skips a version it already has.
+_commit=cc7dc08d831beaf6c4f865c3acd49a2be58df5a9
+source=("$pkgname-$_commit.tar.gz::https://github.com/Jonimoose/TITools/archive/$_commit.tar.gz")
+sha256sums=('f51b27689b43e32a0181876a4904740b989b9e484c723ddd4219993407554d71')
+
+build() {
+    cd "TITools-$_commit"
+    # The shipped configure, not autoreconf: measured building against the
+    # tilp2 1.18 libraries on 2026-10-04.
+    ./configure --prefix=/usr
+    make
+}
+
+package() {
+    cd "TITools-$_commit"
+    make DESTDIR="$pkgdir" install
+}

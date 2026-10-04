@@ -354,6 +354,24 @@ else
     bad "unreadable manifest should be exit 2 (got $rc)"; sed 's/^/       /' "$WORK/err"
 fi
 
+# --- Case 9g: a package declared only in a vendored list -> exit 0 -----------
+sandbox "$WORK/repo"
+printf 'vendored_slow_packages:\n  - vendored-pkg\n' >> "$WORK/repo/group_vars/all/main.yml"
+cat >> "$WORK/repo/roles/system/tasks/rest.yml" <<'T'
+- name: Install slow vendored packages
+  community.general.pacman:
+    name: "{{ vendored_slow_packages }}"
+    state: present
+T
+printf 'declared-pkg\nvendored-pkg\n' > "$WORK/db/explicit"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 0 ]; then
+    ok 'a vendored list declares its packages'
+else
+    bad "a vendored list should declare its packages (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+printf 'declared-pkg\n' > "$WORK/db/explicit"
+
 # --- Case 10: the imported module still provides what this reads -----------
 # The reuse in gatherd-assert-packages-declared is only safe if this fails when
 # gatherd-check-aur-deps is refactored out from under it.

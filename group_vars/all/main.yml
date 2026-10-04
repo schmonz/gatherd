@@ -186,6 +186,10 @@ rest_packages:
   # the ISO -- it has been present only because github-cli happens to pull it
   # in, which is not a dependency waterfox-bin gets to rely on.
   - mailcap                # waterfox-bin
+  # The Depends of the rerank pacman hook (roles/system/tasks/core.yml).
+  # postinstall installs it during bootstrap, so a Calamares pave has it, but
+  # the hook should not rely on a bootstrap the Arch migration replaces.
+  - rate-mirrors           # gatherd-rerank-mirrors.hook
   - xcb-util-cursor        # zoom
   - xcb-util-image         # zoom
   - xcb-util-wm            # zoom

@@ -113,16 +113,69 @@ else
     bad "base-image package should be exit 0 (got $rc)"; sed 's/^/       /' "$WORK/err"
 fi
 
-# --- Case 4: the vendored-PKGBUILD pair -> exit 0 ---------------------------
-# aurutils and nowayprompt are installed by file path, which names_from cannot
-# resolve. They must be accounted for by the DECLARED_ELSEWHERE table, with a
-# reason -- not by luck.
-printf 'declared-pkg\naurutils\nnowayprompt\nansible\n' > "$WORK/db/explicit"
+# --- Case 4: the vendored-PKGBUILD pair and the bootstrap -> exit 0 ---------
+# aurutils and nowayprompt are installed by file path, out of a result
+# registered as _<package>_built; that name is the declaration. ansible comes
+# from postinstall, which no playbook walk reaches.
+cat > "$WORK/repo/roles/system/tasks/vendored.yml" <<'T'
+---
+- name: Install the vendored package
+  community.general.pacman:
+    name: "{{ _aurutils_built.files[0].path }}"
+    state: present
+T
+cat >> "$WORK/repo/site-async.yml" <<'P'
+    - name: Build from a vendored PKGBUILD
+      ansible.builtin.include_tasks: roles/system/tasks/vendored.yml
+P
+printf 'install_prerequisites() {\n    pacman -S --noconfirm --needed ansible git\n}\n' \
+    > "$WORK/repo/postinstall"
+printf 'declared-pkg\naurutils\nansible\n' > "$WORK/db/explicit"
 rc=$(run_check "$WORK/repo" || true)
 if [ "$rc" = 0 ]; then
-    ok 'the vendored pair and the bootstrap are accounted for'
+    ok 'a vendored build and the bootstrap are accounted for'
 else
-    bad "vendored pair should be exit 0 (got $rc)"; sed 's/^/       /' "$WORK/err"
+    bad "vendored build and bootstrap should be exit 0 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 4a: the bootstrap stops installing it -> it is a stray ---------------
+# An exemption that outlives what it cites is this gate's own bug class: the
+# repo has stopped declaring a package and nothing says so.
+printf 'install_prerequisites() {\n    pacman -S --noconfirm --needed git\n}\n' \
+    > "$WORK/repo/postinstall"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 1 ] && grep -q '^  ansible$' "$WORK/err"; then
+    ok 'an exemption lapses with the file it cites'
+else
+    bad "a lapsed exemption should be exit 1 naming ansible (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 4a2: ansible-core, or a comment, does not hold ansible's exemption --
+printf 'install_prerequisites() {\n    pacman -S --noconfirm --needed ansible-core git\n}\n' \
+    > "$WORK/repo/postinstall"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 1 ] && grep -q '^  ansible$' "$WORK/err"; then
+    ok 'ansible-core does not stand in for ansible'
+else
+    bad "ansible-core should not hold the ansible exemption (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+printf '# pacman -S ansible came from here once\n' > "$WORK/repo/postinstall"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 1 ] && grep -q '^  ansible$' "$WORK/err"; then
+    ok 'a comment does not hold the ansible exemption'
+else
+    bad "a comment should not hold the ansible exemption (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 4b: the installer's hardware picks -> exit 0 -------------------------
+# The base manifest holds one machine's microcode and GPU drivers. Another
+# machine's must not be told to remove its own.
+printf 'declared-pkg\namd-ucode\nvulkan-radeon\n' > "$WORK/db/explicit"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 0 ]; then
+    ok "another machine's microcode and GPU driver are accounted for"
+else
+    bad "installer hardware picks should be exit 0 (got $rc)"; sed 's/^/       /' "$WORK/err"
 fi
 
 # --- Case 5: declared under a when: this machine fails -> exit 0 -------------
@@ -200,6 +253,105 @@ if [ "$rc" = 2 ] && grep -q 'opaque.yml' "$WORK/err"; then
     ok 'an unreadable build line is exit 2, naming the file'
 else
     bad "unreadable build should be exit 2 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 9a: an install name it cannot read -> exit 2 ------------------------
+# Dropping it would make every package behind it a stray, each with removal
+# advice. Same Ansible meaning, different shape: 76 false strays, measured.
+sandbox "$WORK/repo"
+sed -i 's/{{ rest_packages }}/{{ rest_packages | list }}/' \
+    "$WORK/repo/roles/system/tasks/rest.yml"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 2 ] && grep -q 'rest_packages | list' "$WORK/err"; then
+    ok 'an unreadable install name is exit 2, quoting it'
+else
+    bad "unreadable install name should be exit 2 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 9d: other shapes it must not take as a package name -> exit 2 -----
+for name in "{% if has_x %}a{% else %}b{% endif %}" 'extra/foo' '/tmp/foo.pkg.tar.zst'; do
+    sandbox "$WORK/repo"
+    cat >> "$WORK/repo/roles/system/tasks/rest.yml" <<T
+- name: Install something oddly named
+  community.general.pacman:
+    name: "$name"
+    state: present
+T
+    rc=$(run_check "$WORK/repo" || true)
+    if [ "$rc" = 2 ]; then
+        ok "an install name like $name is exit 2"
+    else
+        bad "an install name like $name should be exit 2 (got $rc)"; sed 's/^/       /' "$WORK/err"
+    fi
+done
+
+# --- Case 9e: a guard target is not an install, so it is not read strictly ---
+# visit() resolves assert_aur_deps targets through the same names_from.
+sandbox "$WORK/repo"
+cat >> "$WORK/repo/roles/system/tasks/rest.yml" <<'T'
+- name: Check the build's dependencies
+  ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+  vars:
+    aur_assert_targets: "{{ rest_packages | list }}"
+T
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 0 ]; then
+    ok 'a guard target expression is not an install name'
+else
+    bad "a guard target should not make the check exit $rc"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 9f: a vendored package with a hyphen -------------------------------
+# Ansible reads _foo-bar_built as subtraction, so foo-bar registers _foo_bar_built.
+cat > "$WORK/repo/roles/system/tasks/rest.yml" <<'T'
+---
+- name: Install the rest packages
+  community.general.pacman:
+    name: "{{ rest_packages }}"
+    state: present
+- name: Install the vendored package
+  community.general.pacman:
+    name: "{{ _foo_bar_built.files[0].path }}"
+    state: present
+T
+printf 'declared-pkg\nfoo-bar\n' > "$WORK/db/explicit"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 0 ]; then
+    ok 'a hyphenated vendored package is declared'
+else
+    bad "a hyphenated vendored package should be exit 0 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+printf 'declared-pkg\n' > "$WORK/db/explicit"
+
+# --- Case 9b: a var group_vars does not define -> exit 2 ----------------------
+sandbox "$WORK/repo"
+sed -i 's/{{ rest_packages }}/{{ role_default_packages }}/' \
+    "$WORK/repo/roles/system/tasks/rest.yml"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 2 ] && grep -q 'role_default_packages' "$WORK/err"; then
+    ok 'a var group_vars does not define is exit 2'
+else
+    bad "undefined var should be exit 2 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+
+# --- Case 9c: anything unexpected is exit 2, not a traceback's exit 1 ---------
+# Exit 1 claims strays; with no names behind it the login notes said nothing.
+sandbox "$WORK/repo"
+: > "$WORK/repo/group_vars/all/main.yml"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 2 ] && ! grep -q 'Traceback' "$WORK/err"; then
+    ok 'an empty group_vars is exit 2'
+else
+    bad "empty group_vars should be exit 2 (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+sandbox "$WORK/repo"
+rm -f "$WORK/repo/tests/base-manifest.txt"
+mkdir "$WORK/repo/tests/base-manifest.txt"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 2 ] && ! grep -q 'Traceback' "$WORK/err"; then
+    ok 'an unreadable manifest is exit 2'
+else
+    bad "unreadable manifest should be exit 2 (got $rc)"; sed 's/^/       /' "$WORK/err"
 fi
 
 # --- Case 10: the imported module still provides what this reads -----------

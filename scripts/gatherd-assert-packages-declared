@@ -29,6 +29,7 @@ Exit 0 clean, 1 with each stray named, 2 could not run.
 import importlib.util
 import os
 import platform
+import re
 import subprocess
 import sys
 from importlib.machinery import SourceFileLoader
@@ -43,21 +44,50 @@ CANNOT_RUN = 2
 # task that installed a package would otherwise read as a stray.
 EXTRA_ENTRY_POINTS = ('site-vault.yml',)
 
-# Installed by gatherd, unreachable as an install or build event. Each line is a
-# reason, not an exemption: the parser is not failing here, these three are
-# genuinely outside the shape it reads.
+# Installed outside the playbooks. Each holds only while the file it cites still
+# installs it: the day that file stops, the package is reported like any other
+# this repo has stopped declaring.
 DECLARED_ELSEWHERE = {
-    # Built from a vendored PKGBUILD and installed by file path --
-    # `name: "{{ _aurutils_built.files[0].path }}"`. names_from resolves a bare
-    # {{ var }} and a literal; a registered-fact subscript returns [] (measured).
-    'aurutils': 'roles/system/tasks/aurutils.yml, from a vendored PKGBUILD',
-    'nowayprompt': 'roles/system/tasks/nowayprompt.yml, from a vendored PKGBUILD',
     # gatherd's own bootstrap: installed before any playbook exists to declare
     # it. Deliberately NOT added to tests/base-manifest.txt -- counting
     # gatherd's own ansible install as base is what certified
     # python-cryptography (CLAUDE.md, AUR dependencies).
-    'ansible': "gatherd's own bootstrap, installed before the playbooks run",
+    'ansible': 'postinstall',
 }
+
+# Chosen by the installer from the hardware, so the base manifest -- measured on
+# one machine -- holds only that machine's picks, and any other machine's would
+# read as strays with removal advice (amd-ucode among them). Measured on
+# atm-card, /var/log/pacman.log: `pacman -Sy --noconfirm intel-ucode`, then
+# `pacman --needed --noconfirm -S intel-media-driver mesa libva-intel-driver
+# vulkan-intel gst-plugin-va`, which is eos-hwtool. The rest is every name in
+# eos-hwtool 1.9-1's profile table (packages and packages32, read with ast), its
+# ISO substitutes nvidia-open and nvidia-open-lts, and amd-ucode as
+# intel-ucode's counterpart -- inferred, not measured: no AMD machine has been
+# paved. broadcom-wl is not here: it has left the repos, and
+# roles/hardware/tasks/broadcom_wl.yml declares broadcom-wl-dkms instead.
+#
+# Unlike DECLARED_ELSEWHERE this never lapses, so a driver left behind by a GPU
+# swap goes unreported. The installer's other per-machine choices -- grub as the
+# bootloader, aspell from the locale -- are assumed the same fleet-wide.
+INSTALLER_HARDWARE = frozenset({
+    'amd-ucode', 'intel-ucode',
+    'egl-wayland', 'gst-plugin-va', 'gtkmm3', 'intel-media-driver',
+    'lib32-libva-intel-driver', 'lib32-mesa', 'lib32-nvidia-utils',
+    'lib32-opencl-nvidia', 'lib32-vulkan-intel', 'lib32-vulkan-nouveau',
+    'lib32-vulkan-radeon', 'libva-intel-driver', 'libva-nvidia-driver',
+    'libxnvctrl', 'mesa', 'nvidia-open', 'nvidia-open-dkms', 'nvidia-open-lts',
+    'nvidia-settings', 'nvidia-utils', 'open-vm-tools', 'opencl-nvidia',
+    'qemu-guest-agent', 'spice-vdagent', 'virtualbox-guest-utils', 'vpl-gpu-rt',
+    'vulkan-intel', 'vulkan-nouveau', 'vulkan-radeon', 'vulkan-swrast',
+    'vulkan-virtio', 'xf86-input-vmmouse',
+})
+
+BARE_VAR = re.compile(r'\{\{\s*(\w+)\s*\}\}')
+# A package built from a vendored PKGBUILD is installed by file path, out of the
+# result registered as _<package>_built (roles/system/tasks/aurutils.yml,
+# nowayprompt.yml), so that registered name is the declaration.
+VENDORED = re.compile(r'\{\{\s*_([\w-]+?)_built\.files\[0\]\.path\s*\}\}')
 
 
 class CannotRun(Exception):
@@ -100,6 +130,60 @@ def aur_deps_module():
     return module
 
 
+class Names(set):
+    """Resolved package names, plus the expressions that would not resolve."""
+
+    def __init__(self):
+        super().__init__()
+        self.unreadable = []
+
+
+def literal(text):
+    """A bare package name: no templating, no repo prefix, not a file path."""
+    return bool(text) and not any(c in text for c in '{}%/')
+
+
+def strict_names_from(gv):
+    """names_from, recording what it cannot read instead of dropping it.
+
+    The imported names_from returns nothing for an expression it cannot
+    resolve. That is harmless where it was written, which asks whether a
+    declaration is satisfied; here a dropped name makes every package behind it
+    a stray -- `{{ rest_packages | list }}` alone named 76 (measured). So an
+    unreadable install name is exit 2, as an unreadable build line already is.
+
+    The record rides on the result rather than in shared state because visit()
+    calls this for assert_aur_deps guard targets too, and a guard installs
+    nothing; only an install event's record counts.
+    """
+    def names_from(value, _gv):
+        out = Names()
+        for item in ([value] if isinstance(value, str) else (value or [])):
+            text = str(item).strip()
+            var = BARE_VAR.fullmatch(text)
+            vendored = VENDORED.fullmatch(text)
+            if var and var.group(1) in gv:
+                value = gv[var.group(1)]
+                values = [value] if isinstance(value, str) else value
+                if isinstance(values, list) and all(
+                        literal(str(v)) for v in values):
+                    out |= {str(v) for v in values}
+                else:
+                    out.unreadable.append(text)
+            elif vendored:
+                # Ansible reads a hyphen in a variable name as subtraction, so
+                # a vendored foo-bar has to register _foo_bar_built. Both
+                # spellings are declared; the one that is not a package is
+                # never installed and costs nothing.
+                out |= {vendored.group(1), vendored.group(1).replace('_', '-')}
+            elif literal(text):
+                out.add(text)
+            else:
+                out.unreadable.append(text)
+        return out
+    return names_from
+
+
 def declared(root):
     """Every package this repo installs or builds, read out of the playbooks.
 
@@ -121,6 +205,10 @@ def declared(root):
     arch = platform.machine()
     try:
         gv = module.load(root / 'group_vars/all/main.yml')
+        if not isinstance(gv, dict):
+            raise CannotRun(f'{root}/group_vars/all/main.yml is not a mapping '
+                            'of variables')
+        module.names_from = strict_names_from(gv)
 
         names = set()
         seen = set()
@@ -132,6 +220,13 @@ def declared(root):
             module.visit(root, path, gv, arch, (), seen, events)
             for kind, payload, *_ in events:
                 if kind == 'install':
+                    if getattr(payload, 'unreadable', None):
+                        raise CannotRun(
+                            f'cannot tell which packages '
+                            f'`{payload.unreadable[0]}` names; a '
+                            'community.general.pacman name: must be a '
+                            'literal, a bare {{ var }} from group_vars, or a '
+                            'vendored {{ _<package>_built.files[0].path }}')
                     names |= set(payload)
                 elif kind == 'build':
                     names |= set(payload[2])
@@ -168,6 +263,29 @@ def base_manifest(root):
             if row.strip() and not row.lstrip().startswith('#')}
 
 
+def installs(path, package):
+    """Whether a shell file has a live pacman line naming exactly this package.
+
+    Word for word, so ansible-core or ansible-lint do not keep ansible's
+    exemption alive, and comments are dropped, so neither does a note saying it
+    used to be installed. A line this misses -- a continuation, an array --
+    lapses the exemption and reports a stray, which is the loud direction.
+    """
+    if not path.is_file():
+        return False
+    for line in path.read_text().splitlines():
+        words = re.split(r'\s+#', ' ' + line, maxsplit=1)[0].split()
+        if 'pacman' in words and package in words:
+            return True
+    return False
+
+
+def declared_elsewhere(root):
+    """The DECLARED_ELSEWHERE entries whose cited file still installs them."""
+    return {package for package, cited in DECLARED_ELSEWHERE.items()
+            if installs(root / cited, package)}
+
+
 def explicit():
     """Explicitly installed packages.
 
@@ -199,9 +317,15 @@ def main():
 
     try:
         strays = sorted(explicit() - base_manifest(root) - declared(root)
-                        - set(DECLARED_ELSEWHERE))
+                        - declared_elsewhere(root) - INSTALLER_HARDWARE)
     except CannotRun as failure:
         print(f'cannot run: {failure}', file=sys.stderr)
+        return CANNOT_RUN
+    except Exception as failure:          # noqa: BLE001 -- see below
+        # Anything else is still "could not look". Uncaught, it is a traceback
+        # and exit 1, which claims strays -- and section_strays, handed exit 1
+        # and no names, would say nothing at all.
+        print(f'cannot run: {type(failure).__name__}: {failure}', file=sys.stderr)
         return CANNOT_RUN
 
     if not strays:
@@ -214,10 +338,13 @@ def main():
           'accounts for them:', file=sys.stderr)
     for name in strays:
         print(f'  {name}', file=sys.stderr)
-    print('\nEach is either a package this repo should declare in a *_packages '
-          'var, or\na leftover to remove with `sudo pacman -Rs <name>`. '
-          'Deciding which is not\nderivable from the code: a leftover and an '
-          'undeclared dependency look identical\nfrom here.', file=sys.stderr)
+    print('\nIf anything uses one -- a hook, a script, you -- declare it in the '
+          '*_packages\nvar for the tier that needs it. If nothing does, it is a '
+          'leftover: remove it\nwith `sudo pacman -Rs <name>`, or, when '
+          '`pacman -Qi <name>` lists something\nunder Required By, '
+          '`sudo pacman -D --asdeps <name>`. Which one is not derivable\n'
+          'from here: a leftover and an undeclared dependency look identical.',
+          file=sys.stderr)
     return VIOLATION
 
 

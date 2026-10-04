@@ -603,11 +603,11 @@ section_strays() {
     # one stray package would re-run every REST tier on every boot, forever.
     _mark='gatherd does not account for '
 
-    # The declared set comes out of the playbooks, which are only all present
-    # once the deployed checkout exists. Before then the check would exit 2 at
-    # every login of a first pave with nothing a human could do about it.
-    _sentinel="${GATHERD_ASYNC_SENTINEL:-/etc/gatherd/async-complete}"
-    [ -f "$_sentinel" ] || { prune_derived 'Packages' "$_mark"; return; }
+    # No async-complete guard, unlike section_sonames. postinstall clones the
+    # whole checkout before Ansible first runs, so the check can answer from
+    # the first login, and before REST converges the machine holds only base
+    # and bootstrap packages, which it accounts for. A guard would only hide it
+    # on a machine whose REST has never fully converged.
 
     _tsv=$(mktemp)
     _why=$(mktemp)
@@ -616,20 +616,26 @@ section_strays() {
     _rc=$?
 
     set --
-    if [ "$_rc" -eq 1 ]; then
+    if [ "$_rc" -eq 1 ] && [ -s "$_tsv" ]; then
         while read -r _pkg; do
             [ -n "$_pkg" ] || continue
-            set -- "$@" "$_mark$_pkg. Either declare it in the *_packages var\
- for the tier that needs it, or remove it: \`sudo pacman -Rs $_pkg\`. Which one\
- is not derivable from here -- a leftover and an undeclared dependency look\
- identical to the check."
+            # Never one blanket command. --asdeps orphans what only a hook or
+            # script uses (rate-mirrors, here), and -Rs refuses what a package
+            # still requires (the electron that prompted this).
+            set -- "$@" "$_mark$_pkg. If anything uses it -- a hook, a script,\
+ you -- declare it in the *_packages var for the tier that needs it. If not:\
+ \`sudo pacman -Rs $_pkg\`, or \`sudo pacman -D --asdeps $_pkg\` when\
+ \`pacman -Qi $_pkg\` lists something under Required By."
         done < "$_tsv"
     elif [ "$_rc" -ne 0 ]; then
-        # Exit 2 is not exit 0, the same argument section_sonames makes.
-        _why1=$(head -1 "$_why")
-        set -- "${_mark}anything, because the check could not run:\
- ${_why1:-it gave no reason}. Until that is fixed, nothing here says this\
- machine carries no leftovers."
+        # Exit 2 is not exit 0, the same argument section_sonames makes. Nor is
+        # exit 1 with no names: that is a crash, not a finding.
+        # The reason is the "cannot run:" line, wherever a warning put it; a
+        # crash's is its last line, not its "Traceback" header.
+        _why1=$(sed -n 's/^cannot run: //p' "$_why" | head -n 1)
+        [ -n "$_why1" ] || _why1=$(tail -n 1 "$_why")
+        set -- "${_mark}this machine's packages until its check can run:\
+ ${_why1:-it gave no reason}."
     fi
     rm -f "$_tsv" "$_why"
 
@@ -707,7 +713,7 @@ section_verify() {
     verify_li 'Every web app carries 1Password: open any of them from the launcher and the vault is there without a per-profile sign-in. (A one-time welcome page per profile is expected.)'
     verify_li 'Duolingo speaking exercises work: a German exercise accepts your voice, recognized locally so no audio leaves the machine, and no microphone prompt appears. The window has one tab, no tab strip or address bar, and 1Password'"'"'s vault without signing in.'
     verify_li 'A converged machine needs neither the network nor the pacman lock to stay converged: with `sudo touch /var/lib/pacman/db.lck` held, a converge is still green. `sudo rm -f /var/lib/pacman/db.lck` afterwards.'
-    verify_li 'A converge never touches a real Chromium profile: `sudo pacman -S --noconfirm chromium`, `mkdir -p ~/.config/chromium && echo x > ~/.config/chromium/History`, converge, and `History` is still there.'
+    verify_li 'A converge never touches a real Chromium profile: `sudo pacman -S --noconfirm chromium`, `mkdir -p ~/.config/chromium && echo x > ~/.config/chromium/History`, converge, and `History` is still there. `sudo pacman -Rs chromium` afterwards.'
     verify_li 'The ADHD skill loads unasked: `ls ~/.claude/.i-have-adhd-always` exists, and a fresh `claude` session answers `/i-have-adhd` without a marketplace prompt.'
     verify_li 'Sheet music fetches itself: `rm -f ~/.local/state/gatherd/musicscores-fetch.stamp && gatherd-musicscores-fetch && cat ~/.local/state/gatherd/musicscores-fetch.stamp` prints a timestamp (no stamp means no fetch happened, whatever the exit code), and `ls ~/Documents/forscore/*.pdf | wc -l` matches forScore. If the Mac cannot be logged into it says so rather than exiting quietly.'
     verify_li 'Claude Desktop signs in once and stays signed in: open Claude from the app menu and `pgrep -af "^/usr/lib/claude-desktop/claude-desktop --password-store=gnome-libsecret"` prints it (that flag is only there if the launch went through our wrapper). Quit it, open it again: still signed in, no "Your sign-in won'"'"'t be saved on this device" toast.'

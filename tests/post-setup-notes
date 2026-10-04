@@ -80,15 +80,17 @@ esac
 STUB
 chmod +x "$WORK/gatherd/scripts/gatherd-assert-sonames"
 
-# A stand-in for gatherd-assert-packages-declared. Three answers matter: clean,
-# a stray named, and could-not-run.
+# A stand-in for gatherd-assert-packages-declared. Four answers matter: clean,
+# a stray named, could-not-run, and exit 1 with nothing named.
 cat > "$WORK/gatherd/scripts/gatherd-assert-packages-declared" <<'STUB'
 #!/bin/sh
 case "${GATHERD_TEST_STRAYS:-clean}" in
     clean)  exit 0 ;;
     stray)  echo 'electron42'; exit 1 ;;
-    cannot) echo 'gatherd-assert-packages-declared: tests/base-manifest.txt is missing' >&2
+    cannot) echo 'cannot run: tests/base-manifest.txt is missing' >&2
             exit 2 ;;
+    crash)  printf 'Traceback (most recent call last):\nKeyError: rest_packages\n' >&2
+            exit 1 ;;
 esac
 STUB
 chmod +x "$WORK/gatherd/scripts/gatherd-assert-packages-declared"
@@ -247,21 +249,30 @@ refute "says nothing when every package is accounted for" has 'does not account 
 rm -f "$OUT"; STRAYS_MODE=stray; generate
 assert "names a stray package"            flows 'does not account for electron42'
 assert "under a Packages header"          grep -q '^# Packages$' "$OUT"
-assert "and offers the removal command"   flows 'sudo pacman -Rs electron42'
+assert "and offers removal"               flows 'sudo pacman -Rs electron42'
+assert "or demotion, for a required one"  flows 'sudo pacman -D --asdeps electron42'
+assert "and says declaring is the answer for what something uses" \
+    flows 'If anything uses it'
 
 # 16. Exit 2 is not exit 0. A check that could not look has not said it is fine.
 rm -f "$OUT"; STRAYS_MODE=cannot; generate
 assert "reports a check that could not run" flows 'base-manifest.txt is missing'
+refute "without repeating that it could not" flows 'can run: cannot run'
+
+# 16a. Exit 1 naming nothing is a crash, not a clean bill: it says so too.
+rm -f "$OUT"; STRAYS_MODE=crash; generate
+assert "reports exit 1 with no names as a check that could not run" \
+    flows 'until its check can run: KeyError: rest_packages'
 
 # 17. The bullet is derived, so a second login must not stack a second copy.
 rm -f "$OUT"; STRAYS_MODE=stray; generate; generate
 _n=$(grep -c 'does not account for electron42' "$OUT" || true)
 assert "the stray bullet does not accumulate (found $_n)" test "$_n" -eq 1
 
-# 18. Before REST has converged the deployed checkout is not all there, so the
-#     check would fail at every login of a first pave. Quiet until it has.
-SENTINEL_OVERRIDE=/nonexistent generate
-refute "stays quiet until REST has converged" grep -q '^# Packages$' "$OUT"
+# 18. postinstall clones the checkout before Ansible runs, so unlike Libraries
+#     this answers before REST has converged rather than hiding until it does.
+rm -f "$OUT"; SENTINEL_OVERRIDE=/nonexistent generate
+assert "answers before REST has converged" flows 'does not account for electron42'
 
 STRAYS_MODE=clean
 

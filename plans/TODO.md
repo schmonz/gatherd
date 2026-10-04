@@ -93,7 +93,7 @@ replaces the current "iCloud syncs on unlock" verify step.
 
 ## Backlog (uncategorized)
 
-- **`update_cache: true` at 14 AUR install sites is a partial-upgrade shape.**
+- **`update_cache: true` at 18 AUR install sites is a partial-upgrade shape.**
   `pacman` only sees a repo through its synced database copy, and `aur sync`
   has just changed the local one — so each install needs a refresh to see what
   was built. But `pacman -Sy` refreshes *every* repo (there is no per-repo
@@ -106,9 +106,10 @@ replaces the current "iCloud syncs on unlock" verify step.
     never upgrades, leaving that to `arch-update`. Converges get slower and
     occasionally surprising.
   - **Option B — install by file path** (`pacman -U /var/cache/gatherd-aur/…`)
-    instead of by name, removing all 14 refreshes. But it spreads the "exactly
-    one artifact" fragility (fixed for the two vendored builds in `00abf46`)
-    across 14 more sites, and redesigns the install path.
+    instead of by name, removing all 18 refreshes. But it spreads the "exactly
+    one artifact" fragility (fixed in `00abf46` for the two builds then
+    installed by path, aurutils and nowayprompt; only aurutils still is)
+    across 18 more sites, and redesigns the install path.
   - Low urgency for repave-oriented use: on a fresh machine everything installs
     in one session from one db state. The risk lands on a long-lived machine
     whose db is stale, gets refreshed mid-converge, and pulls one newer dep.

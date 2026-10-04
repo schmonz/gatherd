@@ -414,7 +414,7 @@ unexpected path) exits nonzero, which is the answer that licenses deletion.
   check: pacman -Qq polkit-gnome >/dev/null 2>&1
   fresh-install expectation: present (permanent: upstream installs it)
   measured: 2026-09-01 present
-- roles/system/tasks/rest.yml:88 — Symlink resolv.conf to stub resolver
+- roles/system/tasks/rest.yml:89 — Symlink resolv.conf to stub resolver
   shape: force+link
   thing: /etc/resolv.conf
   check: test -L /etc/resolv.conf

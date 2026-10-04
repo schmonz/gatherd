@@ -589,6 +589,69 @@ section_sonames() {
     rm -f "$_blk"
 }
 
+section_strays() {
+    # Packages this machine has and nothing accounts for. Recomputed at every
+    # login for the same reason section_sonames is: the defect arrives without
+    # any edit to this repo. An electron version bumps in an AUR PKGBUILD, the
+    # repo follows it, and the superseded one stays installed -- explicitly, so
+    # no orphan sweep reaches it.
+    #
+    # Not a verify_li step: those are deleted once exercised (CLAUDE.md, Repave
+    # cadence), so after the next repave nothing would invoke the check at all.
+    # Not a task in site-async.yml either: async-complete is written only when
+    # no tier failed and gatherd-await-and-run gates REST on that sentinel, so
+    # one stray package would re-run every REST tier on every boot, forever.
+    _mark='gatherd does not account for '
+
+    # The declared set comes out of the playbooks, which are only all present
+    # once the deployed checkout exists. Before then the check would exit 2 at
+    # every login of a first pave with nothing a human could do about it.
+    _sentinel="${GATHERD_ASYNC_SENTINEL:-/etc/gatherd/async-complete}"
+    [ -f "$_sentinel" ] || { prune_derived 'Packages' "$_mark"; return; }
+
+    _tsv=$(mktemp)
+    _why=$(mktemp)
+    "${GATHERD_HOME:-/usr/local/lib/gatherd}/scripts/gatherd-assert-packages-declared" \
+        --tsv > "$_tsv" 2> "$_why"
+    _rc=$?
+
+    set --
+    if [ "$_rc" -eq 1 ]; then
+        while read -r _pkg; do
+            [ -n "$_pkg" ] || continue
+            set -- "$@" "$_mark$_pkg. Either declare it in the *_packages var\
+ for the tier that needs it, or remove it: \`sudo pacman -Rs $_pkg\`. Which one\
+ is not derivable from here -- a leftover and an undeclared dependency look\
+ identical to the check."
+        done < "$_tsv"
+    elif [ "$_rc" -ne 0 ]; then
+        # Exit 2 is not exit 0, the same argument section_sonames makes.
+        _why1=$(head -1 "$_why")
+        set -- "${_mark}anything, because the check could not run:\
+ ${_why1:-it gave no reason}. Until that is fixed, nothing here says this\
+ machine carries no leftovers."
+    fi
+    rm -f "$_tsv" "$_why"
+
+    prune_derived 'Packages' "$_mark"
+    [ "$#" -gt 0 ] || return
+
+    if section_present 'Packages'; then
+        append_to_section 'Packages' "$@"
+        return
+    fi
+
+    _blk=$(mktemp)
+    _main=$OUTPUT
+    OUTPUT=$_blk
+    h 'Packages'
+    for _b in "$@"; do li "$_b"; done
+    OUTPUT=$_main
+    { head -n 1 "$OUTPUT"; cat "$_blk"; tail -n +2 "$OUTPUT"; } \
+        > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+    rm -f "$_blk"
+}
+
 section_vault() {
     # Ask gatherd-vault-pass-needed rather than watching for vault-complete. The
     # sentinel says the vault PLAY has converged, which is minutes later and a
@@ -666,6 +729,7 @@ section_verify() {
 
 section_unmanaged_wifi
 section_sonames
+section_strays
 section_verify
 section_vault
 section_1password

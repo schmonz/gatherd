@@ -1,6 +1,7 @@
 #!/bin/sh
-# Unit tests for gatherd-post-setup-notes: the Vault section, and the
-# Libraries section that reports what gatherd built and cannot load.
+# Unit tests for gatherd-post-setup-notes: the Vault section, the Libraries
+# section that reports what gatherd built and cannot load, and the Packages
+# section that reports what is installed and nothing accounts for.
 #
 # The section used to key on /etc/gatherd/vault-complete, which answers "has the
 # vault PLAY finished" -- minutes after, and a different question from, "does a
@@ -79,6 +80,19 @@ esac
 STUB
 chmod +x "$WORK/gatherd/scripts/gatherd-assert-sonames"
 
+# A stand-in for gatherd-assert-packages-declared. Three answers matter: clean,
+# a stray named, and could-not-run.
+cat > "$WORK/gatherd/scripts/gatherd-assert-packages-declared" <<'STUB'
+#!/bin/sh
+case "${GATHERD_TEST_STRAYS:-clean}" in
+    clean)  exit 0 ;;
+    stray)  echo 'electron42'; exit 1 ;;
+    cannot) echo 'gatherd-assert-packages-declared: tests/base-manifest.txt is missing' >&2
+            exit 2 ;;
+esac
+STUB
+chmod +x "$WORK/gatherd/scripts/gatherd-assert-packages-declared"
+
 # The sentinel the section gates on. Present by default, because "this machine
 # has converged" is the state every case below but the last one is about.
 SENTINEL="$WORK/async-complete"
@@ -96,7 +110,8 @@ generate() {
     HOME="$WORK/home" GATHERD_HOME="$WORK/gatherd" \
         XDG_STATE_HOME="$WORK/state" RCLONE_CONFIG='' \
         GATHERD_ASYNC_SENTINEL="${SENTINEL_OVERRIDE:-$SENTINEL}" \
-        GATHERD_TEST_SONAMES="$SONAMES_MODE" sh "$NOTES" >/dev/null 2>&1
+        GATHERD_TEST_SONAMES="$SONAMES_MODE" \
+        GATHERD_TEST_STRAYS="${STRAYS_MODE:-clean}" sh "$NOTES" >/dev/null 2>&1
 }
 
 has()     { grep -qF -- "$1" "$OUT"; }
@@ -221,6 +236,34 @@ sonames broken; generate
 assert "the finding is back once the sentinel is"    has 'libayatana-indicator3.so.7'
 SENTINEL_OVERRIDE=/nonexistent generate
 refute "and gone again when the sentinel is not"     has 'libayatana-indicator3.so.7'
+
+# ----------------------------------------------------------------- Packages
+
+# 14. Clean: no section at all. A gate with nothing to say says nothing.
+rm -f "$OUT"; sonames clean; STRAYS_MODE=clean; generate
+refute "says nothing when every package is accounted for" has 'does not account for'
+
+# 15. A stray: named, with both of the two things a human can do about it.
+rm -f "$OUT"; STRAYS_MODE=stray; generate
+assert "names a stray package"            flows 'does not account for electron42'
+assert "under a Packages header"          grep -q '^# Packages$' "$OUT"
+assert "and offers the removal command"   flows 'sudo pacman -Rs electron42'
+
+# 16. Exit 2 is not exit 0. A check that could not look has not said it is fine.
+rm -f "$OUT"; STRAYS_MODE=cannot; generate
+assert "reports a check that could not run" flows 'base-manifest.txt is missing'
+
+# 17. The bullet is derived, so a second login must not stack a second copy.
+rm -f "$OUT"; STRAYS_MODE=stray; generate; generate
+_n=$(grep -c 'does not account for electron42' "$OUT" || true)
+assert "the stray bullet does not accumulate (found $_n)" test "$_n" -eq 1
+
+# 18. Before REST has converged the deployed checkout is not all there, so the
+#     check would fail at every login of a first pave. Quiet until it has.
+SENTINEL_OVERRIDE=/nonexistent generate
+refute "stays quiet until REST has converged" grep -q '^# Packages$' "$OUT"
+
+STRAYS_MODE=clean
 
 # ------------------------------------------------------------- Other Logins
 #

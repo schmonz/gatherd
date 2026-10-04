@@ -726,6 +726,7 @@ section_verify() {
     verify_li 'Waybar survives the converge: after media has played in the first session, `coredumpctl list waybar` prints `No coredumps found`.'
     verify_li 'The converge says where its time went: `journalctl -u gatherd-async.service | grep -A12 "TASKS RECAP"` lists the slowest tasks, longest first, with no `Skipping callback plugin` warning anywhere above it.'
     verify_li 'Nothing is unaccounted for: `/usr/local/lib/gatherd/scripts/gatherd-assert-packages-declared; echo $?` prints `0`. Then `sudo pacman -S --asexplicit --noconfirm cowsay`, log out and in: the Packages section names cowsay. `sudo pacman -Rs cowsay`.'
+    verify_li 'TI-84 backup tools are installed and talk to the calculator: `tiget --help` runs, and with the calculator plugged in, `ti84-fetch-all` in backup-taavi-ti84 fetches without sudo.'
 }
 
 # ---------------------------------------------------------------------------

@@ -91,7 +91,7 @@ spelling of each is measured in the plan; aur-build(1) lists `-d`,
 vendored_packages:          # built in system REST, after aurutils.yml
   - nowayprompt
 vendored_slow_packages:     # built in the slow AUR tier
-  - tiget
+  - titools
   - ti-tools
   - 8xvtopy
 ```
@@ -119,7 +119,7 @@ Then one task installs the whole list by name:
 - `libticonv libtifiles libticables libticalcs` → `aur_slow_packages`. The
   existing guard, build and install cover them unchanged.
 - `vendored_slow_packages` → built in `roles/aur/tasks/slow.yml` after the slow
-  AUR install, so `tiget`'s `libticalcs` is installed when it builds.
+  AUR install, so titools' `libticalcs` is installed when it builds.
 - `vendored_packages` (nowayprompt) → `roles/system/tasks/rest.yml`,
   immediately after `aurutils.yml`, which creates both `aur` and the
   `[gatherd-aur]` database. Today nowayprompt builds just before it
@@ -136,10 +136,9 @@ Each `packaging/<pkg>/` holds a PKGBUILD pinned to a commit and a committed
 directory to an AUR git repo, move the name from `vendored_*_packages` to
 `aur_slow_packages`, delete the directory.
 
-- **tiget** (pkgname `titools`, provides the eight `ti*` binaries): `depends=(libticalcs
-  glib2)`, `makedepends=(autoconf automake)`, `autoreconf -fi` in `prepare()`.
-  The pkgname is chosen in the plan; it must be the name `vendored_slow_packages`
-  lists.
+- **titools** (upstream's project name; installs `tiget` and the other seven
+  `ti*` binaries): `depends=(libticalcs glib2)`, `makedepends=(autoconf
+  automake)`, `autoreconf -fi` in `prepare()`.
 - **ti-tools**: `makedepends=(cargo)`, `cargo build --frozen --release`, with
   `cargo fetch --locked` in `prepare()` per the Arch Rust package guidelines.
 - **8xvtopy**: `depends=(python python-colorama)`, installs the script under

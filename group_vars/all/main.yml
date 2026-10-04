@@ -428,11 +428,19 @@ aur_sync_command: >-
 #   --no-sync     build and repo-add only; root installs by name afterwards
 #   --noconfirm   makepkg --noconfirm
 #   --margs --skippgpcheck   what aur_sync_command passes
+#   --new         repo-add -n. A skipped build still runs repo-add on the
+#                 package it skipped, which rewrites the database with a fresh
+#                 mtime in every entry, so the next converge's checksum
+#                 comparison in roles/system/tasks/aurutils.yml sees a changed
+#                 database and runs a full `pacman -Syy`, every time. Measured
+#                 on 2026-10-04, three builds of one probe package two seconds
+#                 apart: db sha256 changes on each skip without --new and stays
+#                 byte-identical with it, and a pkgrel bump is still added.
 # A version already in the repo is skipped, rc 0, with "skipping existing
 # package" on stderr, which is what changed_when keys on.
 aur_build_command: >-
   aur build --database {{ aur_repo_name }}
-  --no-sync --noconfirm --margs --skippgpcheck
+  --no-sync --noconfirm --new --margs --skippgpcheck
 
 # aur-sync passes --syncdeps to aur-build unconditionally and offers no flag to
 # stop it, so makepkg still tries to resolve dependencies. With everything it

@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Name every explicitly-installed package nothing accounts for.
+
+The bug this exists for, on a converged machine:
+
+    $ pacman -Qi electron42 | sed -n '/^Required By/p;/^Install Reason/p'
+    Required By     : teams-for-linux-electron-bin
+    Install Reason  : Explicitly installed
+
+faf799b replaced electron42 with electron44 in group_vars to follow
+slack-electron's PKGBUILD. The repo was right from that commit on; the machine
+kept the package. `pacman -Qdtq` never finds one of these -- measured against
+nowayprompt, which is explicitly installed with `Required By : None`, and
+`pacman -Qdtq` names nothing at all -- because an explicit install is not an
+orphan. It came off only because a human was told to type `pacman -Rs`.
+
+WHY A THIRD GATE. gatherd-check-aur-deps and gatherd-assert-aur-deps both read a
+declaration and ask whether it is satisfied. Neither can ask whether a satisfied
+thing is still declared, and on the repo as of faf799b there is nothing left in
+the tree to find -- the stray exists only on the machine. Same argument
+gatherd-assert-sonames makes for itself, a different machine-side question: not
+"can it load" but "is it accounted for".
+
+WHAT IT DOES NOT DO. It never removes anything. CLAUDE.md: an orphan sweep can
+turn a green machine red, and the fix is to declare what it names.
+
+Exit 0 clean, 1 with each stray named, 2 could not run.
+"""
+import importlib.util
+import os
+import platform
+import subprocess
+import sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+VIOLATION = 1
+CANNOT_RUN = 2
+
+# Walked in addition to gatherd-check-aur-deps' own ENTRY_POINTS. site-vault.yml
+# installs nothing today (measured: `grep -c community.general.pacman
+# site-vault.yml` is 0, and the one role it names has none either), but a vault
+# task that installed a package would otherwise read as a stray.
+EXTRA_ENTRY_POINTS = ('site-vault.yml',)
+
+# Installed by gatherd, unreachable as an install or build event. Each line is a
+# reason, not an exemption: the parser is not failing here, these three are
+# genuinely outside the shape it reads.
+DECLARED_ELSEWHERE = {
+    # Built from a vendored PKGBUILD and installed by file path --
+    # `name: "{{ _aurutils_built.files[0].path }}"`. names_from resolves a bare
+    # {{ var }} and a literal; a registered-fact subscript returns [] (measured).
+    'aurutils': 'roles/system/tasks/aurutils.yml, from a vendored PKGBUILD',
+    'nowayprompt': 'roles/system/tasks/nowayprompt.yml, from a vendored PKGBUILD',
+    # gatherd's own bootstrap: installed before any playbook exists to declare
+    # it. Deliberately NOT added to tests/base-manifest.txt -- counting
+    # gatherd's own ansible install as base is what certified
+    # python-cryptography (CLAUDE.md, AUR dependencies).
+    'ansible': "gatherd's own bootstrap, installed before the playbooks run",
+}
+
+
+class CannotRun(Exception):
+    """The check could not look at the machine. Not the same as a clean run."""
+
+
+def aur_deps_module():
+    """gatherd-check-aur-deps as a module, for its playbook walk.
+
+    Imported rather than reimplemented: a second parser would drift from the
+    first, and the first already handles role includes, tasks_from, inherited
+    when: conditions and arch gating. tests/assert-packages-declared pins the
+    names used here so that gate's next refactor fails loudly rather than
+    quietly widening the declared set.
+
+    Taken from beside this script, not from the repo root being checked: the
+    walk is code, and should be the same revision as the code calling it. On a
+    deployed machine the two are the same file anyway.
+
+    spec_from_file_location returns None for a file with no .py extension, so
+    the loader is explicit (measured).
+    """
+    path = Path(__file__).resolve().parent / 'gatherd-check-aur-deps'
+    if not path.is_file():
+        raise CannotRun(f'{path} is missing; this check reads its playbook walk')
+    # The loader's name must be the same string as the spec's, or exec_module
+    # refuses with "loader for <loader name> cannot handle <spec name>".
+    name = 'gatherd_check_aur_deps'
+    spec = importlib.util.spec_from_file_location(
+        name, path, loader=SourceFileLoader(name, str(path)))
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as failure:          # noqa: BLE001 -- any import failure is exit 2
+        raise CannotRun(f'cannot import {path}: {failure}') from failure
+    for name in ('load', 'visit', 'names_from', 'ENTRY_POINTS', 'CannotRun'):
+        if not hasattr(module, name):
+            raise CannotRun(f'{path} no longer provides {name}; this check '
+                            'reads its playbook walk and must be updated with it')
+    return module
+
+
+def declared(root):
+    """Every package this repo installs or builds, read out of the playbooks.
+
+    HARDWARE CONDITIONS DO NOT NARROW THIS, and not by accident. The imported
+    resolve() decides only the architecture -- measured, it returns None for
+    has_backlight, for has_no_such_hardware and for every other fact, so
+    conditions_of keeps the task and records the condition by name rather than
+    dropping it. A has_* package therefore stays in the declared set on every
+    machine. That is what this check needs: it asks whether the repo declares a
+    package anywhere, not whether this machine's profile reaches it. Were a
+    gated task dropped, every has_* package would read as a stray on exactly the
+    machines that have the hardware, which inverts the gate.
+
+    The one condition resolve() does decide is is_aarch64. An aarch64-only task
+    is dropped on x86_64 -- correctly, because its packages are not installed
+    there either, so no stray appears.
+    """
+    module = aur_deps_module()
+    arch = platform.machine()
+    try:
+        gv = module.load(root / 'group_vars/all/main.yml')
+
+        names = set()
+        seen = set()
+        for entry in tuple(module.ENTRY_POINTS) + EXTRA_ENTRY_POINTS:
+            path = root / entry
+            if not path.is_file():
+                continue
+            events = []
+            module.visit(root, path, gv, arch, (), seen, events)
+            for kind, payload, *_ in events:
+                if kind == 'install':
+                    names |= set(payload)
+                elif kind == 'build':
+                    names |= set(payload[2])
+                elif kind == 'unreadable':
+                    raise CannotRun(payload)
+    except module.CannotRun as failure:
+        # That module raises its own CannotRun -- load() does, on a malformed
+        # group_vars. Letting it through would surface as a traceback and exit 1:
+        # this gate reporting a stray because it could not read the repo.
+        raise CannotRun(str(failure)) from failure
+    if not names:
+        raise CannotRun(f'the walk of {root} found no package at all; the '
+                        'playbooks or group_vars are not being read')
+    return names
+
+
+def base_manifest(root):
+    """The measured first-boot package set, refusing another architecture's."""
+    manifest = root / 'tests/base-manifest.txt'
+    if not manifest.exists():
+        raise CannotRun(f'{manifest} is missing; regenerate it with '
+                        'scripts/gatherd-capture-base-manifest from a '
+                        'first-boot /var/log/pacman.log')
+    rows = manifest.read_text().splitlines()
+    arch = platform.machine()
+    measured = next((row.split(':', 1)[1].strip() for row in rows
+                     if row.startswith('# arch:')), None)
+    if measured != arch:
+        raise CannotRun(f'{manifest} was measured on '
+                        f'{measured or "an unrecorded architecture"}, but this '
+                        f'is {arch}; one architecture\'s answer would mark the '
+                        f'wrong packages present')
+    return {row.strip() for row in rows
+            if row.strip() and not row.lstrip().startswith('#')}
+
+
+def explicit():
+    """Explicitly installed packages.
+
+    -Qeq, not -Qq: a package pulled in as a dependency is accounted for by
+    whatever depends on it, and pacman -Qdtq already covers that going away.
+    """
+    try:
+        done = subprocess.run(['pacman', '-Qeq'], capture_output=True,
+                              text=True, check=False)
+    except OSError as failure:
+        raise CannotRun(f'cannot run pacman: {failure}') from failure
+    if done.returncode != 0:
+        raise CannotRun('pacman -Qeq failed; is the local database readable? '
+                        + done.stderr.strip())
+    return {line.strip() for line in done.stdout.splitlines() if line.strip()}
+
+
+def main():
+    argv = sys.argv[1:]
+    tsv = False
+    if argv and argv[0] == '--tsv':
+        tsv = True
+        argv = argv[1:]
+    if len(argv) > 1:
+        print(f'usage: {sys.argv[0]} [--tsv] [<repo-root>]', file=sys.stderr)
+        return CANNOT_RUN
+    root = Path(argv[0]) if argv else Path(
+        os.environ.get('GATHERD_HOME', '/usr/local/lib/gatherd'))
+
+    try:
+        strays = sorted(explicit() - base_manifest(root) - declared(root)
+                        - set(DECLARED_ELSEWHERE))
+    except CannotRun as failure:
+        print(f'cannot run: {failure}', file=sys.stderr)
+        return CANNOT_RUN
+
+    if not strays:
+        return 0
+
+    if tsv:
+        for name in strays:
+            print(name)
+    print('Explicitly installed, and nothing in this repo or the base image '
+          'accounts for them:', file=sys.stderr)
+    for name in strays:
+        print(f'  {name}', file=sys.stderr)
+    print('\nEach is either a package this repo should declare in a *_packages '
+          'var, or\na leftover to remove with `sudo pacman -Rs <name>`. '
+          'Deciding which is not\nderivable from the code: a leftover and an '
+          'undeclared dependency look identical\nfrom here.', file=sys.stderr)
+    return VIOLATION
+
+
+if __name__ == '__main__':
+    sys.exit(main())

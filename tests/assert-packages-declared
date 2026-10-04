@@ -1,0 +1,102 @@
+#!/bin/sh
+# Unit tests for gatherd-assert-packages-declared.
+#
+# Machine state arrives through a pacman shim on $PATH answering from
+# $GATHERD_TEST_DB, the same mechanism tests/assert-sonames uses. Repo state is a
+# sandbox tree, so these tests never depend on what this working tree happens to
+# declare today.
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+CHECK="$REPO/scripts/gatherd-assert-packages-declared"
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+PASS=0
+FAIL=0
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+# A pacman that answers only what this check asks. Anything else is a test bug,
+# not a pass: a shim that silently answers an unexpected query would let the
+# check drift away from what it claims to read.
+mkdir -p "$WORK/shim"
+cat > "$WORK/shim/pacman" <<'SHIM'
+#!/bin/sh
+db=${GATHERD_TEST_DB:?}
+case "$1" in
+    -Qeq) [ -f "$db/explicit" ] || { echo 'error: database broken' >&2; exit 1; }
+          cat "$db/explicit" ;;
+    *)    echo "shim pacman: unexpected invocation: $*" >&2; exit 1 ;;
+esac
+SHIM
+chmod +x "$WORK/shim/pacman"
+PATH="$WORK/shim:$PATH"
+export PATH
+
+# A sandbox repo: group_vars, a base manifest for THIS architecture, and one
+# playbook the walk can reach.
+sandbox() {
+    _root=$1
+    rm -rf "$_root"
+    mkdir -p "$_root/group_vars/all" "$_root/tests" "$_root/roles/system/tasks"
+    printf '# arch: %s\n' "$(uname -m)" > "$_root/tests/base-manifest.txt"
+    cat > "$_root/group_vars/all/main.yml" <<'GV'
+---
+core_packages: []
+rest_packages:
+  - declared-pkg
+GV
+    cat > "$_root/roles/system/tasks/rest.yml" <<'T'
+---
+- name: Install the rest packages
+  community.general.pacman:
+    name: "{{ rest_packages }}"
+    state: present
+T
+    cat > "$_root/site-core.yml" <<'P'
+---
+- name: System
+  hosts: localhost
+  tasks: []
+P
+    cat > "$_root/site-async.yml" <<'P'
+---
+- name: System
+  hosts: localhost
+  tasks:
+    - name: Configure the system
+      ansible.builtin.include_tasks: roles/system/tasks/rest.yml
+P
+}
+
+run_check() {
+    GATHERD_TEST_DB="$WORK/db" "$CHECK" "$1" > "$WORK/out" 2> "$WORK/err"
+    echo $?
+}
+
+# --- Case 1: installed, declared nowhere, not in base -> exit 1, named --------
+sandbox "$WORK/repo"
+mkdir -p "$WORK/db"
+printf 'declared-pkg\nstray-pkg\n' > "$WORK/db/explicit"
+rc=$(run_check "$WORK/repo" || true)
+if [ "$rc" = 1 ] && grep -q 'stray-pkg' "$WORK/err"; then
+    ok 'a stray is exit 1 and named'
+else
+    bad "a stray should be exit 1 and named (got $rc)"; sed 's/^/       /' "$WORK/err"
+fi
+if ! grep -q 'declared-pkg' "$WORK/err"; then
+    ok 'a declared package is not reported'
+else
+    bad 'a declared package was reported as a stray'
+fi
+
+# --- Case 2: everything declared -> exit 0 -----------------------------------
+printf 'declared-pkg\n' > "$WORK/db/explicit"
+rc=$(run_check "$WORK/repo" || true)
+[ "$rc" = 0 ] && ok 'all declared is exit 0' || {
+    bad "all declared should be exit 0 (got $rc)"; sed 's/^/       /' "$WORK/err"; }
+
+printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

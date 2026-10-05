@@ -96,15 +96,38 @@ assert_rc "no targets exits 2" 2 "$GUARD"
 
 # 9-13. The architecture filter.
 #
-# .SRCINFO comes from a fixture over file://, and pacman is shimmed to call the
-# dependency absent, because both halves of every case below are states the
-# network and this machine will not supply on demand: qemu-system-aarch64 and
-# edk2-aarch64 are ordinary extra/ packages that a machine with
-# qemu-emulators-full HAS -- on which an unshimmed test would find nothing
-# missing, never reach this code, and pass without asserting anything. The
-# pkgbase stays claude-desktop so `aur depends` still answers for real; only the
-# .SRCINFO is substituted.
-mkdir -p "$WORK/srcinfo" "$WORK/qemu-shim" "$WORK/cmake-shim"
+# .SRCINFO comes from a fixture over file://, pacman is shimmed to call the
+# dependency absent, and `aur depends` is shimmed to name it, because all three
+# are states the network and this machine will not supply on demand:
+# qemu-system-aarch64 and edk2-aarch64 are ordinary extra/ packages that a
+# machine with qemu-emulators-full HAS -- on which an unshimmed test would find
+# nothing missing, never reach this code, and pass without asserting anything.
+#
+# The aur shim is the newest of the three, and for the same reason. These cases
+# used to take the dependency list from the live RPC, which flattened
+# claude-desktop's depends_aarch64 into Depends. Upstream then moved that pair
+# to optdepends_aarch64 (2.9939.4-1, measured 2026-10-05), the RPC stopped
+# naming it, and seven cases failed against a guard that had not changed. The
+# filter under test only ever drops names the RPC supplied, so what the RPC says
+# is input to these cases, not something they check. Only `aur depends --table
+# claude-desktop` is answered; every other call reaches the real aur, so the
+# pkgbase's provides and LastModified still come from the AUR. The table is in
+# the shape `aur depends --table` prints (aurutils 20.5.8): pkgname, dependency,
+# pkgbase, version, and Self or Depends.
+mkdir -p "$WORK/srcinfo" "$WORK/qemu-shim" "$WORK/cmake-shim" "$WORK/aur-shim"
+REAL_AUR=$(command -v aur)
+cat > "$WORK/aur-shim/aur" <<SHIM
+#!/bin/sh
+if [ "\$*" = "depends --table claude-desktop" ]; then
+    for dep in claude-desktop qemu-system-aarch64 edk2-aarch64 socat; do
+        kind=Depends; [ "\$dep" = claude-desktop ] && kind=Self
+        printf 'claude-desktop\t%s\tclaude-desktop\t1-1\t%s\n' "\$dep" "\$kind"
+    done
+    exit 0
+fi
+exec "$REAL_AUR" "\$@"
+SHIM
+chmod +x "$WORK/aur-shim/aur"
 cat > "$WORK/qemu-shim/pacman" <<'SHIM'
 #!/bin/bash
 absent=$GATHERD_TEST_ABSENT
@@ -136,7 +159,7 @@ guard_fixture() {
     # not change between cases, so a warm one would serve the PREVIOUS fixture
     # and every case after the first would silently assert the first one again.
     rm -rf "$WORK/cache"
-    env PATH="$WORK/qemu-shim:$PATH" GATHERD_TEST_ABSENT="$1" \
+    env PATH="$WORK/aur-shim:$WORK/qemu-shim:$PATH" GATHERD_TEST_ABSENT="$1" \
         XDG_CACHE_HOME="$WORK/cache" AUR_SRCINFO="file://$WORK/srcinfo/" \
         "$GUARD" claude-desktop
 }
@@ -229,19 +252,33 @@ assert_says "even one another pkgbase calls foreign" '^  cmake$'
 # 16. .SRCINFO is cached under XDG_CACHE_HOME/gatherd by the AUR's own
 #     LastModified, in gatherd-check-aur-deps's directory and file-name shape so
 #     the two populate each other. Without it a cgit outage fails the slow AUR
-#     tier with CERTAINTY on every x86_64 machine -- MISSING is never empty
-#     there, because the aarch64 pair is permanently absent -- and tells the
-#     operator to declare the one package they must not.
+#     tier with CERTAINTY whenever a foreign-only dependency is absent, and
+#     tells the operator to declare the one package they must not.
+#
+#     The state comes from the shims and the fixture, as in 9-14: the live
+#     claude-desktop stopped declaring anything foreign, so on this machine the
+#     guard found nothing missing, exited before fetching a .SRCINFO, and this
+#     case had nothing to cache. The LastModified in the file name is still the
+#     AUR's own, from the real `aur query`.
+fixture '\tdepends_aarch64 = qemu-system-aarch64'
 cache="$WORK/live-cache"
-env XDG_CACHE_HOME="$cache" "$GUARD" claude-desktop >"$WORK/out" 2>&1
+cached() {
+    env PATH="$WORK/aur-shim:$WORK/qemu-shim:$PATH" \
+        GATHERD_TEST_ABSENT=qemu-system-aarch64 XDG_CACHE_HOME="$cache" \
+        AUR_SRCINFO="$1" "$GUARD" claude-desktop
+}
+assert_rc "a cold cache with cgit up drops the foreign dependency" 0 \
+    cached "file://$WORK/srcinfo/"
 if ls "$cache"/gatherd/claude-desktop.*.SRCINFO >/dev/null 2>&1; then
     ok "the .SRCINFO is cached under its upstream LastModified"
 else
-    bad "the .SRCINFO is cached under its upstream LastModified"; ls -R "$cache" 2>&1
+    # `|| true`: a diagnostic that fails under set -e ended the whole run here,
+    # and the cases below it were never reported at all.
+    bad "the .SRCINFO is cached under its upstream LastModified"; ls -R "$cache" 2>&1 || true
 fi
 
 assert_rc "a warm cache rides out a cgit outage" 0 \
-    env XDG_CACHE_HOME="$cache" AUR_SRCINFO=http://127.0.0.1:1/x "$GUARD" claude-desktop
+    cached http://127.0.0.1:1/x
 
 # 17. ...but only for what it actually holds. A cold cache and an unreachable
 #     cgit must still report, or the cache has bought silence rather than

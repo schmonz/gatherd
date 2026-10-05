@@ -506,5 +506,27 @@ assert_says "the unreachable file is named" "roles/newthing/tasks/main.yml"
 rm -rf "$WORK/repo/roles/newthing" "$PROBE"
 restore
 
+# 24. A build spelled in a form command_of() does not read, in a file the
+#     playbooks DO reach, is a failure -- not a task that builds nothing.
+#     unreachable() cannot see it, because the file is reached. Each spelling
+#     below is valid Ansible; this repo already writes nine tasks with argv:.
+for spelling in argv legacy-command legacy-shell raw args-cmd; do
+    case $spelling in
+        argv) body='  ansible.builtin.command:
+    argv: ["{{ aur_sync_command }}", "mbpfan"]' ;;
+        legacy-command) body='  ansible.legacy.command: "{{ aur_sync_command }} mbpfan"' ;;
+        legacy-shell) body='  ansible.legacy.shell: "{{ aur_build_command }}"' ;;
+        raw) body='  ansible.builtin.raw: "{{ aur_sync_command }} mbpfan"' ;;
+        args-cmd) body='  ansible.builtin.command:
+  args:
+    cmd: "{{ aur_sync_command }} mbpfan"' ;;
+    esac
+    printf '\n- name: Build in an unread spelling\n%s\n  changed_when: false\n' "$body" \
+        >> "$WORK/repo/roles/aur/tasks/slow.yml"
+    assert_rc "a build spelled as $spelling exits 1" 1
+    assert_says "and names the task" "Build in an unread spelling"
+    cp "$WORK/pristine-slow" "$WORK/repo/roles/aur/tasks/slow.yml"
+done
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

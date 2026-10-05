@@ -455,6 +455,17 @@ def command_of(task):
     return None
 
 
+def names_build(task):
+    """Whether a task's own keys name a build command anywhere.
+
+    A block's children are left out: they are tasks of their own, which
+    flatten() yields and this is asked about separately.
+    """
+    own = {key: value for key, value in task.items()
+           if key not in ('block', 'rescue', 'always')}
+    return any(var in str(own) for var in ('aur_sync_command', 'aur_build_command'))
+
+
 def names_from(value, gv):
     """Resolve a pacman `name:` -- a literal, a list, or a {{ var }} -- to names."""
     out = set()
@@ -571,6 +582,17 @@ def visit(root, path, gv, arch, conds, seen, events):
                     visit(root, target, gv, arch, here, seen, events)
 
         command = command_of(task)
+        if names_build(task) and not names_build({'cmd': command}):
+            # unreachable() only finds builds in files nothing reaches; this is
+            # the same build in a file something does, spelled as argv:, under
+            # args:, or through ansible.legacy.* or raw. Unread, it would build
+            # with its dependencies unchecked and this gate would stay green.
+            events.append(('unreadable',
+                           f'{path.relative_to(root).as_posix()}: '
+                           f'{task.get("name", "?")}: runs a build in a form '
+                           'this gate cannot read; write it as '
+                           'ansible.builtin.command: "{{ aur_sync_command }} '
+                           '<targets>" (or aur_build_command over a loop:)'))
         if command and 'aur_sync_command' in command:
             where = path.relative_to(root).as_posix()
             targets = targets_from(command, gv)

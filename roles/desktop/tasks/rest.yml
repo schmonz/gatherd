@@ -41,6 +41,9 @@
       fi
     done
     [ -n "$changed" ] && echo changed || echo ok
+  # GIO_USE_VFS: see "Enable system dark mode" in core.yml; same hang, both tasks.
+  environment:
+    GIO_USE_VFS: local
   register: _xed_prefs
   changed_when: _xed_prefs.stdout == 'changed'
 
@@ -56,6 +59,8 @@
       dbus-run-session gsettings set org.x.editor.preferences.editor editor-font "$font"
       echo changed
     fi
+  environment:
+    GIO_USE_VFS: local
   register: _xed_font
   changed_when: _xed_font.stdout == 'changed'
 

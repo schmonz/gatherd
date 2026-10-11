@@ -25,12 +25,17 @@
 - name: Enable system dark mode
   # Without this, the default ('default') leaves GTK, Flutter, and other apps guessing.
   # dbus-run-session creates a throwaway bus; no user session needed.
+  # GIO_USE_VFS=local because since glib 2.90 gsettings activates gvfsd on that
+  # bus, and the gvfsd-fuse it spawns outlives the bus holding our stdout: the
+  # $(...) below then never sees EOF, and this hung CORE until its 900s timeout.
   ansible.builtin.shell: |
     cur=$(dbus-run-session gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null)
     [ "$cur" = "'prefer-dark'" ] || {
       dbus-run-session gsettings set org.gnome.desktop.interface color-scheme prefer-dark
       echo changed
     }
+  environment:
+    GIO_USE_VFS: local
   register: _darkmode
   changed_when: "'changed' in _darkmode.stdout"
 

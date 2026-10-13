@@ -29,3 +29,12 @@
 #navigator-toolbox {
   border-bottom: none !important;
 }
+
+/* Waterfox pads the content area, which in a browser frames the page and here
+ * just wastes four pixels of window on every side. Measured against the window
+ * as sway reports it: the page started 5px in (4 of padding, 1 separator) and
+ * starts 1px in without it. padding, not margin or border -- each was measured
+ * on its own, and the other two changed nothing. */
+#browser {
+  padding: 0 !important;
+}

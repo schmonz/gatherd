@@ -32,6 +32,26 @@ Measured on squirrel-zapper's 2026-09-14 repave (4 cores, 7G; journal of
 - Downloads of repo packages were about 3 minutes of task time. The run is bound
   by CPU and memory, not network, so a faster link barely helps.
 
+Second, and worse: **after the repave, nothing upgrades them at all.** Measured
+on this machine on 2026-11-16, `aur repo --database gatherd-aur --upgrades` listed
+15 of gatherd's AUR packages behind the AUR, among them `claude-code` 2.1.291 vs
+2.1.325, `claude-desktop` 2.9939.4 vs 5.11492.5, `autofs`, `1password`,
+`teams-for-linux-electron-bin` and `waterfox-bin`. `aur_sync_command` only runs
+inside a converge. `gatherd-needs-run` re-runs REST at boot only when the
+checkout's HEAD differs from the first line of `async-complete`. On this machine
+that file was dated Oct 6 and recorded `c9a8aef`, so any AUR freshness depends on
+unrelated gatherd commits. Whether `aur sync` on a named target that is already
+in the repo rebuilds it when the AUR is newer is UNVERIFIED.
+`arch-update` (configured `AURHelper=yay`) does not compensate: it checks AUR
+updates with `yay -Qua`, which printed nothing while those 15 were outdated.
+`pacman -Qm` lists only `anydesk-bin`, `aurutils`, `openai-codex-bin` and `pi`,
+because everything built into `gatherd-aur` belongs to a sync repo. Meanwhile
+`checkupdates` compares against that same stale database. So the
+repo's job as it stands is "install once, then freeze". Whatever this design
+picks has to own upgrades explicitly, not just first installs. On an
+underpowered machine, building those upgrades locally is the same cost as §1's
+repave, paid again every time.
+
 Separately, the session barrier (`gatherd-await-async`, since 4785c25) holds most
 session helpers until `async-complete`, which is written after the slow tiers.
 The first session stays sparse for the whole run.
@@ -79,8 +99,14 @@ repo uses `SigLevel = Required`. That also retires the backlog item about
 
 ### 3.5 Upgrades
 
-Machines upgrade AUR packages from the fleet repo too, so `arch-update` stops
-rebuilding them per machine.
+Machines upgrade AUR packages from the fleet repo too. This section originally
+said that would stop `arch-update` from "rebuilding them per machine", but as §1
+measured, nothing rebuilds them today. Upgrades are a capability this design has
+to add, not a cost it saves. Open: what triggers an upgrade on a machine (a
+timer, `arch-update` seeing the fleet repo as an ordinary sync repo, or both),
+and, until the fleet repo exists, whether a periodic
+`aur sync --upgrades` on each machine is an acceptable stopgap, given that §1 says
+it costs underpowered machines the most.
 
 ### 3.6 A third level
 

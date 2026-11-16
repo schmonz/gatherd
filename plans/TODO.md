@@ -8,6 +8,29 @@
 > `scripts/gatherd-post-setup-notes`, then delete the item here. git log is the
 > record of what was done; this file is not.
 
+## gatherd must not have big, slow, resource-intensive steps
+
+**Requirement (2026-11-16):** gatherd exists for limited old machines (the T60,
+the MacBook Air), and it has drifted into converges that are slow and heavy
+enough to be useless on exactly those. A step that compiles, repackages
+hundreds of MB, or needs gigabytes of RAM does not belong on the machine being
+configured.
+
+**Known so far:** squirrel-zapper (4 cores, 7G), measured on 2026-09-14: REST took 24m and
+used 40m of CPU, peaked at 6.1G of memory and touched swap. That includes
+`arch-update` cargo ~4m, `nowayprompt` cargo ~3m, and ~26 binary repackages ~6–7m
+(`specs/2026-09-15-fleet-package-repo-design.md` §1). Keeping AUR packages
+current costs the same again on every upgrade, and today nothing pays it
+(same spec, §1 second paragraph).
+
+**Open question:** the fleet repo answers the AUR-build part only. Still
+needed:
+- an inventory of every heavy step, not just the AUR ones, measured on the
+  weakest target rather than squirrel-zapper;
+- a decision per step: drop it, prebuild it elsewhere, or make it opt-in
+  per machine;
+- a gate or budget that stops new heavy steps from creeping back in.
+
 ## iCloud sync never runs on its own
 
 **What happens.** gtklock's `unlock-command` is the only automatic trigger

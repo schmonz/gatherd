@@ -44,12 +44,26 @@ def _args(task):
     return [v for v in task.values() if isinstance(v, dict)]
 
 
+def _commands(task):
+    """The command line of a command/shell task, in either spelling."""
+    out = []
+    for key in ('ansible.builtin.command', 'ansible.builtin.shell'):
+        value = task.get(key)
+        if isinstance(value, str):
+            out.append(value)
+        elif isinstance(value, dict):
+            out.append(str(value.get('cmd') or value.get('argv') or ''))
+    return out
+
+
 SHAPES = (
     ('state: absent', lambda t: any(a.get('state') == 'absent' for a in _args(t))),
     ('force+link', lambda t: any(
         a.get('state') == 'link' and a.get('force') is True for a in _args(t))),
     ('unit off', lambda t: any(
         a.get('enabled') is False or a.get('masked') is True for a in _args(t))),
+    # Dropping an entry from the local AUR repo: no module has a state: for it.
+    ('repo-remove', lambda t: any('repo-remove' in c for c in _commands(t))),
 )
 
 

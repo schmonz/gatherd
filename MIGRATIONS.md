@@ -77,6 +77,18 @@ unexpected path) exits nonzero, which is the answer that licenses deletion.
   check: pacman -Qq asar >/dev/null 2>&1
   fresh-install expectation: absent (pure migration)
   measured: 2026-11-16 present on a converged machine (calibrated); fresh install not yet measured
+- roles/aur/tasks/slow.yml:43 — Drop the system-Electron Slack and Teams from the local AUR repo
+  shape: repo-remove
+  thing: the slack-electron entry in the gatherd-aur database, which `aur sync --upgrades` would rebuild
+  check: tar -tf /var/cache/gatherd-aur/gatherd-aur.db.tar.zst | grep -qE '^slack-electron-[0-9][^/]*/desc$'
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-11-16 present in a scratch db repo-added from the old package (calibrated); absent here after a manual repo-remove; fresh install not yet measured
+- roles/aur/tasks/slow.yml:43 — Drop the system-Electron Slack and Teams from the local AUR repo
+  shape: repo-remove
+  thing: the teams-for-linux-electron-bin entry in the gatherd-aur database, which `aur sync --upgrades` would rebuild
+  check: tar -tf /var/cache/gatherd-aur/gatherd-aur.db.tar.zst | grep -qE '^teams-for-linux-electron-bin-[0-9][^/]*/desc$'
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-11-16 present in a scratch db repo-added from the old package (calibrated); absent here after a manual repo-remove; fresh install not yet measured
 - roles/desktop/tasks/core.yml:40 — Remove obsolete per-user gatherd-askpass
   shape: state: absent
   check: test -e "$TARGET_HOME/.local/bin/gatherd-askpass"

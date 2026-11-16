@@ -40,6 +40,23 @@
       become: true
       become_user: root
 
+    - name: Drop the system-Electron Slack and Teams from the local AUR repo
+      # Uninstalling them leaves their entries in the repo, and `aur sync
+      # --upgrades` rebuilds everything the repo lists, installed or not -- so a
+      # manual upgrade tried teams-for-linux-electron-bin again and died on the
+      # same electron45. One name per call because repo-remove is all or nothing:
+      # with any name missing it exits 1 and writes nothing, and "Package
+      # matching '<name>' not found." on stderr is the already-done case.
+      ansible.builtin.command: "repo-remove {{ aur_repo_dir }}/{{ aur_repo_name }}.db.tar.zst {{ item }}"
+      loop:
+        - slack-electron
+        - teams-for-linux-electron-bin
+      register: _repo_remove_electron
+      changed_when: _repo_remove_electron.rc == 0
+      failed_when:
+        - _repo_remove_electron.rc != 0
+        - "'not found' not in _repo_remove_electron.stderr"
+
     - name: Install slow AUR packages
       community.general.pacman:
         name: "{{ aur_slow_packages }}"

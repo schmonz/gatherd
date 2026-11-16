@@ -239,6 +239,10 @@ rest_packages:
   - xdg-desktop-portal
   - xdg-desktop-portal-wlr
   - xdg-desktop-portal-gtk
+  # Helium's Qt theme, pinned to Qt6 by --qt-version=6: the wayland platform
+  # plugin and the xdgdesktopportal theme plugin both ship in qt6-base, which
+  # was otherwise here only as other packages' dependency.
+  - qt6-base
   # remote GUI: VNC bound to localhost, reached over an SSH tunnel (see
   # plans/VNC.md). wayvnc serves this machine (no service — a session cohort
   # child); remmina is the client for reaching other machines, with built-in

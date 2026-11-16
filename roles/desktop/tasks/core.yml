@@ -393,8 +393,13 @@
   loop:
     - dest: .config/net.imput.helium/initial_preferences
       content: '{"browser":{"check_default_browser":false},"extensions":{"theme":{"system_theme":1}},"helium":{"completed_onboarding":true,"services":{"schema_version":1,"user_consented":true}},"session":{"restore_on_startup":1}}'
+    # --qt-version=6: Helium ships both libqt5_shim and libqt6_shim. Once
+    # audacity pulled in qt5-base (via suil), Helium on sway loaded the Qt5 one,
+    # found no wayland platform plugin (no qt5-wayland) and aborted at startup
+    # with system_theme 2. The Qt6 shim gets wayland and the xdgdesktopportal
+    # theme from qt6-base. Only the helium-browser wrapper reads this file.
     - dest: .config/helium-browser-flags.conf
-      content: "--password-store=basic"
+      content: "--password-store=basic\n--qt-version=6"
 
 # Vestigial: gatherd installs only helium-browser-bin (a Chromium fork with its
 # own config dir), so on machines provisioned before that switch these files

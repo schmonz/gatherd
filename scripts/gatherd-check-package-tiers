@@ -27,6 +27,11 @@ ALLOWED = {
     'firefox': 'removal, not an install',
     'claude-desktop-bin': 'removal, not an install (superseded by claude-desktop)',
     'polkit-gnome': 'removal, not an install',
+    'slack-electron': 'removal, not an install (superseded by slack-desktop)',
+    'teams-for-linux-electron-bin': 'removal, not an install (superseded by teams-for-linux-bin)',
+    'electron43': 'removal, not an install (only teams-for-linux-electron-bin needed it)',
+    'electron44': 'removal, not an install (only slack-electron needed it)',
+    'asar': 'removal, not an install (only teams-for-linux-electron-bin needed it)',
     # Hardware-gated: each sits beside its has_* gate in its own tiny task file,
     # and being per-machine a generic cache stick cannot predict it anyway.
     'grub-btrfs': 'hardware-gated (has_grub)',

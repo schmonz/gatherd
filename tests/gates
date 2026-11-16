@@ -53,6 +53,7 @@ run "$REPO/scripts/gatherd-check-migrations" "$REPO"
 run "$REPO/scripts/gatherd-check-aur-deps" "$REPO"
 run "$REPO/scripts/gatherd-check-vault-units" "$REPO"
 run "$REPO/scripts/gatherd-check-session-cohort" "$REPO"
+run "$REPO/scripts/gatherd-check-electron" "$REPO"
 
 printf '\n== unit tests ==\n'
 # assert-sonames is here and not in the block above for the same reason
@@ -63,7 +64,7 @@ printf '\n== unit tests ==\n'
 for suite in check-package-tiers check-migrations check-aur-deps assert-aur-deps \
              assert-sonames assert-packages-declared census-removals \
              migration-checks await-and-run \
-             check-vault-units needs-run await-async check-session-cohort \
+             check-vault-units needs-run await-async check-session-cohort check-electron \
              post-setup-notes show-slow-progress; do
     # An `if`, not `[ -x ] && run`. The comment here used to say that && list
     # aborts the run under `set -eu`; it does not, and what it does instead is

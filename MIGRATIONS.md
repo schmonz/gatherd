@@ -47,6 +47,36 @@ unexpected path) exits nonzero, which is the answer that licenses deletion.
   check: pacman -Qq claude-desktop-bin >/dev/null 2>&1
   fresh-install expectation: absent (pure migration)
   measured: 2026-09-01 absent
+- roles/aur/tasks/slow.yml:25 — Remove the system-Electron Slack and Teams and the Electrons they pulled in
+  shape: state: absent
+  thing: slack-electron, superseded by the bundled-Electron slack-desktop and teams-for-linux-bin
+  check: pacman -Qq slack-electron >/dev/null 2>&1
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-11-16 present on a converged machine (calibrated); fresh install not yet measured
+- roles/aur/tasks/slow.yml:25 — Remove the system-Electron Slack and Teams and the Electrons they pulled in
+  shape: state: absent
+  thing: teams-for-linux-electron-bin, superseded by the bundled-Electron slack-desktop and teams-for-linux-bin
+  check: pacman -Qq teams-for-linux-electron-bin >/dev/null 2>&1
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-11-16 present on a converged machine (calibrated); fresh install not yet measured
+- roles/aur/tasks/slow.yml:25 — Remove the system-Electron Slack and Teams and the Electrons they pulled in
+  shape: state: absent
+  thing: electron43, superseded by the bundled-Electron slack-desktop and teams-for-linux-bin
+  check: pacman -Qq electron43 >/dev/null 2>&1
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-11-16 present on a converged machine (calibrated); fresh install not yet measured
+- roles/aur/tasks/slow.yml:25 — Remove the system-Electron Slack and Teams and the Electrons they pulled in
+  shape: state: absent
+  thing: electron44, superseded by the bundled-Electron slack-desktop and teams-for-linux-bin
+  check: pacman -Qq electron44 >/dev/null 2>&1
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-11-16 present on a converged machine (calibrated); fresh install not yet measured
+- roles/aur/tasks/slow.yml:25 — Remove the system-Electron Slack and Teams and the Electrons they pulled in
+  shape: state: absent
+  thing: asar, superseded by the bundled-Electron slack-desktop and teams-for-linux-bin
+  check: pacman -Qq asar >/dev/null 2>&1
+  fresh-install expectation: absent (pure migration)
+  measured: 2026-11-16 present on a converged machine (calibrated); fresh install not yet measured
 - roles/desktop/tasks/core.yml:40 — Remove obsolete per-user gatherd-askpass
   shape: state: absent
   check: test -e "$TARGET_HOME/.local/bin/gatherd-askpass"

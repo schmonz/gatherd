@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Fail if any declared package depends on a system Electron.
+
+The doctrine is in CLAUDE.md ("Electron"): an app that needs Electron takes the
+variant that bundles its own. A shared electronNN never paid off here --
+electron43 and electron44 each had exactly one consumer -- and it couples the
+app's AUR maintainer to [extra]'s release cadence, which is how
+teams-for-linux-electron-bin 2.32.1 came to need an electron45 that [extra] did
+not have, failing the whole upgrade.
+
+Two rules, over every *_packages list in group_vars/all/main.yml:
+  * no declared package is itself an electronNN;
+  * no declared package's depends names one. Repo packages are read from the
+    sync db (gatherd's own AUR repo excluded, since it holds whatever was built
+    last, not what the playbook would build now), aur_* ones from the AUR, and
+    vendored_* ones from packaging/<name>/.SRCINFO.
+
+Packages named inline in hardware-gated task files are not covered: none of
+them is an application, and gatherd-check-package-tiers keeps that list short.
+
+A name that cannot be resolved is a violation when the source answered that it
+does not exist, and "could not run" when the source did not answer.
+
+Usage: gatherd-check-electron [repo-root]
+Exit 0 clean, 1 on violations, 2 when it could not run.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+import yaml
+
+ELECTRON = re.compile(r'^electron\d*(?:[<>=].*)?$')
+AUR_RPC = os.environ.get('AUR_LOCATION', 'https://aur.archlinux.org') + '/rpc/v5/info'
+OWN_REPO = 'gatherd-aur'
+
+
+class CannotRun(Exception):
+    pass
+
+
+def declared(root):
+    """Return {var: [names]} for every *_packages list."""
+    gv = yaml.safe_load((root / 'group_vars/all/main.yml').read_text())
+    return {k: list(v or []) for k, v in gv.items()
+            if k.endswith('_packages') and isinstance(v, list)}
+
+
+def repo_depends(names):
+    if not names:
+        return {}
+    done = subprocess.run(['pacman', '-Si', *names], capture_output=True, text=True,
+                          env={**os.environ, 'LC_ALL': 'C'})
+    found, repo, name, field = {}, None, None, None
+    for line in done.stdout.splitlines():
+        key, sep, value = line.partition(':')
+        if sep and not line.startswith(' '):
+            field = key.strip()
+            value = value.strip()
+            if field == 'Repository':
+                repo = value
+            elif field == 'Name':
+                name = value
+            elif field == 'Depends On' and repo != OWN_REPO:
+                found[name] = [] if value == 'None' else value.split()
+        elif field == 'Depends On' and repo != OWN_REPO and name in found:
+            found[name] += line.split()
+    return found
+
+
+def aur_depends(names):
+    if not names:
+        return {}
+    query = urllib.parse.urlencode([('arg[]', n) for n in names])
+    try:
+        with urllib.request.urlopen(f'{AUR_RPC}?{query}', timeout=30) as reply:
+            results = json.load(reply)['results']
+    except (OSError, ValueError, KeyError) as exc:
+        raise CannotRun(f'the AUR did not answer: {exc}') from exc
+    return {r['Name']: r.get('Depends') or [] for r in results}
+
+
+def vendored_depends(root, name):
+    srcinfo = root / 'packaging' / name / '.SRCINFO'
+    if not srcinfo.is_file():
+        raise CannotRun(f'packaging/{name}/.SRCINFO is missing')
+    return [line.split('=', 1)[1].strip() for line in srcinfo.read_text().splitlines()
+            if re.match(r'\s*depends(_\w+)?\s*=', line)]
+
+
+def check(root):
+    lists = declared(root)
+    problems = []
+    for var, names in lists.items():
+        problems += [f'{var}: {n} is a system Electron; take the app\'s bundled '
+                     f'variant instead of declaring its runtime'
+                     for n in names if ELECTRON.match(n)]
+
+    aur = sorted({n for k, v in lists.items() if k.startswith('aur_') for n in v})
+    vendored = sorted({n for k, v in lists.items() if k.startswith('vendored_') for n in v})
+    repo = sorted({n for k, v in lists.items()
+                   if not k.startswith(('aur_', 'vendored_')) for n in v} - set(aur))
+
+    deps = {}
+    deps.update(repo_depends(repo))
+    deps.update(aur_depends(aur))
+    for name in vendored:
+        deps[name] = vendored_depends(root, name)
+
+    for name in repo + aur:
+        if name not in deps:
+            where = 'the AUR' if name in aur else 'the sync db'
+            problems.append(f'{name} is declared but {where} has no such package')
+    for name in sorted(deps):
+        bad = [d for d in deps[name] if ELECTRON.match(d)]
+        if bad:
+            problems.append(f'{name} depends on {", ".join(bad)}; take its variant '
+                            f'that bundles Electron')
+    return problems
+
+
+def main():
+    root = Path(sys.argv[1]) if sys.argv[1:] else Path(__file__).resolve().parent.parent
+    try:
+        problems = check(root)
+    except CannotRun as exc:
+        print(f'could not run: {exc}', file=sys.stderr)
+        return 2
+    for p in problems:
+        print(p)
+    return 1 if problems else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

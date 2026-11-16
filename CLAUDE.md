@@ -192,6 +192,25 @@ Do not hand-transcribe a PKGBUILD's `depends` and assume you got them all. That
 is exactly what produced the bug: clight's `bash-completion`, `cmake` and
 `libconfig` were transcribed correctly, and `gsl` was simply missed.
 
+## Electron
+
+**No declared package depends on a system `electronNN`.** When an app's AUR
+package wants one, take the variant that bundles its own Electron
+(`slack-desktop`, not `slack-electron`; `teams-for-linux-bin`, not
+`teams-for-linux-electron-bin`). `scripts/gatherd-check-electron` enforces it.
+
+Sharing a runtime was the theory, and it never paid off: measured on
+2026-11-16, `electron43` and `electron44` each had exactly one consumer, so the
+sharing saved nothing. What it did do was couple each app's AUR maintainer to
+`[extra]`'s release cadence. `teams-for-linux-electron-bin` 2.32.1 moved to
+`electron45` while `[extra]` stopped at `electron44`, and the upgrade could not
+build at all. It also left an `electronNN` line in `group_vars` for every app,
+each one a version to chase.
+
+The gate has no allowlist, because the fix is always the same. If an app ever
+has no bundled variant, that is a decision to write down here, not an exemption
+to add there.
+
 ## Repave cadence
 
 Count the `verify_li` lines in `section_verify` in `scripts/gatherd-post-setup-notes`. If there are more than 10, suggest that it's time to repave and run through the verify checklist.

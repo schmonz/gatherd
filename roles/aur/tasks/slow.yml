@@ -22,6 +22,24 @@
       become: true
       become_user: root
 
+    - name: Remove the system-Electron Slack and Teams and the Electrons they pulled in
+      # slack-desktop conflicts with slack-electron, and teams-for-linux-bin with
+      # teams-for-linux-electron-bin, so --noconfirm would fail the install below
+      # just as it did for claude-desktop-bin. electron43, electron44 and asar
+      # were declared only for those two, so once they go nothing requires them.
+      # Machines converged before the switch carry all five; a fresh repave
+      # never installs them.
+      community.general.pacman:
+        name:
+          - slack-electron
+          - teams-for-linux-electron-bin
+          - electron43
+          - electron44
+          - asar
+        state: absent
+      become: true
+      become_user: root
+
     - name: Install slow AUR packages
       community.general.pacman:
         name: "{{ aur_slow_packages }}"

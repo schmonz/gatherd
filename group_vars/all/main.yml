@@ -140,7 +140,7 @@ rest_packages:
   - libfprint              # fprintd-clients-git
   - pam_wrapper            # fprintd-clients-git
   - python-dbusmock        # fprintd-clients-git
-  - libxss                 # helium-browser-bin, jetbrains-toolbox
+  - libxss                 # helium-browser-bin, jetbrains-toolbox, slack-desktop, teams-for-linux-bin
   - ttf-liberation         # helium-browser-bin
   - xcb-util-keysyms       # jetbrains-toolbox, zoom
   - noto-fonts             # koreader-bin
@@ -166,10 +166,7 @@ rest_packages:
   - python-cryptography    # python-validity
   - python-pyusb           # python-validity
   - python-yaml            # python-validity
-  - electron44             # slack-electron
-  - asar                   # teams-for-linux-electron-bin
-  - electron43             # teams-for-linux-electron-bin
-  - nodejs                 # teams-for-linux-electron-bin
+  - nodejs                 # teams-for-linux-bin
   - yaml-cpp               # thinkfan
   - timeshift              # timeshift-autosnap
   # claude-desktop: Cowork runs its sandbox in a QEMU VM. Upstream ships the VM
@@ -344,9 +341,15 @@ aur_slow_packages:
   # communication
   - piavpn-bin
   - vesktop-bin
-  - slack-electron
+  # Slack and Teams take the variants that bundle their own Electron. The
+  # -electron variants depended on a system electronNN, and that sharing never
+  # paid off: electron43 and electron44 each had exactly one consumer, and
+  # teams-for-linux-electron-bin 2.32.1 moved to electron45 while [extra] still
+  # stopped at electron44, so the upgrade could not build. See CLAUDE.md
+  # ("Electron").
+  - slack-desktop
   - zoom
-  - teams-for-linux-electron-bin
+  - teams-for-linux-bin
   # writing
   - dawn-writer-bin
   # AI tools (the Electron desktop app runs on any CPU; the native

@@ -1,0 +1,87 @@
+#!/bin/sh
+# Unit tests for gatherd-check-electron.
+#
+# The gate holds the CLAUDE.md doctrine that no declared package pulls in a
+# system electronNN. The cases that matter are each place such a dependency can
+# come from -- declared directly, a repo package's depends, an AUR package's,
+# a vendored PKGBUILD's -- plus the bundled variants it must leave alone, and
+# the two ways it can fail to answer without that reading as clean.
+#
+# Uses real package names, so it needs a synced pacman db and the network.
+#
+# Usage: tests/check-electron
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+GATE="$REPO/scripts/gatherd-check-electron"
+PASS=0
+FAIL=0
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/group_vars/all" "$WORK/packaging/demo"
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+vars() { printf '%s\n' "$@" > "$WORK/group_vars/all/main.yml"; }
+
+assert_rc() {
+    _d=$1; _want=$2; _root=${3:-$WORK}
+    if "$GATE" "$_root" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want rc=$_want got rc=$_got)"; cat "$WORK/out"; fi
+}
+
+assert_says() {
+    _d=$1; _want=$2
+    if grep -q "$_want" "$WORK/out"; then ok "$_d"; else bad "$_d (no '$_want' in output)"; cat "$WORK/out"; fi
+}
+
+# 1. Apps that bundle their own Electron, from a repo and from the AUR.
+vars 'rest_packages: [signal-desktop]' 'aur_slow_packages: [slack-desktop, teams-for-linux-bin]'
+assert_rc "bundled-Electron apps exit 0" 0
+
+# 2. Declaring the runtime itself.
+vars 'rest_packages: [electron44]'
+assert_rc "a declared electronNN exits 1" 1
+assert_says "and is named" 'electron44 is a system Electron'
+
+# 3. A repo package that depends on one (code needs a system electron).
+vars 'rest_packages: [code]'
+assert_rc "a repo package needing electronNN exits 1" 1
+assert_says "and names the package" '^code depends on electron'
+
+# 4. An AUR package that depends on one: the variant this gate was written to evict.
+vars 'aur_slow_packages: [slack-electron]'
+assert_rc "an AUR package needing electronNN exits 1" 1
+assert_says "and names the package" '^slack-electron depends on electron'
+
+# 5. A vendored PKGBUILD that depends on one.
+vars 'vendored_packages: [demo]'
+printf 'pkgbase = demo\n\tdepends = glibc\n\tdepends = electron44\npkgname = demo\n' \
+    > "$WORK/packaging/demo/.SRCINFO"
+assert_rc "a vendored package needing electronNN exits 1" 1
+assert_says "and names the package" '^demo depends on electron44'
+
+# 6. A name the AUR says does not exist is this repo naming it wrong, not clean.
+vars 'aur_packages: [gatherd-no-such-package-xyzzy]'
+assert_rc "an unknown AUR name exits 1" 1
+assert_says "and says so" 'the AUR has no such package'
+
+# 7. A vendored package without .SRCINFO cannot be checked.
+rm "$WORK/packaging/demo/.SRCINFO"
+vars 'vendored_packages: [demo]'
+assert_rc "a missing .SRCINFO exits 2" 2
+
+# 8. An AUR that does not answer is "could not run", never clean.
+vars 'aur_packages: [slack-desktop]'
+if AUR_LOCATION=http://127.0.0.1:9 "$GATE" "$WORK" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+if [ "$_got" = 2 ]; then ok "an unreachable AUR exits 2"; else bad "an unreachable AUR exits 2 (got rc=$_got)"; cat "$WORK/out"; fi
+
+# 9. This repo.
+assert_rc "the working tree is clean" 0 "$REPO"
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

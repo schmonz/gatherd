@@ -28,6 +28,9 @@ has_thinkpad_trackpoint: false
 has_accelerometer: false
 has_dual_accelerometer: false
 has_touchscreen: false
+# Per-machine opt-ins: chosen, not detected, so want_* rather than has_*.
+# Each is a marker file in /etc/gatherd/opt-in/.
+want_mavernix: false
 is_aarch64: "{{ ansible_facts['architecture'] == 'aarch64' }}"
 foot_font_size: 14
 sway_output_scale: "1"

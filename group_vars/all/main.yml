@@ -298,6 +298,25 @@ rest_slow_x86_packages:
   - signal-desktop
   - apostrophe
 
+# Official-repo dependencies of the mavernix AUR package that nothing else
+# declares, installed only on machines with want_mavernix. Includes its
+# makedepends, since makepkg cannot install them itself.
+rest_slow_mavernix_packages:
+  - wayfire
+  - quickshell
+  - qt6-multimedia
+  - qt6-wayland
+  - qt6-svg
+  - qt6-imageformats
+  - tomlplusplus
+  - kvantum
+  - 7zip
+  - lbzip2
+  - libicns
+  - ninja
+  - glm
+  - vulkan-headers
+
 # Fast AUR builds, installed in the main run (roles/aur/tasks/main.yml).
 aur_packages:
   # automount
@@ -365,6 +384,11 @@ aur_slow_packages:
 aur_slow_avx_packages:
   - claude-code
   - claude-cowork-service
+
+# Alternate desktop session, gated on want_mavernix. Its compositor plugins
+# load only into the Wayfire they were built against.
+aur_slow_mavernix_packages:
+  - mavernix
 
 # Vendored PKGBUILDs (packaging/<pkg>/), built into the local repo with
 # aur_build_command and installed by name. In system REST, right after

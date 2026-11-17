@@ -14,6 +14,16 @@
   register: _slow_pkg_install
   until: _slow_pkg_install is succeeded
 
+- name: Install the official-repo dependencies of Mavernix
+  community.general.pacman:
+    name: "{{ rest_slow_mavernix_packages }}"
+    state: present
+  when: want_mavernix
+  retries: 3
+  delay: 10
+  register: _mavernix_pkg_install
+  until: _mavernix_pkg_install is succeeded
+
 # Moved here from tasks/rest.yml, which runs in site-async's System play --
 # one play BEFORE the User play that installs koreader-bin from the AUR. The
 # stat therefore found nothing on a first converge and the patch only landed on

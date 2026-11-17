@@ -92,6 +92,28 @@
       become: true
       become_user: root
 
+    - name: Check the build dependencies of Mavernix
+      ansible.builtin.include_tasks: tasks/assert_aur_deps.yml
+      vars:
+        aur_assert_targets: "{{ aur_slow_mavernix_packages }}"
+      when: want_mavernix
+
+    - name: Build Mavernix into the local repository
+      ansible.builtin.command: "{{ aur_sync_command }} {{ aur_slow_mavernix_packages | join(' ') }}"
+      environment: "{{ aur_build_environment }}"
+      register: _aur_sync_mavernix
+      changed_when: "'there is nothing to do' not in _aur_sync_mavernix.stderr"
+      when: want_mavernix
+
+    - name: Install Mavernix
+      community.general.pacman:
+        name: "{{ aur_slow_mavernix_packages }}"
+        state: present
+        update_cache: "{{ _aur_sync_mavernix.changed }}"
+      when: want_mavernix
+      become: true
+      become_user: root
+
     - name: Install AUR fingerprint reader driver
       # python-validity drives the Validity 138a:0097 sensor and brings in
       # open-fprintd and fprintd-clients-git (which together provide the

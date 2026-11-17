@@ -264,6 +264,21 @@
     has_avx: true
   when: _avx.stdout == 'true'
 
+# Mavernix is an alternate session for machines that can afford Wayfire,
+# Quickshell and their effects. Never the default: gatherd has to install and
+# reconverge on old, small machines, so a machine opts in by hand with
+# `touch /etc/gatherd/opt-in/mavernix`. Removing the file stops the build but
+# does not uninstall anything.
+- name: Stat the Mavernix opt-in marker
+  ansible.builtin.stat:
+    path: /etc/gatherd/opt-in/mavernix
+  register: _mavernix_opt_in
+
+- name: Detect want_mavernix
+  ansible.builtin.set_fact:
+    want_mavernix: true
+  when: _mavernix_opt_in.stat.exists
+
 - name: Check for infrared remote control receiver  # noqa: risky-shell-pipe
   # /dev/lirc*: traditional LIRC path (requires lirc kernel module)
   # /sys/class/rc/rc*: modern rc-core path (Apple Remote, most built-ins)
@@ -466,6 +481,7 @@
     has_touchscreen: "{{ has_touchscreen }}"
     has_thinkpad_hardware: "{{ has_thinkpad_hardware }}"
     has_thinkpad_trackpoint: "{{ has_thinkpad_trackpoint }}"
+    want_mavernix: "{{ want_mavernix }}"
     is_aarch64: "{{ is_aarch64 }}"
     foot_font_size: "{{ foot_font_size }}"
     timeshift_backup_device_uuid: "{{ timeshift_backup_device_uuid }}"

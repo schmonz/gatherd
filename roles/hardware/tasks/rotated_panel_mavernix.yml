@@ -1,0 +1,28 @@
+---
+# Sway reads the DSI panel's DRM panel_orientation (set by the kernel cmdline in
+# rotated_panel.yml) and turns the output itself; Wayfire under Mavernix does
+# not, and came up 90° counterclockwise. Wayfire also counts the turn the other
+# way from Sway: measured on the MiniBook X on 2026-11-17, `transform = 90` came
+# up upside down and `transform = 270` upright, while `swaymsg -t get_outputs`
+# reports the same panel as transform 90.
+#
+# The scale rides along because it belongs to the same panel: Mavernix's auto
+# scale drew it at 1, and the 1.4 Sway uses comes from the MiniBook X branch in
+# machine_facts.
+#
+# ~/.config/mavernix/wayfire.ini is Mavernix's place for the user's own Wayfire
+# settings, read after everything the session generates. Only these two keys
+# are managed, so anything else in the file is left alone.
+- name: Turn and scale the rotated panel in the Mavernix session
+  community.general.ini_file:
+    path: "{{ target_home }}/.config/mavernix/wayfire.ini"
+    section: "output:DSI-1"
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    no_extra_spaces: false
+    mode: "0644"
+  loop:
+    - { option: transform, value: "270" }
+    - { option: scale, value: "{{ sway_output_scale }}" }
+  become: true
+  become_user: "{{ target_user }}"

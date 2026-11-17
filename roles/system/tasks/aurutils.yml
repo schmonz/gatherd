@@ -187,12 +187,25 @@
   changed_when: false
   failed_when: false
 
-# Compares the full pkgver-pkgrel, not just presence, so a deliberate version
-# bump in the vendored PKGBUILD actually rebuilds.
+# The pin is a floor, not an exact match. Once aurutils is installed, a newer
+# one can arrive from outside gatherd (yay upgraded it to 23-1 over a 20.5.8-1
+# pin), and an exact-match check turned every later run into an attempted
+# downgrade. vercmp prints -1 only when the installed version is older, so a
+# deliberate bump of the vendored PKGBUILD still rebuilds.
+- name: Compare the installed aurutils with the pinned version
+  ansible.builtin.command:
+    argv:
+      - vercmp
+      - "{{ _aurutils_installed.stdout.split(' ')[1] }}"
+      - "{{ _aurutils_pkgver.stdout }}-{{ _aurutils_pkgrel.stdout }}"
+  register: _aurutils_vercmp
+  changed_when: false
+  when: _aurutils_installed.rc == 0
+
 - name: Build and install aurutils from the vendored PKGBUILD
   when: >-
     _aurutils_installed.rc != 0 or
-    _aurutils_installed.stdout.split(' ')[1] != _aurutils_pkgver.stdout + '-' + _aurutils_pkgrel.stdout
+    _aurutils_vercmp.stdout | int < 0
   block:
     - name: Create a scratch directory for the aurutils build
       ansible.builtin.file:
@@ -209,28 +222,16 @@
         mode: '0644'
         remote_src: true
 
-    # Plain makepkg, deliberately without -s: -s is the only thing that would
-    # make makepkg shell out to sudo, and the whole point of this file is that
-    # nothing here can. aurutils' six dependencies are declared in
-    # rest_packages and installed by root before this runs.
     - name: Find aurutils artifacts from earlier builds
       ansible.builtin.find:
         paths: "{{ target_home }}/.cache/gatherd/aurutils"
         patterns: "*.pkg.tar.zst"
       register: _aurutils_stale
 
-    - name: Build aurutils
-      ansible.builtin.command: makepkg --noconfirm
-      args:
-        chdir: "{{ target_home }}/.cache/gatherd/aurutils"
-      become: true
-      become_user: "{{ target_user }}"
-      changed_when: true
-
-    # Clear old artifacts first. makepkg leaves every build it has ever done in
-    # place, so after a pkgver bump the directory holds two *.pkg.tar.zst and
-    # the "exactly one" guard below fires -- a failure that only appears on the
-    # upgrade path, which is the path nobody exercises until it matters.
+    # Before the build, not after. makepkg leaves every build it has ever done
+    # in place: a pkgver bump leaves two *.pkg.tar.zst for the "exactly one"
+    # guard below to trip on, and an unchanged pkgver makes makepkg itself
+    # refuse with "A package has already been built" (rc 13).
     - name: Remove aurutils artifacts from earlier builds
       ansible.builtin.file:
         path: "{{ item.path }}"
@@ -240,6 +241,18 @@
         label: "{{ item.path | basename }}"
       become: true
       become_user: "{{ target_user }}"
+
+    # Plain makepkg, deliberately without -s: -s is the only thing that would
+    # make makepkg shell out to sudo, and the whole point of this file is that
+    # nothing here can. aurutils' six dependencies are declared in
+    # rest_packages and installed by root before this runs.
+    - name: Build aurutils
+      ansible.builtin.command: makepkg --noconfirm
+      args:
+        chdir: "{{ target_home }}/.cache/gatherd/aurutils"
+      become: true
+      become_user: "{{ target_user }}"
+      changed_when: true
 
     - name: Find the built aurutils package
       ansible.builtin.find:

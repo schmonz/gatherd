@@ -430,5 +430,55 @@ else
     ok "sqlite3 absent: login-reminder cases skipped"
 fi
 
+# Hand-written notes, wherever they sit, outlive the sections that regenerate
+# every login. Unmanaged WiFi once spliced itself in under line 1, which filed
+# whatever you had written at the top under its own header; the next login
+# wiped header-to-header, and the notes with it. They survived exactly one
+# login, so nothing looked wrong until they were gone.
+mkdir -p "$WORK/bin"
+WIFI_SAVED="$WORK/wifi-saved"
+cat > "$WORK/bin/nmcli" <<'STUB'
+#!/bin/sh
+while IFS= read -r ssid; do printf '%s:802-11-wireless\n' "$ssid"; done < "$GATHERD_TEST_WIFI_SAVED"
+STUB
+chmod +x "$WORK/bin/nmcli"
+printf 'HomeNet\n' > "$WORK/managed-wifi.list"
+printf 'HomeNet\nCafe Guest\n' > "$WIFI_SAVED"
+
+generate_wifi() {
+    PATH="$WORK/bin:$PATH" GATHERD_MANAGED_WIFI_LIST="$WORK/managed-wifi.list" \
+        GATHERD_TEST_WIFI_SAVED="$WIFI_SAVED" generate
+}
+first_header_line() { grep -n '^# ' "$OUT" | head -1 | cut -d: -f1; }
+note_line()         { grep -nF -- "$1" "$OUT" | head -1 | cut -d: -f1; }
+above_first_header() {
+    _n=$(note_line "$1"); _h=$(first_header_line)
+    [ -n "$_n" ] && { [ -z "$_h" ] || [ "$_n" -lt "$_h" ]; }
+}
+
+printf 'Manual steps remaining:\n\nmy note at the top\n' > "$OUT"
+generate_wifi; generate_wifi
+assert "a note at the top survives two logins with an unmanaged network" has 'my note at the top'
+assert "a note at the top stays above every section"  above_first_header 'my note at the top'
+assert "the unmanaged network is still reported"       has '  - Cafe Guest'
+
+printf 'Manual steps remaining:\n\n# Unmanaged WiFi\nmy note about wifi\n' > "$OUT"
+generate_wifi; generate_wifi
+assert "a note under Unmanaged WiFi survives two logins" has 'my note about wifi'
+
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; generate_wifi
+refute "a network no longer saved drops out of the list" has '  - Cafe Guest'
+assert "a newly saved network shows up"                   has '  - Airport Free'
+assert "and the note under Unmanaged WiFi is still there" has 'my note about wifi'
+assert "with one Unmanaged WiFi header, not two" \
+    test "$(grep -c '^# Unmanaged WiFi$' "$OUT")" -eq 1
+
+printf 'HomeNet\n' > "$WIFI_SAVED"; generate_wifi
+assert "with every network managed, the note keeps its header" has '# Unmanaged WiFi'
+
+printf 'Manual steps remaining:\n\nmy note at the top\n' > "$OUT"
+STRAYS_MODE=stray generate_wifi; STRAYS_MODE=stray generate_wifi
+assert "a note at the top stays above the Packages section too" above_first_header 'my note at the top'
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

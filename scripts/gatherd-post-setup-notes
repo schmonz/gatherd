@@ -34,14 +34,15 @@ li() { wrap_bullet "$1" >> "$OUTPUT"; }
 
 section_present() { grep -q "^# $1\$" "$OUTPUT" 2>/dev/null; }
 
-# Wipe an entire section, header through the next header — blunt, and only safe
-# for the fully-derived Unmanaged WiFi list (regenerated each run, never
-# hand-edited). For any section you might annotate, use prune_section instead.
-section_remove() {
-    awk -v hdr="# $1" '
-        $0 == hdr { skip=1; next }
-        skip && /^# /  { skip=0 }
-        !skip { print }
+# Put a new section (a file whose text starts with its header) above every
+# other section, and below anything written before the first one. Splicing
+# under line 1 instead filed whatever you had written at the top under the new
+# header, where the next prune of that section could take it.
+splice_at_top() {
+    awk -v blk="$1" '
+        !done && /^# / { while ((getline l < blk) > 0) print l; print ""; done = 1 }
+                       { print }
+        END            { if (!done) while ((getline l < blk) > 0) print l }
     ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
 }
 
@@ -51,7 +52,14 @@ section_remove() {
 # exists further up -- the bullets would land under whatever section is last.
 append_to_section() {
     _hdr="$1"; shift
-    _new=$(for _b in "$@"; do wrap_bullet "$_b"; done)
+    append_text_to_section "$_hdr" "$(for _b in "$@"; do wrap_bullet "$_b"; done)"
+}
+
+# The same, for text already rendered -- a bullet whose sub-list wrap_bullet
+# would flatten.
+append_text_to_section() {
+    _hdr="$1"
+    _new="$2"
     [ -n "$_new" ] || return 0
     # Blank lines are held back while inside the section, so the new bullets
     # land after its last line rather than after the gap before the next header.
@@ -443,12 +451,14 @@ section_other_logins() {
 }
 
 section_unmanaged_wifi() {
-    # Content is purely derived from current NM state vs Ansible manifest;
-    # always rewrite from scratch so newly joined networks surface promptly.
-    [ -r /etc/gatherd/managed-wifi.list ] || {
-        section_present 'Unmanaged WiFi' && section_remove 'Unmanaged WiFi'
-        return
-    }
+    # Derived from current NM state vs the Ansible manifest and re-derived every
+    # run, so newly joined networks surface promptly. Only the derived bullet is
+    # replaced: this section once wiped header-to-header, and took with it every
+    # note that had landed under the header.
+    _wifi_list="${GATHERD_MANAGED_WIFI_LIST:-/etc/gatherd/managed-wifi.list}"
+    _wifi_mark='Either keep in Ansible'
+    prune_derived 'Unmanaged WiFi' "$_wifi_mark"
+    [ -r "$_wifi_list" ] || return
 
     saved=$(nmcli -t -f NAME,TYPE connection show 2>/dev/null \
         | awk -F: '$2 == "802-11-wireless" { print $1 }' \
@@ -457,30 +467,27 @@ section_unmanaged_wifi() {
     # in the local ack file. The ack file is per-machine and intentionally not
     # carried across a repave — a fresh machine re-surfaces every unmanaged net.
     _exclude=$(mktemp)
-    cat /etc/gatherd/managed-wifi.list > "$_exclude"
+    cat "$_wifi_list" > "$_exclude"
     _ack="$HOME/.config/gatherd/wifi-ignore.list"
     [ -r "$_ack" ] && cat "$_ack" >> "$_exclude"
     unmanaged=$(printf '%s\n' "$saved" | grep -vxFf "$_exclude" || true)
     rm -f "$_exclude"
-
-    section_present 'Unmanaged WiFi' && section_remove 'Unmanaged WiFi'
     [ -n "$unmanaged" ] || return
 
-    # Build the block on its own, then splice it just under the top "Manual steps
-    # remaining:" line. This section regenerates every run and would otherwise
-    # re-append at the bottom, but it belongs above Verify.
+    _text=$(
+        wrap_bullet "$_wifi_mark (vault/vault.yml) or append to ~/.config/gatherd/wifi-ignore.list:"
+        printf '%s\n' "$unmanaged" | while IFS= read -r ssid; do
+            [ -n "$ssid" ] && printf '  - %s\n' "$ssid"
+        done
+    )
+    # A header that survived the prune has notes of yours under it.
+    if section_present 'Unmanaged WiFi'; then
+        append_text_to_section 'Unmanaged WiFi' "$_text"
+        return
+    fi
     _blk=$(mktemp)
-    _main=$OUTPUT
-    OUTPUT=$_blk
-    h 'Unmanaged WiFi'
-    li 'Either keep in Ansible (vault/vault.yml) or append to ~/.config/gatherd/wifi-ignore.list:'
-    printf '%s\n' "$unmanaged" | while IFS= read -r ssid; do
-        [ -n "$ssid" ] && printf '  - %s\n' "$ssid" >> "$OUTPUT"
-    done
-    OUTPUT=$_main
-
-    { head -n 1 "$OUTPUT"; cat "$_blk"; tail -n +2 "$OUTPUT"; } \
-        > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+    printf '\n# Unmanaged WiFi\n%s\n' "$_text" > "$_blk"
+    splice_at_top "$_blk"
     rm -f "$_blk"
 }
 
@@ -574,8 +581,8 @@ section_sonames() {
         return
     fi
 
-    # Build the block on its own, then splice it under the top "Manual steps
-    # remaining:" line, the way section_unmanaged_wifi does. h() and li() can
+    # Build the block on its own, then splice it above the other sections, the
+    # way section_unmanaged_wifi does. h() and li() can
     # only append at end of file, which would file a broken program below the
     # verify list.
     _blk=$(mktemp)
@@ -584,8 +591,7 @@ section_sonames() {
     h 'Libraries'
     for _b in "$@"; do li "$_b"; done
     OUTPUT=$_main
-    { head -n 1 "$OUTPUT"; cat "$_blk"; tail -n +2 "$OUTPUT"; } \
-        > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+    splice_at_top "$_blk"
     rm -f "$_blk"
 }
 
@@ -653,8 +659,7 @@ section_strays() {
     h 'Packages'
     for _b in "$@"; do li "$_b"; done
     OUTPUT=$_main
-    { head -n 1 "$OUTPUT"; cat "$_blk"; tail -n +2 "$OUTPUT"; } \
-        > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+    splice_at_top "$_blk"
     rm -f "$_blk"
 }
 

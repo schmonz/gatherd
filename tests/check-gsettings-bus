@@ -1,0 +1,96 @@
+#!/bin/sh
+# Unit tests for gatherd-check-gsettings-bus.
+#
+# The gate exists because a fix for this hang reached three of five tasks and
+# the two it missed kept CORE from finishing for two months. The cases are the
+# places the environment can come from (the task, an enclosing block), the
+# shapes a command takes (shell string, command cmd:), a nested block, and the
+# file that does not parse, which must not read as clean.
+#
+# Usage: tests/check-gsettings-bus
+
+set -eu
+
+TESTSDIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$TESTSDIR/.." && pwd)"
+GATE="$REPO/scripts/gatherd-check-gsettings-bus"
+PASS=0
+FAIL=0
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/roles/demo/tasks"
+TASKS="$WORK/roles/demo/tasks/main.yml"
+
+ok()  { PASS=$((PASS + 1)); printf 'ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
+
+assert_rc() {
+    _d=$1; _want=$2
+    if "$GATE" "$WORK" >"$WORK/out" 2>&1; then _got=0; else _got=$?; fi
+    if [ "$_got" = "$_want" ]; then ok "$_d"; else bad "$_d (want rc=$_want got rc=$_got)"; cat "$WORK/out"; fi
+}
+
+# 1. The fixed shape.
+cat > "$TASKS" <<'EOF'
+- name: Enable system dark mode
+  ansible.builtin.shell: |
+    cur=$(dbus-run-session gsettings get org.gnome.desktop.interface color-scheme)
+  environment:
+    GIO_USE_VFS: local
+EOF
+assert_rc "a task that sets GIO_USE_VFS passes" 0
+
+# 2. The monospace-font task as it hung CORE on 2026-11-16.
+cat > "$TASKS" <<'EOF'
+- name: Configure system monospace font
+  ansible.builtin.shell: |
+    cur=$(dbus-run-session gsettings get org.gnome.desktop.interface monospace-font-name)
+EOF
+assert_rc "a shell task without it fails" 1
+grep -q 'Configure system monospace font' "$WORK/out" && ok "naming the task" || bad "naming the task"
+
+# 3. Not only $(...): Ansible reads a command's stdout to EOF as well.
+cat > "$TASKS" <<'EOF'
+- name: Reset GTK text scaling factor to 1.0
+  ansible.builtin.command:
+    cmd: "dbus-run-session gsettings set org.gnome.desktop.interface text-scaling-factor 1.0"
+EOF
+assert_rc "a command task with cmd: fails too" 1
+
+# 4. The environment can come from an enclosing block, and a nested task is
+#    still a task.
+cat > "$TASKS" <<'EOF'
+- name: Configure GNOME settings
+  environment:
+    GIO_USE_VFS: local
+  block:
+    - name: Set one
+      ansible.builtin.command: dbus-run-session gsettings set a.b c d
+- name: Configure more settings
+  block:
+    - name: Set two
+      ansible.builtin.command: dbus-run-session gsettings set a.b e f
+EOF
+assert_rc "a nested task without it fails, and one under a block with it does not" 1
+grep -q 'Set two' "$WORK/out" && ! grep -q 'Set one' "$WORK/out" \
+    && ok "blaming only the uncovered task" || bad "blaming only the uncovered task"
+
+# 5. Any other value is not the fix.
+cat > "$TASKS" <<'EOF'
+- name: Set something
+  ansible.builtin.command: dbus-run-session gsettings set a.b c d
+  environment:
+    GIO_USE_VFS: gvfs
+EOF
+assert_rc "GIO_USE_VFS set to anything but local fails" 1
+
+# 6. A file that does not parse could hide anything.
+printf -- '- name: [broken\n' > "$TASKS"
+assert_rc "an unparsable task file means could not run" 2
+
+# 7. And the real tree.
+if "$GATE" "$REPO" >"$WORK/out" 2>&1; then ok "the repo itself is clean"; else bad "the repo itself is clean"; cat "$WORK/out"; fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ]

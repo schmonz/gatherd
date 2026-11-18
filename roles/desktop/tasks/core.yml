@@ -281,6 +281,10 @@
       dbus-run-session gsettings set org.gnome.desktop.interface monospace-font-name "$font"
       echo changed
     }
+  # GIO_USE_VFS: see "Enable system dark mode"; 696757a fixed that task and the
+  # xed ones but not this one, which then hung CORE for its 900s on 2026-11-16.
+  environment:
+    GIO_USE_VFS: local
   register: _monospace_font
   changed_when: "'changed' in _monospace_font.stdout"
 
@@ -291,6 +295,11 @@
   # monospace-font-name above; text-scaling-factor must stay at 1.0.
   ansible.builtin.command:
     cmd: "dbus-run-session gsettings set org.gnome.desktop.interface text-scaling-factor 1.0"
+  # GIO_USE_VFS: see "Enable system dark mode". Not only a $(...) hangs: Ansible
+  # reads this task's stdout to EOF too, and measured here a plain set piped to
+  # cat sat until `timeout 10` killed it (rc=124); with GIO_USE_VFS=local, rc=0.
+  environment:
+    GIO_USE_VFS: local
   changed_when: false
 
 - name: Configure Sway window title font size

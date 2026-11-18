@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Fail if a task runs dbus-run-session without GIO_USE_VFS=local.
+
+Since glib 2.90, gsettings on a throwaway dbus-run-session bus activates
+org.gtk.vfs.Daemon, and the gvfsd-fuse that spawns outlives the bus while
+holding the caller's stdout. Whatever reads that stdout -- a $(...), or Ansible
+itself -- never sees EOF, and the run sits until something kills it. CORE's
+900s timeout did, at "Enable system dark mode" on 2026-10-11 (fixed in 696757a)
+and at "Configure system monospace font" on 2026-11-16, a sibling that fix
+missed; CORE had not finished on that machine since September. GIO_USE_VFS=local
+keeps gvfsd off the bus.
+
+So: every task whose command or shell text mentions dbus-run-session must set
+GIO_USE_VFS to local in its own environment or an enclosing block's. Task files
+are every .yml under roles/ and tasks/ plus the site-*.yml playbooks.
+
+Usage: gatherd-check-gsettings-bus [repo-root]
+Exit 0 clean, 1 on violations, 2 when it could not run (a file that does not
+parse is not a file with no violations).
+"""
+import sys
+from pathlib import Path
+
+import yaml
+
+ACTIONS = ('ansible.builtin.shell', 'ansible.builtin.command', 'shell', 'command')
+NESTED = ('block', 'rescue', 'always', 'tasks', 'pre_tasks', 'post_tasks', 'handlers')
+
+
+class CannotRun(Exception):
+    pass
+
+
+def text_of(task):
+    parts = []
+    for action in ACTIONS:
+        value = task.get(action)
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, dict):
+            parts += [str(value.get(k, '')) for k in ('cmd', 'argv', '_raw_params')]
+    return '\n'.join(parts)
+
+
+def env_of(task, inherited):
+    env = dict(inherited)
+    own = task.get('environment')
+    if isinstance(own, dict):
+        env.update(own)
+    return env
+
+
+def walk(items, path, inherited, problems):
+    if not isinstance(items, list):
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        env = env_of(item, inherited)
+        if 'dbus-run-session' in text_of(item) and str(env.get('GIO_USE_VFS')) != 'local':
+            problems.append(f'{path}: "{item.get("name", "(unnamed task)")}" runs '
+                            f'dbus-run-session without environment GIO_USE_VFS: local')
+        for key in NESTED:
+            walk(item.get(key), path, env, problems)
+
+
+def check(root):
+    files = sorted(p for d in ('roles', 'tasks') for p in (root / d).rglob('*.yml'))
+    files += sorted(root.glob('site-*.yml'))
+    if not files:
+        raise CannotRun(f'no task files under {root}')
+    problems = []
+    for path in files:
+        try:
+            doc = yaml.safe_load(path.read_text())
+        except yaml.YAMLError as exc:
+            raise CannotRun(f'{path.relative_to(root)} does not parse: {exc}') from exc
+        walk(doc, path.relative_to(root), {}, problems)
+    return problems
+
+
+def main():
+    root = Path(sys.argv[1]) if sys.argv[1:] else Path(__file__).resolve().parent.parent
+    try:
+        problems = check(root)
+    except CannotRun as exc:
+        print(f'could not run: {exc}', file=sys.stderr)
+        return 2
+    for p in problems:
+        print(p)
+    return 1 if problems else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

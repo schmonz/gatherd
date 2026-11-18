@@ -390,6 +390,14 @@ aur_slow_avx_packages:
 aur_slow_mavernix_packages:
   - mavernix
 
+# Mavernix's Sea Lion look is imported from Apple's own installer. What the
+# import makes (455 MB) is cached on the NAS per Mavernix version, because
+# importing again costs reading 5.3 GB, 4.2 GB of scratch and three minutes
+# (measured 2026-11-18 on the MiniBook X).
+mavernix_installers: "{{ target_home }}/.autofs-mounts/installers"
+mavernix_sea_lion_dmg: "{{ mavernix_installers }}/iso-macos/MavericksInstallESD.dmg"
+mavernix_theme_cache: "{{ mavernix_installers }}/mavernix-themes"
+
 # Vendored PKGBUILDs (packaging/<pkg>/), built into the local repo with
 # aur_build_command and installed by name. In system REST, right after
 # roles/system/tasks/aurutils.yml creates aur and the repo.

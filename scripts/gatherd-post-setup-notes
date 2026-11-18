@@ -464,6 +464,7 @@ section_verify() {
     verify_li 'Nothing is unaccounted for: `/usr/local/lib/gatherd/scripts/gatherd-assert-packages-declared; echo $?` prints `0`. Then `sudo pacman -S --asexplicit --noconfirm cowsay`, log out and in: the Packages section names cowsay. `sudo pacman -Rs cowsay`.'
     verify_li 'Helium uses Qt6: quit and relaunch Helium; it comes up dark, and `grep -ls libqt6_shim /proc/[0-9]*/maps` prints at least one path.'
     verify_li 'Mavernix on an opt-in machine: `sudo touch /etc/gatherd/opt-in/mavernix`, `sudo systemctl start gatherd-async.service`; ReGreet offers Mavernix, it logs in (upright and at the Sway scale on the MiniBook X), and sway is still the default.'
+    verify_li 'Mavernix logs in to Sea Lion by day and Sea Lion dark after 19:00, with no Theme Installer icon on the desktop. A machine after the first restores it from `~/.autofs-mounts/installers/mavernix-themes/` in seconds instead of importing.'
     verify_li 'TI-84 backup tools are installed and talk to the calculator: `tiget --help` runs, and with the calculator plugged in, `ti84-fetch-all` in backup-taavi-ti84 fetches without sudo.'
 }
 

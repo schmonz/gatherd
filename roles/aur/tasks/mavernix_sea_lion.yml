@@ -1,0 +1,114 @@
+---
+- name: Check whether the Sea Lion theme is installed
+  ansible.builtin.stat:
+    path: "{{ target_home }}/.local/share/mavernix/themes/sea-lion/theme.toml"
+  register: _sea_lion_theme
+
+- name: Install the Sea Lion theme
+  when: not _sea_lion_theme.stat.exists
+  block:
+    - name: Read the installed Mavernix version
+      ansible.builtin.command: pacman -Q mavernix
+      register: _mavernix_version
+      changed_when: false
+
+    - name: Name the Sea Lion cache for this Mavernix version
+      # Keyed by version because a newer importer may make a different theme.
+      ansible.builtin.set_fact:
+        _sea_lion_cached: "{{ mavernix_theme_cache }}/sea-lion-{{ _mavernix_version.stdout.split()[1] }}.tar"
+
+    - name: Check for a cached Sea Lion theme
+      ansible.builtin.stat:
+        path: "{{ _sea_lion_cached }}"
+      register: _sea_lion_cache
+
+    - name: Create the Mavernix data directory
+      ansible.builtin.file:
+        path: "{{ target_home }}/.local/share/mavernix"
+        state: directory
+        mode: "0755"
+
+    - name: Restore the Sea Lion theme from the NAS cache
+      ansible.builtin.unarchive:
+        src: "{{ _sea_lion_cached }}"
+        dest: "{{ target_home }}/.local/share/mavernix"
+        remote_src: true
+        creates: "{{ target_home }}/.local/share/mavernix/themes/sea-lion/theme.toml"
+      when: _sea_lion_cache.stat.exists
+
+    - name: Import the Sea Lion theme from the Mavericks installer
+      ansible.builtin.command:
+        argv:
+          - python3
+          - /usr/lib/mavernix/theme-installer/import_theme.py
+          - import
+          - "{{ mavernix_sea_lion_dmg }}"
+        creates: "{{ target_home }}/.local/share/mavernix/themes/sea-lion/theme.toml"
+      when: not _sea_lion_cache.stat.exists
+
+    - name: Cache the imported Sea Lion theme on the NAS
+      # Only saves the next machine an import, so a share that refuses the
+      # write must not fail the tier. Written aside and renamed, so a machine
+      # reading the cache never sees half a tarball.
+      ansible.builtin.shell: |
+        set -eu
+        mkdir -p {{ mavernix_theme_cache | quote }}
+        tmp={{ _sea_lion_cached | quote }}.$(uname -n).$$
+        trap 'rm -f "$tmp"' EXIT
+        tar -cf "$tmp" -C {{ (target_home ~ '/.local/share/mavernix') | quote }} \
+          themes/sea-lion themes/sea-lion-dark \
+          config/sea-lion.toml config/.sea-lion.toml.installed \
+          config/sea-lion-dark.toml config/.sea-lion-dark.toml.installed
+        mv "$tmp" {{ _sea_lion_cached | quote }}
+      register: _sea_lion_publish
+      changed_when: _sea_lion_publish.rc == 0
+      failed_when: false
+      when: not _sea_lion_cache.stat.exists
+
+- name: Create the user's font directory
+  ansible.builtin.file:
+    path: "{{ target_home }}/.local/share/fonts"
+    state: directory
+    mode: "0755"
+
+- name: Link the Sea Lion typeface into the user's fonts
+  # What the importer does itself; a theme restored from the cache needs it too.
+  ansible.builtin.file:
+    src: "{{ target_home }}/.local/share/mavernix/themes/sea-lion/fonts"
+    dest: "{{ target_home }}/.local/share/fonts/sea-lion"
+    state: link
+  notify: Index the Sea Lion typeface
+
+- name: Create the Mavernix settings directory
+  ansible.builtin.file:
+    path: "{{ target_home }}/.config/mavernix"
+    state: directory
+    mode: "0755"
+
+- name: Read the Mavernix choices the Sea Lion desktops share
+  ansible.builtin.slurp:
+    src: "{{ target_home }}/.config/mavernix/plain.json"
+  register: _mavernix_choices
+  failed_when: false
+
+- name: Show Sea Lion by day and Sea Lion dark at night
+  # In plain.json because both desktops are based on plain, and a desktop
+  # keeps its user's choices in its base's file (choices_path in Mavernix's
+  # user_choices.py). Only when absent, so a schedule changed in System
+  # Preferences stays changed.
+  ansible.builtin.copy:
+    dest: "{{ target_home }}/.config/mavernix/plain.json"
+    content: "{{ _choices | combine({'theme_schedule': {'enabled': true, 'day': 'sea-lion', 'night': 'sea-lion-dark'}}) | to_nice_json(indent=4) }}\n"
+    mode: "0644"
+  vars:
+    _choices: "{{ (_mavernix_choices.content | b64decode | from_json) if 'content' in _mavernix_choices else {} }}"
+  when: "'theme_schedule' not in _choices"
+
+- name: Keep the Theme Installer off the desktop
+  # Mavernix puts its launcher on the desktop once, at the first login, unless
+  # it is listed here. With the look already imported it offers nothing.
+  ansible.builtin.lineinfile:
+    path: "{{ target_home }}/.config/mavernix/placed-on-desktop"
+    line: mavernix-theme-installer
+    create: true
+    mode: "0644"

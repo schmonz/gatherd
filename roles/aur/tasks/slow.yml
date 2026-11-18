@@ -284,6 +284,12 @@
       until: _pia_ready.rc == 0
       changed_when: false
 
+    - name: Set up Mavernix's Sea Lion look
+      # Last in the block: it needs the NAS, and off the tailnet it fails,
+      # which would skip every task after it.
+      ansible.builtin.include_tasks: mavernix_sea_lion.yml
+      when: want_mavernix
+
   always:
     - name: Launch slow-installed systray apps  # noqa: risky-shell-pipe
       # swaymsg exec runs inside the live Sway session; SWAYSOCK must be set explicitly

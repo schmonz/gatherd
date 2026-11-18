@@ -7,3 +7,8 @@
   failed_when: false
   become: true
   become_user: root
+
+- name: Index the Sea Lion typeface
+  ansible.builtin.command:
+    argv: [fc-cache, "{{ target_home }}/.local/share/fonts/sea-lion"]
+  changed_when: true

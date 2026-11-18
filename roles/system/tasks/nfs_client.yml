@@ -27,6 +27,7 @@
       # Path is relative to the NFSv4 pseudo-root: OMV exports /export with fsid=0,
       # so the share is /code here, though it is /export/code on disk (and for NFSv3).
       code  -fstype=nfs4,soft,timeo=15,retrans=3  {{ nfs_server }}:/code
+      installers  -fstype=nfs4,soft,timeo=15,retrans=3  {{ nfs_server }}:/installers
     mode: '0644'
   notify:
     - Reload autofs

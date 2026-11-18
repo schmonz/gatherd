@@ -226,8 +226,9 @@ meaningful:
 
 1. During the repave, delete each bullet from `~/.config/gatherd-post-setup.md`
    as you satisfy it. That is local progress only; the generator runs at every
-   login, and `~/.local/state/gatherd/post-setup-verify-seen` is what stops a
-   ticked-off bullet coming back before you get to step 2.
+   login and three-way merges its render into the file, so a ticked-off bullet
+   stays deleted until you get to step 2. Every merge is committed to
+   `~/.local/state/gatherd/post-setup-history`, your edits before it included.
 2. When the list is worked, delete those entries from `section_verify` and
    commit. A step that failed gets its automation fixed instead, and the fix
    brings its own step.

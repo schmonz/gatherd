@@ -9,10 +9,9 @@
 # at the console prompt spent the rest of the pave being told to enter it. The
 # fix is to ask gatherd-vault-pass-needed, the same predicate both prompts use.
 #
-# The other half is retiring a bullet safely. prune_section matches on bullet
-# TEXT, so a bullet merely deleted from the source is orphaned forever in every
-# notes file that already wrote it -- the trap section_other_logins documents in
-# prose and nothing pinned until now.
+# The other half is the merge that writes the file: your edits stand, and the
+# script's own lines come and go. Its cases, each found by an adversarial review
+# of a version that got it wrong, are at the end.
 #
 # Usage: tests/post-setup-notes
 
@@ -109,7 +108,7 @@ above() {  # above <header> <header> -- true when the first comes first
 }
 
 generate() {
-    HOME="$WORK/home" GATHERD_HOME="$WORK/gatherd" \
+    HOME="$WORK/home" XDG_CONFIG_HOME="$WORK/home/.config" GATHERD_HOME="$WORK/gatherd" \
         XDG_STATE_HOME="$WORK/state" RCLONE_CONFIG='' \
         GATHERD_ASYNC_SENTINEL="${SENTINEL_OVERRIDE:-$SENTINEL}" \
         GATHERD_TEST_SONAMES="$SONAMES_MODE" \
@@ -121,6 +120,9 @@ has()     { grep -qF -- "$1" "$OUT"; }
 # on straddles a line break. Continuation lines are indented; join them back.
 flows()   { sed -e ':a' -e 'N' -e '$!ba' -e 's/\n  */ /g' "$OUT" | grep -qF -- "$1"; }
 assert()  { _d=$1; shift; if "$@"; then ok "$_d"; else bad "$_d"; fi; }
+# Verify renders every run now, and one of its checks quotes the reconnect
+# command, so login assertions look inside their own section.
+logins()  { awk '/^# /{ on = ($0 == "# Other Logins") } on' "$OUT" | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n  */ /g' | grep -qF -- "$1"; }
 refute()  { _d=$1; shift; if "$@"; then bad "$_d"; else ok "$_d"; fi; }
 
 # 1. A password is still needed: say so, once.
@@ -139,14 +141,15 @@ password_stored; generate
 refute "drops the reminder once a password is stored"  has 'Enter password when prompted'
 refute "and drops the now-empty Vault header"          grep -q '^# Vault$' "$OUT"
 
-# 4. The retired bullet is pruned from a file that already wrote it -- the case a
-#    plain deletion from the source would have left orphaned forever.
-password_not_stored
-printf 'Manual steps remaining:\n\n# Vault\n- Enter password when prompted\n- %s\n' \
-    "$RETIRED" > "$OUT"
+# 4. A bullet the script stops rendering leaves your file, as long as it reads
+#    as the script last wrote it. The base is what records that; seed it with a
+#    bullet no version renders any more.
+password_not_stored; rm -f "$OUT"; generate
+_hist="$WORK/state/gatherd/post-setup-history"
+sed -i "/^- Enter password when prompted\$/a - $RETIRED" "$_hist/base.md" "$OUT"
 generate
-refute "prunes the retired journalctl bullet from an existing file" has "$RETIRED"
-assert "while keeping the bullet that is still due"                 has 'Enter password when prompted'
+refute "drops a bullet the script no longer renders" has "$RETIRED"
+assert "while keeping the bullet that is still due" has 'Enter password when prompted'
 
 # 5. Notes written by hand under the header survive both branches. Pruning must
 #    only ever remove text this script itself wrote.
@@ -199,8 +202,7 @@ generate
 assert "keeps a hand-written note while the finding stands" \
     has 'ask upstream about the ayatana split'
 
-# 9. ...and survives the finding going away, which is what section_remove (the
-#    Unmanaged WiFi pruner) would have eaten.
+# 9. ...and survives the finding going away, header and all.
 sonames clean; generate
 refute "drops the finding once every soname resolves" has 'libayatana-indicator3.so.7'
 assert "while keeping the hand-written note"          has 'ask upstream about the ayatana split'
@@ -296,76 +298,45 @@ config_on_disk() { printf '# Encrypted rclone configuration File\n' > "$ICLOUD_C
 
 # 14. Nothing fetched yet: pull is the step.
 rm -f "$OUT"; icloud_reset; generate
-assert "points a machine with no config at pull"         flows "$PULL"
-refute "and does not ask it to reconnect"                flows "$RECONNECT"
+assert "points a machine with no config at pull"         logins "$PULL"
+refute "and does not ask it to reconnect"                logins "$RECONNECT"
 
 # 15. The squirrel-zapper state: a config on disk that sync could not reach.
 rm -f "$OUT"; icloud_reset; config_on_disk; : > "$ICLOUD_STATE/icloud-needs-reauth"
 generate
 assert "asks for re-authentication when the config on disk cannot reach iCloud" \
-    flows "$RECONNECT"
-refute "without also sending the human back to pull"     flows "$PULL"
+    logins "$RECONNECT"
+refute "without also sending the human back to pull"     logins "$PULL"
 
 # 16. Sync with nothing to sync fails the same probe and leaves the same
 #     sentinel. There is no remote to reconnect; pull is still the step.
 rm -f "$OUT"; icloud_reset; : > "$ICLOUD_STATE/icloud-needs-reauth"
 generate
-assert "treats a reauth sentinel with no config on disk as not yet pulled" flows "$PULL"
-refute "rather than asking to reconnect a remote that is not there"       flows "$RECONNECT"
+assert "treats a reauth sentinel with no config on disk as not yet pulled" logins "$PULL"
+refute "rather than asking to reconnect a remote that is not there"       logins "$RECONNECT"
 
 # 17. Fixed: both gone.
 icloud_reset; config_on_disk; : > "$ICLOUD_STATE/icloud-fleet-ok"; generate
-refute "drops the pull bullet once the fleet round-trip worked" flows "$PULL"
-refute "and the reconnect bullet once sync reached iCloud"      flows "$RECONNECT"
+refute "drops the pull bullet once the fleet round-trip worked" logins "$PULL"
+refute "and the reconnect bullet once sync reached iCloud"      logins "$RECONNECT"
 
 # 17a. Plaintext and dead at once: push refuses plaintext, so encryption has to
 #      be read first.
 rm -f "$OUT"; icloud_reset; config_on_disk
 : > "$ICLOUD_STATE/icloud-needs-reauth"; : > "$ICLOUD_STATE/icloud-plaintext-config"
 generate
-_enc=$(grep -n 'rclone config encryption set' "$OUT" | cut -d: -f1)
-_rec=$(grep -n 'gatherd-icloud-config reconnect' "$OUT" | cut -d: -f1)
+_enc=$(awk '/^# /{ on = ($0 == "# Other Logins") } on' "$OUT" | grep -n 'rclone config encryption set' | cut -d: -f1)
+_rec=$(awk '/^# /{ on = ($0 == "# Other Logins") } on' "$OUT" | grep -n 'gatherd-icloud-config reconnect' | cut -d: -f1)
 assert "puts encryption ahead of reconnect when both are due" \
     test -n "$_enc" -a -n "$_rec" -a "${_enc:-0}" -lt "${_rec:-0}"
 
-# 18. The reconnect bullet this change reworded, pruned from a file that has it,
-#     wrapped exactly as squirrel-zapper's notes file had it.
-rm -f "$OUT"; icloud_reset
-cat > "$OUT" <<'EOF'
-# Other Logins
-- iCloud needs re-authentication: run `rclone config reconnect icloud:` and
-  complete 2FA — every other machine picks it up automatically
-EOF
-: > "$ICLOUD_STATE/icloud-fleet-ok"; config_on_disk; generate
-refute "prunes the old reconnect wording from an existing file" has 'picks it up automatically'
-
-# 18a. And the wording in between, which only ever reached squirrel-zapper.
-rm -f "$OUT"; icloud_reset
-cat > "$OUT" <<'EOF'
-# Other Logins
-- iCloud needs re-authentication: run `rclone config reconnect icloud:`,
-  complete 2FA, then `gatherd-icloud-config push`
-EOF
-: > "$ICLOUD_STATE/icloud-fleet-ok"; config_on_disk; generate
-refute "prunes the rclone-reconnect-then-push wording too" has 'rclone config reconnect'
-
-# 19. A section already in the file, with another section after it. `h` and
-#     `li` only append at end of file, so a bullet added to the earlier section
-#     lands under the later one, where prune_section -- which looks only between
-#     its own header and the next -- cannot see it to replace it. Every run then
-#     adds one more copy. Other Logins is last only in a file written in one
-#     pass; anything written after it (a hand-made section, or 1Password coming
-#     back when its agent socket goes away) leaves it mid-file.
-rm -f "$OUT"; icloud_reset; sonames clean
-cat > "$OUT" <<'EOF'
-Manual steps remaining:
-
-# Other Logins
-- my own note about iCloud
-
-# Scratch
-- something else entirely
-EOF
+# 18. A section with your notes in it, and a section of your own after it: the
+#     script's bullet lands once, under its own header, and both notes stay.
+rm -f "$OUT"; icloud_reset; config_on_disk; : > "$ICLOUD_STATE/icloud-fleet-ok"
+sonames clean; generate
+sed -i '/^# Other Logins$/a - my own note about iCloud' "$OUT"
+printf '\n# Scratch\n- something else entirely\n' >> "$OUT"
+rm -f "$ICLOUD_STATE/icloud-fleet-ok"; rm -f "$ICLOUD_CONF"
 generate; generate; generate
 _n=$(grep -c "gatherd-icloud-config pull" "$OUT" || :)
 assert "adds a bullet to a mid-file section once, not once per run (found $_n)" test "$_n" -eq 1
@@ -377,14 +348,6 @@ assert "under its own header, not the section after it" \
 # shellcheck disable=SC2016
 assert "keeping the hand-written notes in both sections" \
     sh -c 'grep -q "my own note about iCloud" "$1" && grep -q "something else entirely" "$1"' _ "$OUT"
-
-# 19a. A file the old appends already piled copies into is cleaned up.
-# shellcheck disable=SC2016
-_blt=$(sed -n '/^- iCloud: run `gatherd-icloud-config pull`/,/bootstrap`$/p' "$OUT")
-printf '%s\n%s\n' "$_blt" "$_blt" >> "$OUT"
-generate
-_n=$(grep -c "gatherd-icloud-config pull" "$OUT" || :)
-assert "sweeps up copies stranded under a later section (found $_n)" test "$_n" -eq 1
 
 # 20. Login reminders clear themselves by asking the browser, not a sentinel.
 #     A cookie's presence is not enough -- a signed-out profile can keep the name
@@ -479,6 +442,248 @@ assert "with every network managed, the note keeps its header" has '# Unmanaged 
 printf 'Manual steps remaining:\n\nmy note at the top\n' > "$OUT"
 STRAYS_MODE=stray generate_wifi; STRAYS_MODE=stray generate_wifi
 assert "a note at the top stays above the Packages section too" above_first_header 'my note at the top'
+
+# ------------------------------------------------------------- The merge
+#
+# Every case two adversarial reviews found against the text-matching version,
+# each of which lost a note or kept a stale line. The notes file is merged
+# against the last render now, so none of these may.
+HIST="$WORK/state/gatherd/post-setup-history"
+STRAYS_MODE=clean; sonames clean; password_stored
+fresh() { rm -f "$OUT"; rm -rf "$HIST"; printf 'HomeNet\nCafe Guest\n' > "$WIFI_SAVED"; generate_wifi; }
+lines_in_order() {  # lines_in_order <file> <line>... -- consecutive, in order
+    _f=$1; shift
+    _first=$(grep -nxF -- "$1" "$_f" | head -1 | cut -d: -f1)
+    [ -n "$_first" ] || return 1
+    _i=$_first
+    for _l in "$@"; do
+        [ "$(sed -n "${_i}p" "$_f")" = "$_l" ] || return 1
+        _i=$((_i + 1))
+    done
+}
+
+fresh
+sed -i 's/^  - Cafe Guest$/  - Cafe Guest  <- my phone hotspot\n    password is on the fridge/' "$OUT"
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; generate_wifi; generate_wifi
+assert "an annotation on a listed network survives the list changing" has 'my phone hotspot'
+assert "and so does an indented line under it"                       has 'password is on the fridge'
+assert "while the new network is listed"                             has '  - Airport Free'
+
+fresh
+sed -i 's/^  - Cafe Guest$/# Hotspots\n  - Cafe Guest/' "$OUT"
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; generate_wifi; generate_wifi
+refute "a forgotten network goes even under a heading of yours" has '  - Cafe Guest'
+_n=$(grep -c '^- Either keep in Ansible' "$OUT" || :)
+assert "and the network bullet is not duplicated (found $_n)" test "$_n" -eq 1
+
+fresh
+sed -i 's/^  - Cafe Guest$/\n  - Cafe Guest/' "$OUT"
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; generate_wifi; generate_wifi
+refute "a blank line of yours in the list does not strand a forgotten network" has '  - Cafe Guest'
+
+fresh
+sed -i '1a # Unmanaged WiFi\nfirst handwritten note\n# Unmanaged WiFi\nsecond handwritten note' "$OUT"
+generate_wifi; generate_wifi
+assert "a note under a duplicate header survives (first)"  has 'first handwritten note'
+assert "a note under a duplicate header survives (second)" has 'second handwritten note'
+
+printf 'HomeNet\n' > "$WIFI_SAVED"; rm -f "$OUT"; rm -rf "$HIST"; generate_wifi
+sed -i '1a Fix audio, as root:\n```\n# systemctl restart pipewire\n\n\n# pactl list sinks\n```' "$OUT"
+printf 'HomeNet\nCafe Guest\n' > "$WIFI_SAVED"; generate_wifi
+assert "a code block of yours is not split by a section arriving" \
+    lines_in_order "$OUT" 'Fix audio, as root:' '```' '# systemctl restart pipewire' '' '' '# pactl list sinks' '```'
+printf 'HomeNet\n' > "$WIFI_SAVED"; generate_wifi
+assert "nor by one leaving, blank lines and all" \
+    lines_in_order "$OUT" 'Fix audio, as root:' '```' '# systemctl restart pipewire' '' '' '# pactl list sinks' '```'
+
+fresh
+_first_check=$(grep -m1 '^- ' "$OUT" | sed -n '1p')
+_first_check=$(awk '/^# Verify$/{ on = 1; next } on && /^- /{ print; exit }' "$OUT")
+grep -vxF -- "$_first_check" "$OUT" > "$OUT.new"; mv "$OUT.new" "$OUT"
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; generate_wifi; generate_wifi
+refute "a check you ticked off stays off" grep -qxF -- "$_first_check" "$OUT"
+
+# The conflict case: a line you deleted sits next to one the script changes.
+# A plain union put the deleted line back (measured on git merge-file).
+fresh
+sed -i '/^- Either keep in Ansible/,/wifi-ignore.list:$/d' "$OUT"
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; generate_wifi; generate_wifi
+refute "a line you deleted stays deleted when the script changes the next one" \
+    has 'Either keep in Ansible'
+assert "while the script's own change still lands" has '  - Airport Free'
+
+fresh
+printf 'a note of mine\n' >> "$OUT"
+generate_wifi
+assert "history keeps your edits from before the merge" \
+    sh -c 'git -C "$1" log -p --format=%s | grep -q "^+a note of mine"' _ "$HIST"
+assert "and says which commit holds them" \
+    sh -c 'git -C "$1" log --format=%s | grep -qx "Your edits since the last login"' _ "$HIST"
+
+# The upgrade. No base yet, so the first run builds one from what is already in
+# the file, plus the checks the old seen-list says were offered. Anything else
+# that is due arrives; nothing of yours moves.
+rm -rf "$HIST"; rm -f "$OUT"; printf 'HomeNet\nCafe Guest\n' > "$WIFI_SAVED"
+generate_wifi
+_ticked=$(awk '/^# Verify$/{ on = 1; next } on && /^- /{ print; exit }' "$OUT")
+_ticked_full=$(sed -n '/^    verify_li /{s/^    verify_li '"'"'//;s/'"'"'$//;p;q}' "$NOTES")
+mkdir -p "$WORK/state/gatherd"
+printf '%s' "$_ticked_full" | sha256sum | cut -c1-16 > "$WORK/state/gatherd/post-setup-verify-seen"
+grep -vxF -- "$_ticked" "$OUT" | grep -v '^  - Cafe Guest$' > "$OUT.old"
+printf 'an old note of mine\n' >> "$OUT.old"
+mv "$OUT.old" "$OUT"; rm -rf "$HIST"
+generate_wifi
+assert "the upgrade keeps what you wrote"             has 'an old note of mine'
+refute "and keeps a check the seen-list says you ticked off" grep -qxF -- "$_ticked" "$OUT"
+assert "while what is due and missing arrives"         has '  - Cafe Guest'
+refute "and the seen-list goes once it has been read"  test -e "$WORK/state/gatherd/post-setup-verify-seen"
+
+fresh
+printf '<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< not a marker\nKEEP THIS\n' >> "$OUT"
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; generate_wifi
+assert "a line that looks like a conflict marker is just a line" has 'KEEP THIS'
+
+fresh
+printf 'no newline at the end' >> "$OUT"; cp "$OUT" "$WORK/before"
+generate_wifi
+assert "a run with nothing to change leaves the bytes alone" cmp -s "$OUT" "$WORK/before"
+
+fresh
+: > "$HIST/.git/index.lock"
+printf 'note after a crash\n' >> "$OUT"; generate_wifi
+assert "a stale index.lock does not stop history" \
+    sh -c 'git -C "$1" log -p | grep -q "^+note after a crash"' _ "$HIST"
+
+# Set before the first run: an ignore rule only ever applies to untracked files.
+mkdir -p "$WORK/home/.config/git"; printf '*.md\n' > "$WORK/home/.config/git/ignore"
+printf '[commit]\n\tgpgsign = true\n[user]\n\tsigningkey = 0000000000000000\n' > "$WORK/home/.gitconfig"
+fresh
+printf 'note under hostile git config\n' >> "$OUT"; generate_wifi
+assert "a global ignore of *.md and signing on do not stop history" \
+    sh -c 'git -C "$1" log -p | grep -q "^+note under hostile git config"' _ "$HIST"
+rm -f "$WORK/home/.config/git/ignore" "$WORK/home/.gitconfig"
+
+fresh
+printf 'not a ref\n' > "$HIST/.git/HEAD"
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; cp "$OUT" "$WORK/before"
+generate_wifi
+assert "no snapshot, no rewrite" cmp -s "$OUT" "$WORK/before"
+
+fresh
+mv "$OUT" "$WORK/home/real-notes.md"; ln -s "$WORK/home/real-notes.md" "$OUT"
+chmod 640 "$WORK/home/real-notes.md"
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; generate_wifi
+assert "a symlinked notes file stays a symlink" test -L "$OUT"
+assert "and its target is the one rewritten"     grep -q '^  - Airport Free$' "$WORK/home/real-notes.md"
+assert "keeping its mode" test "$(stat -c %a "$WORK/home/real-notes.md")" = 640
+rm -f "$OUT"; mv "$WORK/home/real-notes.md" "$OUT"
+
+# A network that arrives goes under its own header even when notes of yours sit
+# after it and under the section that goes in the same run.
+fresh
+STRAYS_MODE=stray generate_wifi
+sed -i 's/^  - Cafe Guest$/  - Cafe Guest\nmy wifi note/' "$OUT"
+sed -i '/^# Packages$/a electron42 is used by my motd script' "$OUT"
+printf 'HomeNet\nCafe Guest\nZed Net\n' > "$WIFI_SAVED"; STRAYS_MODE=clean generate_wifi
+_w=$(grep -n '^# Unmanaged WiFi$' "$OUT" | cut -d: -f1)
+_z=$(grep -n '^  - Zed Net$' "$OUT" | cut -d: -f1)
+_p=$(grep -n '^# Packages$' "$OUT" | cut -d: -f1)
+assert "a new network lands under Unmanaged WiFi" \
+    test -n "$_z" -a "${_w:-0}" -lt "${_z:-0}" -a "${_z:-0}" -lt "${_p:-999999}"
+assert "and the note under Packages keeps its header" \
+    sh -c 'grep -A1 "^# Packages$" "$1" | grep -q "motd script"' _ "$OUT"
+
+# Round three: each of these was reproduced against the version before it.
+count() { grep -cxF -- "$1" "$OUT" || :; }
+
+fresh
+STRAYS_MODE=stray generate_wifi
+_last=$(awk '/^# Packages$/{ on = 1; next } on && /^# /{ exit } on && NF { l = NR } END { print l }' "$OUT")
+printf 'para one\n\npara two\n```\nfiglet hi\n\ncowsay bye\n```\n' > "$WORK/insert"
+awk -v at="$_last" -v f="$WORK/insert" '{ print } NR == at { while ((getline l < f) > 0) print l }' \
+    "$OUT" > "$OUT.new" && mv "$OUT.new" "$OUT"
+STRAYS_MODE=clean generate_wifi
+assert "a blank line between two paragraphs of yours stays" lines_in_order "$OUT" 'para one' '' 'para two'
+assert "and one inside your code block"  lines_in_order "$OUT" '```' 'figlet hi' '' 'cowsay bye' '```'
+
+fresh
+sed -i 's/^  - Cafe Guest$/  - Cafe Guest\n````\n```sh\n# as root\n```\n````/' "$OUT"
+printf 'HomeNet\nCafe Guest\nZed Net\n' > "$WIFI_SAVED"; generate_wifi
+assert "a network never lands inside a nested code block" \
+    lines_in_order "$OUT" '````' '```sh' '# as root' '```' '````'
+
+fresh
+sed -i '/^# Unmanaged WiFi$/d' "$OUT"
+printf 'HomeNet\nCafe Guest\nZed Net\n' > "$WIFI_SAVED"; generate_wifi
+_h=$(grep -n '^# Unmanaged WiFi$' "$OUT" | cut -d: -f1)
+_z=$(grep -n '^  - Zed Net$' "$OUT" | cut -d: -f1)
+assert "a header you deleted comes back with the next line it needs" \
+    test -n "$_h" -a -n "$_z" -a "${_h:-0}" -lt "${_z:-0}"
+
+fresh
+password_not_stored; generate_wifi
+sed -i '/^# Vault$/a my vault password hint: the blue notebook' "$OUT"
+password_stored; generate_wifi; password_not_stored; generate_wifi
+assert "a section that leaves and comes back has one header (found $(count '# Vault'))" \
+    test "$(count '# Vault')" -eq 1
+assert "with your note still under it" sh -c 'grep -A3 "^# Vault$" "$1" | grep -q "blue notebook"' _ "$OUT"
+password_stored
+
+fresh
+cp "$OUT" "$WORK/before"
+mkdir -p "$WORK/badbin"; printf '#!/bin/sh\nexit 1\n' > "$WORK/badbin/fold"; chmod +x "$WORK/badbin/fold"
+PATH="$WORK/badbin:$WORK/bin:$PATH" GATHERD_MANAGED_WIFI_LIST="$WORK/managed-wifi.list" \
+    GATHERD_TEST_WIFI_SAVED="$WIFI_SAVED" generate
+assert "a render that came up short changes nothing" cmp -s "$OUT" "$WORK/before"
+generate_wifi
+_n=$(grep -c '^- ' "$OUT"); _m=$(grep -c '^- ' "$WORK/before")
+assert "and the next good one brings nothing back ($_n vs $_m bullets)" test "$_n" -eq "$_m"
+
+fresh
+_b=$(git -C "$HIST" symbolic-ref --short HEAD)
+: > "$HIST/.git/refs/heads/$_b.lock"
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; generate_wifi
+printf 'HomeNet\nAirport Free\nZed Net\n' > "$WIFI_SAVED"; generate_wifi
+assert "a stale ref lock does not stop updates" has '  - Zed Net'
+
+fresh
+printf '*.md filter=prefix\n' > "$WORK/home/.config/git/attributes"
+printf '[filter "prefix"]\n\tclean = sed s/^/FILTERED:/\n' > "$WORK/home/.gitconfig"
+printf 'note behind a filter\n' >> "$OUT"
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; generate_wifi
+refute "a clean filter does not reach the snapshot" \
+    sh -c 'git -C "$1" log -p | grep -q FILTERED' _ "$HIST"
+rm -f "$WORK/home/.config/git/attributes" "$WORK/home/.gitconfig"
+
+fresh
+printf 'my final note' >> "$OUT"
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; generate_wifi
+assert "your last line keeps having no newline when the render changes" \
+    test "$(tail -c 13 "$OUT")" = 'my final note'
+
+fresh
+_ver=$(awk '/^# Verify$/{ on = 1 } on && /^# / && !/^# Verify$/ { exit } on' "$OUT")
+_rest=$(awk '/^# Verify$/{ on = 1 } on && /^# / && !/^# Verify$/ { on = 0 } !on' "$OUT")
+printf '%s\n\n%s\n' "$_ver" "$_rest" > "$OUT"; rm -rf "$HIST"
+generate_wifi
+assert "an upgrade does not repeat a section you moved (found $(count '  - Cafe Guest'))" \
+    test "$(count '  - Cafe Guest')" -eq 1
+
+# A run stopped after the notes but before the base: the next one finishes it.
+fresh
+cp "$HIST/base.md" "$WORK/oldbase"
+printf 'HomeNet\nAirport Free\n' > "$WIFI_SAVED"; generate_wifi
+mv "$HIST/base.md" "$HIST/base.md.new"; cp "$WORK/oldbase" "$HIST/base.md"; cp "$OUT" "$HIST/pending.md"
+generate_wifi
+assert "an interrupted run is finished, not duplicated (found $(count '  - Airport Free'))" \
+    test "$(count '  - Airport Free')" -eq 1
+
+# An upgrade stopped by a failed commit leaves no base behind to poison the next.
+rm -f "$OUT"; rm -rf "$HIST"; generate_wifi; rm -rf "$HIST"
+cp "$OUT" "$WORK/before"
+export GIT_AUTHOR_DATE=not-a-date; generate_wifi; unset GIT_AUTHOR_DATE
+generate_wifi
+assert "a failed upgrade run leaves nothing to duplicate (found $(count '# Verify'))" test "$(count '# Verify')" -eq 1
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

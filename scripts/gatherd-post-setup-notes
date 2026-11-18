@@ -1,11 +1,21 @@
 #!/bin/sh
-# Manages ~/.config/gatherd-post-setup.md as a living document:
-#   - appends sections that are needed but not yet present
-#   - when detection says a step is done, removes ONLY the boilerplate lines this
-#     script itself generated, leaving anything you added by hand (and dropping a
-#     now-empty header). Write freely under any section — your notes are never
-#     pruned, with no markers or special formatting to remember.
-# Safe to run at any time; gatherd-prompt-postsetup calls it at each login.
+# Manages ~/.config/gatherd-post-setup.md, a file you edit freely: add notes
+# anywhere, tick an item off by deleting it. Runs at every login, from
+# gatherd-prompt-postsetup.
+#
+# It never edits that file in place. Each run renders what the machine needs
+# into a file of its own, then three-way merges: your file, the render from the
+# last run (the base), and this run's. Your additions and deletions are changes
+# against the base, so they stand; the script's are changes too, so a step that
+# is done disappears and a new one arrives. Earlier versions instead edited the
+# file and guessed which lines were theirs from their text, and every guess had
+# a way to take a note of yours with it -- the last one, a WiFi section that
+# filed notes at the top under its own header and then wiped it, took a set of
+# notes for good.
+#
+# Every run is committed to a git repository beside the base, your file before
+# the merge as well as after it, so any rewrite can be undone:
+#   git -C ~/.local/state/gatherd/post-setup-history log -p
 
 # shellcheck disable=SC2016
 # The li/section strings deliberately hold literal `backtick` and $(...) command
@@ -22,8 +32,8 @@ h()  { printf '\n# %s\n'  "$1" >> "$OUTPUT"; }
 
 # Render one bullet wrapped to fit an 80-column editor: the first line gets the
 # "- " marker, continuation lines a 2-space hanging indent. fold -s breaks only
-# at spaces; trailing whitespace is trimmed so the rendering is deterministic —
-# prune_section re-renders bullets the same way to find and remove them.
+# at spaces; trailing whitespace is trimmed so the rendering is deterministic,
+# which the merge needs: a bullet that renders differently is a changed line.
 wrap_bullet() {
     printf '%s\n' "$1" | fold -s -w 78 | sed 's/[[:space:]]*$//' | awk '
         NR == 1 { print "- " $0; next }
@@ -34,210 +44,28 @@ li() { wrap_bullet "$1" >> "$OUTPUT"; }
 
 section_present() { grep -q "^# $1\$" "$OUTPUT" 2>/dev/null; }
 
-# Put a new section (a file whose text starts with its header) above every
-# other section, and below anything written before the first one. Splicing
-# under line 1 instead filed whatever you had written at the top under the new
-# header, where the next prune of that section could take it.
-splice_at_top() {
-    awk -v blk="$1" '
-        !done && /^# / { while ((getline l < blk) > 0) print l; print ""; done = 1 }
-                       { print }
-        END            { if (!done) while ((getline l < blk) > 0) print l }
-    ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
-}
-
-# Append bullets at the END of an existing section, before the next "# " header
-# (or at EOF for the last section). h() and li() can only append at end of file,
-# which is right for a section being created and wrong for one that already
-# exists further up -- the bullets would land under whatever section is last.
-append_to_section() {
-    _hdr="$1"; shift
-    append_text_to_section "$_hdr" "$(for _b in "$@"; do wrap_bullet "$_b"; done)"
-}
-
-# The same, for text already rendered -- a bullet whose sub-list wrap_bullet
-# would flatten.
-append_text_to_section() {
-    _hdr="$1"
-    _new="$2"
-    [ -n "$_new" ] || return 0
-    # Blank lines are held back while inside the section, so the new bullets
-    # land after its last line rather than after the gap before the next header.
-    APPEND_NEW="$_new" awk -v hdr="# $_hdr" '
-        $0 == hdr           { print; inside = 1; next }
-        inside && /^$/      { gap = gap "\n"; next }
-        inside && /^# /     { print ENVIRON["APPEND_NEW"]; inside = 0 }
-        inside              { printf "%s", gap; gap = "" }
-        !inside && gap != "" { printf "%s", gap; gap = "" }
-                            { print }
-        END                 { if (inside) print ENVIRON["APPEND_NEW"]; printf "%s", gap }
-    ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
-}
-
-# Add one bullet to a section that is in the file, or start the section at the
-# end of the file. `h` and `li` alone only append at end of file, which put a
-# bullet for a section further up under whichever section came last, where
-# prune_section could not see it, so each run added another copy. A section
-# holding nothing hand-written loses its header when pruned, so it can still
-# move to the end; it just never duplicates.
+# Add one bullet under a section, starting the section if this run has not.
+# Bullets for one section are rendered together, so the end of the render is
+# always the end of that section.
 add_bullet() {
-    if section_present "$1"; then
-        append_to_section "$1" "$2"
-    else
-        h "$1"
-        li "$2"
-    fi
+    section_present "$1" || h "$1"
+    li "$2"
 }
 
-# Where Verify remembers what it has already offered you. Without this the whole
-# section was written once and then frozen for the life of the file: the guard
-# was `section_present Verify && return`, so every check added after your notes
-# were first generated -- fourteen of them, by the time anyone noticed -- never
-# reached the file at all. Re-rendering the section instead is not an option
-# either: you tick an item off by DELETING it, so a plain re-render would
-# resurrect everything you have already done.
-#
-# Per-bullet ids are the way out. A bullet is offered exactly once, whether or
-# not it is still in the file, so new checks arrive and finished ones stay gone.
-# The id is a hash of the bullet text, so editing a check makes it a new check
-# and it comes back -- which is what you want, since a reworded check is one you
-# have not run in that form.
-VERIFY_SEEN="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd/post-setup-verify-seen"
-
+# Every check, every run. Ticking one off is deleting it from your file, and
+# the merge keeps that deletion for as long as the check reads the same; a
+# reworded check is a new line, so it comes back, which is what you want for a
+# check you have not run in that form.
 verify_li() {
-    _vid=$(printf '%s' "$1" | sha256sum | cut -c1-16)
-    grep -qxF -- "$_vid" "$VERIFY_SEEN" 2>/dev/null && return 0
-    mkdir -p "${VERIFY_SEEN%/*}"
-    printf '%s\n' "$_vid" >> "$VERIFY_SEEN"
-
-    # Migration for notes written before this mechanism existed: those bullets
-    # are in the file but in no seen-list, and re-adding them would duplicate.
-    # The first rendered line is enough to recognise one.
-    # -- because a rendered bullet starts with "- ", which grep would otherwise
-    # parse as options rather than as the pattern.
-    grep -qxF -- "$(wrap_bullet "$1" | head -1)" "$OUTPUT" 2>/dev/null && return 0
-
-    if [ "$_verify_section_existed" = yes ]; then
-        append_to_section 'Verify' "$1"
-    else
-        li "$1"
+    _nverify=$((_nverify + 1))
+    li "$1"
+    # The upgrade from the seen-list: a check it offered and you deleted is
+    # ticked off, so it belongs in the first base (see migrate_base).
+    if [ -n "$_seen_render" ]; then
+        _vid=$(printf '%s' "$1" | sha256sum | cut -c1-16)
+        grep -qxF -- "$_vid" "$VERIFY_SEEN" && wrap_bullet "$1" >> "$_seen_render"
     fi
-}
-
-# Drop boilerplate bullets wherever they sit, ignoring section boundaries: an
-# end-of-file append once stranded them under whichever section came last, out
-# of prune_section's reach. Matching is on the whole rendered bullet, so a line
-# is removed only if it is word for word one this script writes.
-prune_bullets_anywhere() {
-    _own=$(for _b in "$@"; do wrap_bullet "$_b"; printf '@@PRUNE_SEP@@\n'; done)
-    PRUNE_OWN="$_own" awk '
-        BEGIN {
-            n = split(ENVIRON["PRUNE_OWN"], L, "\n")
-            b = ""
-            for (i = 1; i <= n; i++) {
-                if (L[i] == "@@PRUNE_SEP@@") { if (b != "") own[b] = 1; b = ""; continue }
-                b = (b == "") ? L[i] : b "\n" L[i]
-            }
-        }
-        function endgrp(   j, m, gl) {
-            if (!ingrp) return
-            if (!(g in own)) { m = split(g, gl, "\n"); for (j = 1; j <= m; j++) print gl[j] }
-            ingrp = 0; g = ""
-        }
-        /^- /          { endgrp(); ingrp = 1; g = $0; next }
-        ingrp && /^  / { g = g "\n" $0; next }
-                       { endgrp(); print }
-        END            { endgrp() }
-    ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
-}
-
-# Remove only the boilerplate bullets this script generated for a section
-# (passed as arguments), leaving any lines you added by hand. If nothing of
-# yours remains under the header, drop the header too. This is how "done" steps
-# get pruned without ever eating your own notes.
-prune_section() {
-    _name=$1
-    shift
-    # A missing header does not mean the bullets are gone — they may be orphaned
-    # under a later section. Sweep for them instead of returning empty-handed.
-    section_present "$_name" || { prune_bullets_anywhere "$@"; return; }
-    # Re-render each boilerplate bullet exactly as li() wrote it (wrapping and
-    # all), separated by a sentinel line, so awk matches and drops the whole
-    # possibly-multi-line bullet as a unit while leaving hand-added lines verbatim.
-    _own=$(for _b in "$@"; do wrap_bullet "$_b"; printf '@@PRUNE_SEP@@\n'; done)
-    PRUNE_OWN="$_own" awk -v hdr="# $_name" '
-        BEGIN {
-            n = split(ENVIRON["PRUNE_OWN"], L, "\n")
-            b = ""
-            for (i = 1; i <= n; i++) {
-                if (L[i] == "@@PRUNE_SEP@@") { if (b != "") own[b] = 1; b = ""; continue }
-                b = (b == "") ? L[i] : b "\n" L[i]
-            }
-        }
-        # A bullet group is a "- " line plus its "  " continuation lines; drop the
-        # whole group if it matches a boilerplate bullet, else keep it verbatim.
-        function endgrp(   j, m, gl) {
-            if (!ingrp) return
-            if (!(g in own)) {
-                m = split(g, gl, "\n")
-                for (j = 1; j <= m; j++) { out[++on] = gl[j]; if (gl[j] != "") nonblank = 1 }
-            }
-            ingrp = 0; g = ""
-        }
-        function flush(   j) {
-            endgrp()
-            if (nonblank) { print hdr; for (j = 1; j <= on; j++) print out[j] }
-            on = 0; nonblank = 0
-        }
-        $0 == hdr      { inseg = 1; on = 0; nonblank = 0; ingrp = 0; g = ""; next }
-        inseg && /^# / { flush(); inseg = 0; print; next }
-        inseg {
-            if ($0 ~ /^- /)          { endgrp(); ingrp = 1; g = $0; next }
-            if (ingrp && $0 ~ /^  /) { g = g "\n" $0; next }
-            endgrp(); out[++on] = $0; if ($0 != "") nonblank = 1; next
-        }
-                       { print }
-        END            { if (inseg) flush() }
-    ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
-    # Copies that an end-of-file append left under some later section, from
-    # before add_bullet existed. Without this they would outlive every fix.
-    prune_bullets_anywhere "$@"
-}
-
-# Remove a section's DERIVED bullets while keeping anything you wrote under the
-# header, and drop the header if nothing of yours is left. prune_section cannot
-# do this job: it matches a bullet by its exact text, and a derived bullet's
-# text is computed from the machine, so last login's wording is not knowable
-# today. What IS knowable is the opening this script gives every bullet it
-# generates for such a section, which is what this matches on.
-prune_derived() {
-    PRUNE_MARK="- $2" awk -v hdr="# $1" '
-        BEGIN { mark = ENVIRON["PRUNE_MARK"]; ml = length(mark) }
-        # A bullet group is a "- " line plus its "  " continuation lines. Kept
-        # verbatim unless it opens with the marker, in which case it is ours.
-        function endgrp(   j, m, gl) {
-            if (!ingrp) return
-            if (substr(g, 1, ml) != mark) {
-                m = split(g, gl, "\n")
-                for (j = 1; j <= m; j++) { out[++on] = gl[j]; if (gl[j] != "") nonblank = 1 }
-            }
-            ingrp = 0; g = ""
-        }
-        function flush(   j) {
-            endgrp()
-            if (nonblank) { print hdr; for (j = 1; j <= on; j++) print out[j] }
-            on = 0; nonblank = 0
-        }
-        $0 == hdr      { inseg = 1; on = 0; nonblank = 0; ingrp = 0; g = ""; next }
-        inseg && /^# / { flush(); inseg = 0; print; next }
-        inseg {
-            if ($0 ~ /^- /)          { endgrp(); ingrp = 1; g = $0; next }
-            if (ingrp && $0 ~ /^  /) { g = g "\n" $0; next }
-            endgrp(); out[++on] = $0; if ($0 != "") nonblank = 1; next
-        }
-                       { print }
-        END            { if (inseg) flush() }
-    ' "$OUTPUT" > "${OUTPUT}.tmp" && mv "${OUTPUT}.tmp" "$OUTPUT"
+    return 0
 }
 
 collapse_blanks() {
@@ -327,7 +155,7 @@ claude_desktop_logged_in() {
 
 # ---------------------------------------------------------------------------
 # Section handlers
-# Pattern: if done → prune; else if absent → add; else → leave alone
+# Each renders what is still to do, into an empty file; the merge does the rest.
 # ---------------------------------------------------------------------------
 
 section_1password() {
@@ -335,25 +163,17 @@ section_1password() {
         'Sign in to 1Password' \
         'Lock, unlock, enter 2FA code' \
         'Settings → Developer: enable "Connect with 1Password CLI" and "Use the SSH agent"'
-    if onepassword_ssh_agent_ok; then
-        prune_section '1Password' "$@"
-    else
-        section_present '1Password' && return
-        h '1Password'
-        for b in "$@"; do li "$b"; done
-    fi
+    onepassword_ssh_agent_ok && return
+    h '1Password'
+    for b in "$@"; do li "$b"; done
 }
 
 section_tailscale() {
     set -- \
         'Connect during this session before rebooting. Set up 1Password (including its browser extension) first — then Tailscale offers to log you in via Apple SSO and 1Password fills it correctly.'
-    if tailscale_connected; then
-        prune_section 'Tailscale' "$@"
-    else
-        section_present 'Tailscale' && return
-        h 'Tailscale'
-        for b in "$@"; do li "$b"; done
-    fi
+    tailscale_connected && return
+    h 'Tailscale'
+    for b in "$@"; do li "$b"; done
 }
 
 section_other_logins() {
@@ -380,21 +200,6 @@ section_other_logins() {
     b_reauth='iCloud needs re-authentication: run `gatherd-icloud-config reconnect` and complete 2FA'
     b_plaintext='iCloud config is plaintext (a live iCloud token sits unencrypted on disk): run `rclone config encryption set`'
 
-    # The bullet this feature replaced. prune_section matches on bullet text, so
-    # renaming a bullet orphans the old wording in every notes file that already
-    # had it — self-pruning only ever removes text it can still name. A machine
-    # provisioned before the fleet-config work therefore kept telling its human
-    # to run `rclone config` long after that step became both unnecessary and
-    # actively wrong. Prune it unconditionally, forever: it is cheap, and a
-    # machine that legitimately needs setup gets b_bootstrap below instead.
-    prune_section 'Other Logins' 'iCloud: run `rclone config` and follow prompts to add a remote named `icloud`; complete 2FA when prompted'
-    prune_section 'Other Logins' 'iCloud: run `gatherd-icloud-config bootstrap` (once per fleet; needs `rclone config` + 2FA first if this is the very first machine)'
-    prune_section 'Other Logins' 'iCloud needs re-authentication: run `rclone config reconnect icloud:` and complete 2FA — every other machine picks it up automatically'
-    prune_section 'Other Logins' 'iCloud needs re-authentication: run `rclone config reconnect icloud:`, complete 2FA, then `gatherd-icloud-config push`'
-
-    # Each bullet is pruned before it is possibly re-added, so a copy surviving
-    # from the previous run never gains a second one beneath it.
-    #
     # At most one of pull and reconnect, never both. With a config on disk that
     # sync could not reach, reconnect is the step that covers both cases: it
     # installs the fleet copy when another machine already repaired it, and
@@ -406,19 +211,16 @@ section_other_logins() {
     _icloud_reauth=no
     icloud_needs_reauth && icloud_config_on_disk && _icloud_reauth=yes
 
-    prune_section 'Other Logins' "$b_bootstrap"
     if ! icloud_config_on_disk || { ! icloud_fleet_ok && [ "$_icloud_reauth" = no ]; }; then
         add_bullet 'Other Logins' "$b_bootstrap"
     fi
 
     # Ahead of reconnect: push refuses a plaintext config, so encryption is the
     # step that has to come first when both are due.
-    prune_section 'Other Logins' "$b_plaintext"
     if icloud_plaintext_config; then
         add_bullet 'Other Logins' "$b_plaintext"
     fi
 
-    prune_section 'Other Logins' "$b_reauth"
     if [ "$_icloud_reauth" = yes ]; then
         add_bullet 'Other Logins' "$b_reauth"
     fi
@@ -428,36 +230,28 @@ section_other_logins() {
     # before 1Password is running and never gets it. A reload is what attaches
     # it, and Duolingo is a single-page app that never reloads itself.
     b_duolingo='Duolingo: open it, press Ctrl+R (1Password only attaches to a page loaded after the browser has started), then sign in'
-    prune_section 'Other Logins' "$b_duolingo"
     duolingo_logged_in || add_bullet 'Other Logins' "$b_duolingo"
 
     # One sign-in for the four of them: they share a Helium profile (see
     # web_apps in group_vars), so any one will do -- Notes because it is the
     # quickest to confirm.
     b_icloud_web='iCloud web apps: open Notes and sign in; Find My, Reminders and iCloud Drive share that sign-in'
-    prune_section 'Other Logins' "$b_icloud_web"
     icloud_web_logged_in || add_bullet 'Other Logins' "$b_icloud_web"
 
     # Two sign-ins, not one: Claude Code's authentication docs state that the
     # desktop app authenticates separately, and nothing documents sharing a
     # session between them.
     b_claude_code='Claude Code: run `claude auth login`'
-    prune_section 'Other Logins' "$b_claude_code"
     claude_code_logged_in || add_bullet 'Other Logins' "$b_claude_code"
 
     b_claude_desktop='Claude Desktop: open it from the app menu and sign in (a separate sign-in from Claude Code)'
-    prune_section 'Other Logins' "$b_claude_desktop"
     claude_desktop_logged_in || add_bullet 'Other Logins' "$b_claude_desktop"
 }
 
 section_unmanaged_wifi() {
-    # Derived from current NM state vs the Ansible manifest and re-derived every
-    # run, so newly joined networks surface promptly. Only the derived bullet is
-    # replaced: this section once wiped header-to-header, and took with it every
-    # note that had landed under the header.
+    # Derived from current NM state vs the Ansible manifest, every run, so newly
+    # joined networks surface promptly and forgotten ones go.
     _wifi_list="${GATHERD_MANAGED_WIFI_LIST:-/etc/gatherd/managed-wifi.list}"
-    _wifi_mark='Either keep in Ansible'
-    prune_derived 'Unmanaged WiFi' "$_wifi_mark"
     [ -r "$_wifi_list" ] || return
 
     saved=$(nmcli -t -f NAME,TYPE connection show 2>/dev/null \
@@ -474,21 +268,11 @@ section_unmanaged_wifi() {
     rm -f "$_exclude"
     [ -n "$unmanaged" ] || return
 
-    _text=$(
-        wrap_bullet "$_wifi_mark (vault/vault.yml) or append to ~/.config/gatherd/wifi-ignore.list:"
-        printf '%s\n' "$unmanaged" | while IFS= read -r ssid; do
-            [ -n "$ssid" ] && printf '  - %s\n' "$ssid"
-        done
-    )
-    # A header that survived the prune has notes of yours under it.
-    if section_present 'Unmanaged WiFi'; then
-        append_text_to_section 'Unmanaged WiFi' "$_text"
-        return
-    fi
-    _blk=$(mktemp)
-    printf '\n# Unmanaged WiFi\n%s\n' "$_text" > "$_blk"
-    splice_at_top "$_blk"
-    rm -f "$_blk"
+    h 'Unmanaged WiFi'
+    li 'Either keep in Ansible (vault/vault.yml) or append to ~/.config/gatherd/wifi-ignore.list:'
+    printf '%s\n' "$unmanaged" | while IFS= read -r ssid; do
+        [ -n "$ssid" ] && printf '  - %s\n' "$ssid" >> "$OUTPUT"
+    done
 }
 
 section_sonames() {
@@ -508,8 +292,6 @@ section_sonames() {
     # that sentinel, so one unresolved soname would re-run every REST tier on
     # every boot, forever, over a tray icon.
     #
-    # The opening every generated bullet carries, so prune_derived can find
-    # them again next login. Everything after it is computed.
     _mark='gatherd built '
 
     # REST is what builds the packages this asks about, so before it has
@@ -540,7 +322,7 @@ section_sonames() {
     # gatherd-async.service is `failed`, which gatherd-show-slow-progress
     # reports at login, and its journal names the tiers.
     _sentinel="${GATHERD_ASYNC_SENTINEL:-/etc/gatherd/async-complete}"
-    [ -f "$_sentinel" ] || { prune_derived 'Libraries' "$_mark"; return; }
+    [ -f "$_sentinel" ] || return
 
     _tsv=$(mktemp)
     _why=$(mktemp)
@@ -571,28 +353,9 @@ section_sonames() {
     fi
     rm -f "$_tsv" "$_why"
 
-    prune_derived 'Libraries' "$_mark"
     [ "$#" -gt 0 ] || return
-
-    # A header that survived the prune has notes of yours under it; appending
-    # keeps them together instead of splicing a second header above them.
-    if section_present 'Libraries'; then
-        append_to_section 'Libraries' "$@"
-        return
-    fi
-
-    # Build the block on its own, then splice it above the other sections, the
-    # way section_unmanaged_wifi does. h() and li() can
-    # only append at end of file, which would file a broken program below the
-    # verify list.
-    _blk=$(mktemp)
-    _main=$OUTPUT
-    OUTPUT=$_blk
     h 'Libraries'
     for _b in "$@"; do li "$_b"; done
-    OUTPUT=$_main
-    splice_at_top "$_blk"
-    rm -f "$_blk"
 }
 
 section_strays() {
@@ -645,22 +408,9 @@ section_strays() {
     fi
     rm -f "$_tsv" "$_why"
 
-    prune_derived 'Packages' "$_mark"
     [ "$#" -gt 0 ] || return
-
-    if section_present 'Packages'; then
-        append_to_section 'Packages' "$@"
-        return
-    fi
-
-    _blk=$(mktemp)
-    _main=$OUTPUT
-    OUTPUT=$_blk
     h 'Packages'
     for _b in "$@"; do li "$_b"; done
-    OUTPUT=$_main
-    splice_at_top "$_blk"
-    rm -f "$_blk"
 }
 
 section_vault() {
@@ -674,34 +424,17 @@ section_vault() {
     # something".
     b_enter='Enter password when prompted'
 
-    # Retired: it pointed at one service's journal while the pave's own progress
-    # terminal (gatherd-show-slow-progress) was already on screen showing the run.
-    # prune_section matches on bullet text, so a bullet that is simply deleted
-    # from the set above is orphaned in every notes file that already has it --
-    # the same trap section_other_logins documents. Name it here, forever, so it
-    # goes away on machines that already wrote it.
-    prune_section 'Vault' 'Run `journalctl -u gatherd-vault.service` to check progress'
-
     # Overridable only so the branch can be exercised against a sandbox in tests
     # (the same reason gatherd-vault-pass-needed itself takes GATHERD_HOME).
     if "${GATHERD_HOME:-/usr/local/lib/gatherd}/scripts/gatherd-vault-pass-needed"; then
-        prune_section 'Vault' "$b_enter"
         add_bullet 'Vault' "$b_enter"
-    else
-        prune_section 'Vault' "$b_enter"
     fi
 }
 
 section_verify() {
-    # Never auto-done: you manage this section manually, ticking items off by
-    # deleting them. See verify_li for how new checks still reach an existing
-    # file without resurrecting the ones you have finished.
-    if section_present 'Verify'; then
-        _verify_section_existed=yes
-    else
-        _verify_section_existed=no
-        h 'Verify'
-    fi
+    # Never auto-done: you tick items off by deleting them, and the merge keeps
+    # them deleted.
+    h 'Verify'
     verify_li 'IR remote (machines with an IR receiver only): `ir-keytable -t -s rc0` prints a scancode and keycode for each button press.'
     verify_li 'The greeter is off the network. Boot with the network DISCONNECTED: the greeter comes up with no ~60s wait-online stall, and the first session has fonts, keybindings, wallpaper and keyring.'
     verify_li 'AUR packages build unprivileged and install from the local repo, with no sudoers grant issued at any point: `sudo grep -c '"'"'NOPASSWD: /usr/bin/pacman'"'"' /etc/sudoers` prints `0` and `sudo grep -rl NOPASSWD /etc/sudoers.d | wc -l` prints `2` -- during a build, and after killing a converge mid-build. Nothing reached the machine outside the repo: `comm -13 <(pacman -Slq gatherd-aur | sort) <(pacman -Qmq | sort)` prints aurutils and nothing else.'
@@ -738,8 +471,48 @@ section_verify() {
 # Main
 # ---------------------------------------------------------------------------
 
-[ -f "$OUTPUT" ] || printf 'Manual steps remaining:\n' > "$OUTPUT"
+NOTES=$OUTPUT
+HISTORY="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd/post-setup-history"
+# Where the version before the merge remembered which checks it had offered.
+# Read once, to build the first base, then removed.
+VERIFY_SEEN="${XDG_STATE_HOME:-$HOME/.local/state}/gatherd/post-setup-verify-seen"
 
+_work=$(mktemp -d) || exit 1
+trap 'rm -rf "$_work"' EXIT
+
+# Pinned so nothing in the user's own git config can stop a commit or hide a
+# file from one. Measured: with commit.gpgsign set and no secret key, a commit
+# fails with `gpg: skipped "...": No secret key`; and a global ignore listing
+# *.md left nothing to commit at all.
+hist() {
+    git -C "$HISTORY" -c user.name=gatherd -c user.email=gatherd@localhost \
+        -c commit.gpgsign=false -c core.hooksPath=/dev/null \
+        -c core.excludesFile=/dev/null -c core.attributesFile=/dev/null \
+        -c core.autocrlf=false "$@"
+}
+# Commit what is there of notes.md and base.md. Succeeds only once HEAD holds
+# notes.md byte for byte -- read back, so no filter can stand in for it --
+# because a rewrite with no snapshot behind it is the one thing not allowed.
+hist_commit() {
+    for _f in notes.md base.md; do
+        [ -f "$HISTORY/$_f" ] || continue
+        hist add -f -- "$_f" 2>/dev/null || return 1
+    done
+    hist diff --cached --quiet 2>/dev/null ||
+        hist commit -q -m "$1" >/dev/null 2>&1 || return 1
+    hist cat-file blob HEAD:notes.md 2>/dev/null | cmp -s - "$HISTORY/notes.md"
+}
+
+# This run's render. Before the lock: a probe that hangs here should cost this
+# login, not every login after it.
+_nverify=0
+_seen_render=
+if [ ! -f "$HISTORY/base.md" ] && [ -f "$VERIFY_SEEN" ]; then
+    _seen_render="$_work/seen"
+    : > "$_seen_render"
+fi
+OUTPUT="$_work/new"
+printf 'Manual steps remaining:\n' > "$OUTPUT"
 section_unmanaged_wifi
 section_sonames
 section_strays
@@ -748,5 +521,248 @@ section_vault
 section_1password
 section_tailscale
 section_other_logins
-
 collapse_blanks
+
+# A render that came up short (a full /tmp, a broken pipeline) would read as
+# every missing line ticked off. Every check renders every run, so count them.
+_nverify_rendered=$(awk '/^# /{ on = ($0 == "# Verify") } on && /^- /' "$OUTPUT" | wc -l)
+[ "$_nverify_rendered" -ge "${_nverify:-0}" ] && [ "${_nverify:-0}" -gt 0 ] || exit 0
+
+mkdir -p "$HISTORY" "${NOTES%/*}" || exit 1
+
+# One run at a time: two merging against the same base would undo each other.
+# A run still holding the lock after 30s is stuck, and this one gives way.
+if command -v flock >/dev/null 2>&1; then
+    exec 9> "$HISTORY.lock"
+    flock -w 30 9 || exit 0
+fi
+
+# No notes file yet: the render is the whole of it.
+if [ ! -e "$NOTES" ]; then
+    cp "$OUTPUT" "$NOTES" || exit 1
+    if command -v git >/dev/null 2>&1; then
+        [ -d "$HISTORY/.git" ] || git init -q "$HISTORY" >/dev/null 2>&1
+        cp "$OUTPUT" "$HISTORY/base.md" && cp "$NOTES" "$HISTORY/notes.md" &&
+            hist_commit 'Start the notes file'
+    fi
+    exit 0
+fi
+
+# Without git there is no history, and no rewrite is allowed without one.
+command -v git >/dev/null 2>&1 || exit 0
+[ -d "$HISTORY/.git" ] || git init -q "$HISTORY" >/dev/null 2>&1 || exit 0
+# Under the lock, any git lock file is what a run killed mid-commit left.
+find "$HISTORY/.git" -name '*.lock' -type f -exec rm -f {} + 2>/dev/null
+
+# A run stopped between replacing the notes and replacing the base. Its base
+# belongs with its notes: keep it only if the notes are what it wrote.
+if [ -f "$HISTORY/base.md.new" ]; then
+    if [ -f "$HISTORY/pending.md" ] && cmp -s "$NOTES" "$HISTORY/pending.md"; then
+        mv "$HISTORY/base.md.new" "$HISTORY/base.md" || exit 0
+    else
+        rm -f "$HISTORY/base.md.new"
+    fi
+fi
+rm -f "$HISTORY/pending.md"
+
+# What you wrote since the last run, committed before anything here touches it.
+cp "$NOTES" "$_work/ours" || exit 1
+cp "$_work/ours" "$HISTORY/notes.md" || exit 0
+if [ -f "$HISTORY/base.md" ]; then
+    cp "$HISTORY/base.md" "$_work/base" || exit 0
+fi
+hist_commit 'Your edits since the last login' || exit 0
+
+# No base yet: the first run after the merge arrived. The base is what the
+# script last wrote, so build the nearest thing to it: every line of this
+# render that is already in your file, wherever it is, plus the checks the old
+# seen-list says were offered (absent now means ticked off). Anything else this
+# render has is new, and arrives.
+if [ ! -f "$_work/base" ]; then
+    awk '
+        FILENAME == ARGV[1] { n[++nn] = $0; next }
+        FILENAME == ARGV[2] { mine[$0] = 1; next }
+        FILENAME == ARGV[3] { seen[$0] = 1; next }
+        END { for (j = 1; j <= nn; j++) if (n[j] in mine || (n[j] in seen && n[j] != "")) print n[j] }
+    ' "$OUTPUT" "$_work/ours" "${_seen_render:-/dev/null}" > "$_work/base" || exit 0
+fi
+
+# The merge. Matching is by position, through the longest common subsequence,
+# never by text alone: a line of yours that reads like one of the script's is
+# still yours. Earlier versions of this file guessed ownership from text, and
+# every guess had a way to take a note with it.
+awk '
+    # Fences as CommonMark has them: a run of 3+ backticks or tildes opens, and
+    # only a run of the same character at least as long, with nothing after
+    # it, closes. Nothing inside one is a header, and nothing inside one can
+    # be the script: it never writes a fence.
+    function fencerun(s,   c, m) {
+        c = substr(s, 1, 1)
+        if (c != "`" && c != "~") return ""
+        m = match(s, (c == "`") ? "^`+" : "^~+")
+        return (RLENGTH >= 3) ? substr(s, 1, RLENGTH) : ""
+    }
+    # Longest common subsequence of a[1..na] and b[1..nb]; ab[i] = j, ba[j] = i.
+    function lcs(a, na, b, nb, ab, ba,    i, j, L) {
+        for (i = na + 1; i >= 1; i--) for (j = nb + 1; j >= 1; j--) {
+            if (i > na || j > nb) L[i, j] = 0
+            else if (a[i] == b[j]) L[i, j] = L[i + 1, j + 1] + 1
+            else L[i, j] = (L[i + 1, j] >= L[i, j + 1]) ? L[i + 1, j] : L[i, j + 1]
+        }
+        i = 1; j = 1
+        while (i <= na && j <= nb) {
+            if (a[i] == b[j] && L[i, j] == L[i + 1, j + 1] + 1) { ab[i] = j; ba[j] = i; i++; j++ }
+            else if (L[i + 1, j] >= L[i, j + 1]) i++
+            else j++
+        }
+    }
+    # Where a block that starts a section goes: before the next header of
+    # of yours or of the script after k, so it never splits a section.
+    function secend(k,   p) {
+        for (p = k + 1; p <= no && !hdr[p]; p++) ;
+        return p
+    }
+    FILENAME == ARGV[1] { o[++no] = $0; next }
+    FILENAME == ARGV[2] { b[++nb] = $0; next }
+    FILENAME == ARGV[3] { n[++nn] = $0; next }
+    END {
+        open = ""
+        for (k = 1; k <= no; k++) {
+            r = fencerun(o[k])
+            if (open == "") {
+                fenced[k] = (r != "")
+                if (r != "") open = r
+            } else {
+                fenced[k] = 1
+                if (r != "" && substr(r, 1, 1) == substr(open, 1, 1) && length(r) >= length(open) \
+                    && o[k] ~ /^[`~]+[ \t]*$/) open = ""
+            }
+            hdr[k] = (!fenced[k] && o[k] ~ /^# /)
+            oa[k] = fenced[k] ? "\034" k : o[k]
+        }
+        lcs(b, nb, n, nn, bn, nbk)      # base vs new: what the script kept
+        lcs(oa, no, b, nb, ob, bo)      # yours vs base: where lines of the script sit
+
+        # The section each line of the render belongs to.
+        h = ""
+        for (j = 1; j <= nn; j++) { if (n[j] ~ /^# /) h = n[j]; sec[j] = h; if (n[j] ~ /^# /) secj[h] = j }
+        # And of yours, with the first kept copy of each header.
+        h = ""
+        for (k = 1; k <= no; k++) { if (hdr[k]) h = o[k]; govern[k] = h }
+
+        # A line of yours goes only if the script wrote it (aligned to the
+        # base) and no longer renders it.
+        changed = 0
+        for (k = 1; k <= no; k++) keep[k] = !(ob[k] && !bn[ob[k]])
+        # A blank line goes only beside a line that goes: one between two of
+        # your paragraphs is yours, whatever the alignment says.
+        for (k = 1; k <= no; k++) {
+            if (keep[k] || o[k] != "") continue
+            for (u = k - 1; u >= 1 && o[u] == ""; u--) ;
+            for (d = k + 1; d <= no && o[d] == ""; d++) ;
+            if (!((u >= 1 && !keep[u]) || (d <= no && !keep[d]))) keep[k] = 1
+        }
+        # A header stays while a line of yours is still under it, and so does
+        # the blank line that set it apart.
+        for (k = 1; k <= no; k++) {
+            if (!hdr[k] || keep[k]) continue
+            for (m = k + 1; m <= no && !hdr[m]; m++)
+                if (!ob[m] && o[m] != "") { keep[k] = 1; break }
+            if (keep[k] && k > 1 && o[k - 1] == "" && !keep[k - 1]) keep[k - 1] = 1
+        }
+        for (k = 1; k <= no; k++) {
+            if (!keep[k]) changed = 1
+            if (keep[k] && hdr[k] && !(o[k] in khead)) khead[o[k]] = k
+        }
+
+        # Lines the script started rendering.
+        # A blank line the script adds travels with the next line it adds, so
+        # the gap before a new section arrives with the section.
+        pend = ""
+        for (j = 1; j <= nn; j++) {
+            if (nbk[j]) {
+                if (pend != "") {
+                    for (jj = j - 1; jj >= 1; jj--) if (nbk[jj] && bo[nbk[jj]]) break
+                    p = (jj >= 1) ? bo[nbk[jj]] + 1 : 1
+                    ins[p] = ins[p] pend; pend = ""
+                }
+                continue
+            }
+            changed = 1
+            if (n[j] == "") { pend = pend "\n"; continue }
+            s = sec[j]
+            pos = 0
+            for (jj = j - 1; jj >= 1; jj--) if (nbk[jj] && bo[nbk[jj]]) { pos = bo[nbk[jj]]; break }
+            if (n[j] ~ /^# /) {
+                # A section the script starts, unless you kept its header:
+                # then what follows goes under yours, not under a second one.
+                if (n[j] in khead) { pend = ""; continue }
+                p = secend(pos); hpos[n[j]] = p
+            } else if (s == "" || (pos && govern[pos] == s && (s in khead))) {
+                # Beside the line it follows, past any lines of yours after
+                # that, but not past a header.
+                p = pos + 1
+                while (p <= no && !ob[p] && !hdr[p]) p++
+            } else if (s in khead) {
+                # Its section is in your file, but the line it follows is now
+                # under another header (yours, say): end of its own section.
+                p = secend(khead[s])
+                while (p - 1 > khead[s] && o[p - 1] == "") p--
+            } else if (s in hpos) {
+                p = hpos[s]
+            } else {
+                # You deleted its header: bring the header back with it.
+                p = secend(pos); hpos[s] = p
+                ins[p] = ins[p] "\n" s "\n"
+            }
+            ins[p] = ins[p] pend n[j] "\n"; pend = ""
+        }
+        if (pend != "") ins[no + 1] = ins[no + 1] pend
+        if (!changed) exit 3
+        for (p = 1; p <= no + 1; p++) {
+            if (p in ins) printf "%s", ins[p]
+            if (p <= no && keep[p]) print o[p]
+        }
+    }
+' "$_work/ours" "$_work/base" "$OUTPUT" > "$_work/result"
+_rc=$?
+if [ "$_rc" -eq 3 ]; then
+    cp "$_work/ours" "$_work/result"
+elif [ "$_rc" -ne 0 ]; then
+    exit 0
+elif [ -s "$_work/ours" ] && [ "$(tail -c 1 "$_work/ours" | od -An -c | tr -d ' ')" != '\n' ] &&
+     [ "$(tail -n 1 "$_work/result")" = "$(tail -n 1 "$_work/ours")" ]; then
+    # Your last line had no newline and is still last: leave it that way.
+    _len=$(wc -c < "$_work/result")
+    head -c $((_len - 1)) "$_work/result" > "$_work/result.nonl" &&
+        mv "$_work/result.nonl" "$_work/result"
+fi
+
+# The next base goes in first: if it cannot be written, neither is your file,
+# and the next run merges from the same place.
+cp "$OUTPUT" "$HISTORY/base.md.new" || exit 0
+
+if [ "$_rc" -ne 3 ]; then
+    # Replace the file the path names, so a symlinked notes file stays one.
+    # The staging copy starts as a copy of your file, so it keeps its mode.
+    _target=$(readlink -f "$NOTES") || exit 0
+    _stage=$(mktemp "$_target.XXXXXX") || exit 0
+    if ! { cp -p "$_target" "$_stage" && cat "$_work/result" > "$_stage"; }; then
+        rm -f "$_stage"; exit 0
+    fi
+    # Edited while this ran (an editor saving, say): write nothing, keep the
+    # old base, and merge at the next login instead.
+    if ! cmp -s "$NOTES" "$_work/ours"; then
+        rm -f "$_stage" "$HISTORY/base.md.new"; exit 0
+    fi
+    # What this run is about to write, so a run stopped after the next line
+    # can tell whether its base.md.new belongs with the notes (see above).
+    cp "$_work/result" "$HISTORY/pending.md" || { rm -f "$_stage" "$HISTORY/base.md.new"; exit 0; }
+    mv "$_stage" "$_target" || { rm -f "$_stage" "$HISTORY/base.md.new" "$HISTORY/pending.md"; exit 0; }
+fi
+mv "$HISTORY/base.md.new" "$HISTORY/base.md" || exit 0
+rm -f "$HISTORY/pending.md"
+cp "$_work/result" "$HISTORY/notes.md"
+hist_commit 'Merge this login'\''s render'
+[ -z "$_seen_render" ] || rm -f "$VERIFY_SEEN"
+exit 0
